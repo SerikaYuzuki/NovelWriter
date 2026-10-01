@@ -1,3 +1,4 @@
+import Foundation
 import NovelSyncV2
 
 public extension SyncV2Application {
@@ -8,6 +9,9 @@ public extension SyncV2Application {
     /// to `open(workID:)`, which is an explicit remote-capable operation.
     func openLocal(workID: WorkID) async throws -> SyncV2OpenedWork {
         let opened = try await kernel.open(workID: workID)
+        guard opened.document != nil || opened.generation != 0 || opened.snapshotID != nil else {
+            throw SyncV2ApplicationError.workNotFound
+        }
         recordOpened(opened)
         let activeConflict = try await kernel.activeConflict(workID: workID)
         let adoption = try await kernel.pendingAdoption(workID: workID)
@@ -40,30 +44,92 @@ public extension SyncV2Application {
     }
 
     func open(workID: WorkID) async throws -> SyncV2OpenedWork {
+        try Task.checkCancellation()
+        if let task = remoteOnlyOpens[workID] {
+            guard remoteSchedulingSuspensions.isEmpty else { throw SyncV2Failure.accountFenceChanged }
+            return try await joinRemoteOnlyOpen(task)
+        }
         do {
             return try await openLocal(workID: workID)
         } catch SyncV2ApplicationError.workNotFound {
             guard runtimeIdentity != .preview else {
                 throw SyncV2ApplicationError.workNotFound
             }
-            var stage = "remote-only-download"
-            do {
-                let inbox = try await libraryProvider.downloadRemoteOnly(workID: workID)
-                stage = "remote-only-install"
-                let opened = try await kernel.installRemoteOnly(inbox)
-                setState(
-                    workID: workID,
-                    localDurability: durability(for: opened),
-                    remoteProgress: .idle,
-                    result: .remoteOnlyInstalled,
-                    conflict: .clear
-                )
+        }
+        try Task.checkCancellation()
+        guard remoteSchedulingSuspensions.isEmpty else {
+            throw SyncV2Failure.accountFenceChanged
+        }
+        // openLocal suspends: another caller may have started the import meanwhile.
+        if let task = remoteOnlyOpens[workID] {
+            return try await joinRemoteOnlyOpen(task)
+        }
+        let generation = historyScopeGeneration
+        let timeout = remoteOnlyImportTimeout
+        let task = Task {
+            defer { remoteOnlyOpens[workID] = nil }
+            return try await withThrowingTaskGroup(of: SyncV2OpenedWork.self) { group in
+                group.addTask {
+                    try await self.performRemoteOnlyOpen(workID: workID, generation: generation)
+                }
+                group.addTask {
+                    try await Task.sleep(for: timeout)
+                    throw SyncV2Failure.retryable(.lostResponse)
+                }
+                defer { group.cancelAll() }
+                guard let opened = try await group.next() else { throw CancellationError() }
                 return opened
-            } catch {
-                recordSyncDiagnostic(workID: workID, stage: stage, error: error)
-                throw error
             }
         }
+        remoteOnlyOpens[workID] = task
+        return try await joinRemoteOnlyOpen(task)
+    }
+
+    private func joinRemoteOnlyOpen(_ task: Task<SyncV2OpenedWork, Error>) async throws -> SyncV2OpenedWork {
+        try await withTaskCancellationHandler {
+            let opened = try await task.value
+            try Task.checkCancellation()
+            return opened
+        } onCancel: {
+            task.cancel()
+        }
+    }
+
+    private func performRemoteOnlyOpen(workID: WorkID, generation: UInt64) async throws -> SyncV2OpenedWork {
+        var stage = "remote-only-download"
+        do {
+            try checkRemoteOnlyScope(generation)
+            let inbox = try await libraryProvider.downloadRemoteOnly(workID: workID)
+            try checkRemoteOnlyScope(generation)
+            guard inbox.workID == workID else { throw SyncV2Failure.receiptMismatch }
+            stage = "remote-only-install"
+            let opened = try await kernel.installRemoteOnly(inbox)
+            try checkRemoteOnlyScope(generation)
+            guard opened.workID == workID, opened.document != nil else {
+                throw SyncV2Failure.quarantined(.invalidRemoteData)
+            }
+            setState(workID: workID, localDurability: durability(for: opened),
+                     remoteProgress: .idle, result: .remoteOnlyInstalled, conflict: .clear)
+            return opened
+        } catch {
+            recordSyncDiagnostic(workID: workID, stage: stage, error: error)
+            throw error
+        }
+    }
+
+    private func checkRemoteOnlyScope(_ generation: UInt64) throws {
+        try Task.checkCancellation()
+        guard historyScopeGeneration == generation, remoteSchedulingSuspensions.isEmpty else {
+            throw SyncV2Failure.accountFenceChanged
+        }
+    }
+
+    /// The platform document gate must be held, and account/session checks
+    /// repeated after this await. A joined rename may have advanced the local
+    /// version since the import returned; that older result must not enter the editor.
+    func isCurrentLocalVersion(_ opened: SyncV2OpenedWork) async throws -> Bool {
+        try Task.checkCancellation()
+        return try await kernel.currentGeneration(workID: opened.workID) == opened.generation
     }
 
     func library() async throws -> SyncV2LibraryProjection {

@@ -55,6 +55,7 @@ extension IOSDocumentStore {
     func makeNewDocument() async -> Bool {
         guard !isSyncV2AccountTransitionActive,
               await configureSnapshotSyncV2() else { return false }
+        cancelSnapshotSyncV2BackgroundOperations()
         let value = NovelDocument.newDocument()
         let candidateWorkID = WorkID(UUID())
         let candidateCreatedAt = Self.portableDatePrecision(Date())
@@ -84,6 +85,7 @@ extension IOSDocumentStore {
     @discardableResult
     func importPackage(from sourceURL: URL) async -> Bool {
         guard !isSyncV2AccountTransitionActive else { return false }
+        cancelSnapshotSyncV2BackgroundOperations()
         let expectedAccountScope = snapshotSyncV2AccountScope
         let expectedSession = currentDocumentSessionToken
         let expectedWorkID = syncV2ActiveWorkID
@@ -114,8 +116,7 @@ extension IOSDocumentStore {
                     let location = privateWorkingCopyLocation else {
                     throw IOSPrivateWorkingCopyLocationError.unsafeRoot
                 }
-                let sourceAttestation = try IOSPrivateWorkingCopyLocation
-                    .attestExplicitPackageSource(sourceURL)
+                let sourceAttestation = try IOSPrivateWorkingCopyLocation.attestExplicitPackageSource(sourceURL)
                 let staging = try location.stagingDestination()
                 do {
                     try fileManager.copyItem(at: sourceURL, to: staging)

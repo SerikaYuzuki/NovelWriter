@@ -232,6 +232,8 @@ actor ProductionSyncV2RemoteClient: SyncV2RemoteClient {
             configuredSession = session
         } else {
             let configuration = URLSessionConfiguration.ephemeral
+            configuration.timeoutIntervalForRequest = 30
+            configuration.timeoutIntervalForResource = 120
             configuration.urlCache = nil
             configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
             configuredSession = URLSession(configuration: configuration)

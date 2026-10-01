@@ -25,8 +25,8 @@ extension IOSDocumentStore {
                     let opened = try await application.openLocal(workID: targetWorkID)
                     guard !isSyncV2AccountTransitionActive,
                           snapshotSyncV2AccountScope == expectedAccountScope,
-                          opened.workID == targetWorkID,
-                          let value = opened.document else { return }
+                          opened.workID == targetWorkID else { return }
+                    guard let value = opened.document else { throw SyncV2ApplicationError.workNotFound }
                     guard installSnapshotSyncV2Opened(opened, value: value) else { return }
                     let state = await application.uiState(workID: opened.workID)
                     guard !isSyncV2AccountTransitionActive,
@@ -67,23 +67,23 @@ extension IOSDocumentStore {
         snapshotSyncV2RemoteOnlyOpenToken = operationToken
         snapshotSyncV2RemoteOnlyOpeningWorkID = workID
         snapshotSyncV2RemoteOnlyOpenTask = Task { @MainActor [weak self] in
+            guard let self else { return }
             defer {
-                if let self,
-                   snapshotSyncV2RemoteOnlyOpenToken == operationToken {
+                if snapshotSyncV2RemoteOnlyOpenToken == operationToken {
                     snapshotSyncV2RemoteOnlyOpenToken = nil
                     snapshotSyncV2RemoteOnlyOpenTask = nil
                     snapshotSyncV2RemoteOnlyOpeningWorkID = nil
                 }
             }
             do {
-                let opened = try await application.open(workID: workID)
+                let opened = try await openRemoteOnlyWithBackgroundTime(application, workID: workID)
+                guard opened.document != nil else { throw SyncV2ApplicationError.workNotFound }
                 let matchesRequestedWork = acceptsSnapshotSyncV2RemoteOnlyOpen(
                     opened,
                     requestedWorkID: workID
                 )
                 guard matchesRequestedWork,
                       !Task.isCancelled,
-                      let self,
                       !isSyncV2RemoteAccountTransitionActive,
                       snapshotSyncV2RemoteOnlyOpenToken == operationToken,
                       snapshotSyncV2AccountScope == expectedAccountScope else { return }
@@ -98,6 +98,9 @@ extension IOSDocumentStore {
                     }
                     var installed = false
                     let transitioned = await performDocumentTransition {
+                        guard try await application.isCurrentLocalVersion(opened) else {
+                            throw SyncV2ApplicationError.safeBoundaryRejected
+                        }
                         guard snapshotSyncV2RemoteOnlyOpenToken == operationToken,
                               !isSyncV2RemoteAccountTransitionActive,
                               currentDocumentSessionToken == expectedSession,
@@ -127,7 +130,7 @@ extension IOSDocumentStore {
                 return
             } catch {
                 let diagnostic = await application.syncDebugDiagnostic(workID: workID)
-                guard let self,
+                guard !Task.isCancelled,
                       !isSyncV2RemoteAccountTransitionActive,
                       snapshotSyncV2RemoteOnlyOpenToken == operationToken,
                       currentDocumentSessionToken == expectedSession,

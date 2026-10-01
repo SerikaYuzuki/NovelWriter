@@ -341,8 +341,8 @@ extension IOSDocumentStore {
                 }
                 rows[remote.workID] = SyncV2LibraryItem(
                     workID: local.workID,
-                    title: local.title.isEmpty ? remote.title : local.title,
-                    availability: .cached,
+                    title: local.availability == .remoteOnly || local.title.isEmpty ? remote.title : local.title,
+                    availability: local.availability == .remoteOnly ? .remoteOnly : .cached,
                     accountState: local.accountState,
                     localGeneration: local.localGeneration,
                     remoteHead: remote.head ?? local.remoteHead,

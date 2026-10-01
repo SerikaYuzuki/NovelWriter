@@ -14,7 +14,7 @@ extension AppState {
               !isDocumentTransitionInProgress, !isTerminationPending,
               interactiveAuthOperationCount == 0 else { return false }
         do {
-            // Explicit remote-only rename may download, outside the editor gate.
+            // Join the application's per-WorkID import, outside the editor gate.
             if work.availability == .remoteOnly {
                 _ = try await application.open(workID: work.workID)
             }

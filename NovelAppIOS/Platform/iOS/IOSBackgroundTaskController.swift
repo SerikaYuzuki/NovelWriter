@@ -1,3 +1,5 @@
+import NovelSyncV2
+import NovelSyncV2Application
 import UIKit
 
 @MainActor
@@ -58,6 +60,21 @@ private final class IOSBackgroundTaskLease {
 }
 
 extension IOSDocumentStore {
+    func openRemoteOnlyWithBackgroundTime(
+        _ application: SyncV2Application, workID: WorkID
+    ) async throws -> SyncV2OpenedWork {
+        let task = Task { try await application.open(workID: workID) }
+        let lease = IOSBackgroundTaskLease(controller: backgroundTaskController) { task.cancel() }
+        defer { lease.end() }
+        return try await withTaskCancellationHandler {
+            let opened = try await task.value
+            try Task.checkCancellation()
+            return opened
+        } onCancel: {
+            task.cancel()
+        }
+    }
+
     /// suspension前のlocal durability区間をiOSへ明示し、expiration時は処理をcancelする。
     /// network同期の成否にかかわらず、package→journalの順序は通常flushと同じ。
     @discardableResult

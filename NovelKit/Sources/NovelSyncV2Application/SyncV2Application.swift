@@ -34,6 +34,8 @@ public actor SyncV2Application {
     let gate: any SyncV2DocumentGate
     let libraryProvider: any SyncV2LibraryProvider
     let runtimeIdentity: SyncV2RuntimeComposition.Identity
+    let remoteOnlyImportTimeout: Duration
+    var remoteOnlyOpens: [WorkID: Task<SyncV2OpenedWork, Error>] = [:]
     var deletionTasks: [WorkID: Task<Void, Error>] = [:]
     var deletingWorkIDs: Set<WorkID> = []
     var retryTasks: [WorkID: Task<Void, Never>] = [:]
@@ -61,11 +63,18 @@ public actor SyncV2Application {
     /// cursor is a continuation of both the account/fence scope and this
     /// application session; auth transitions invalidate it before any later
     /// page can append stale rows.
-    var historyScopeGeneration: UInt64 = 0
+    var historyScopeGeneration: UInt64 = 0 {
+        didSet {
+            for task in remoteOnlyOpens.values {
+                task.cancel()
+            }
+        }
+    }
 
     package init(
         mode: RuntimeMode,
-        composition: SyncV2RuntimeComposition
+        composition: SyncV2RuntimeComposition,
+        remoteOnlyImportTimeout: Duration = .seconds(180)
     ) throws {
         let valid = switch (mode, composition.identity) {
         case (.production, .production), (.test, .test), (.preview, .preview):
@@ -74,6 +83,7 @@ public actor SyncV2Application {
             false
         }
         guard valid else { throw SyncV2ApplicationError.invalidRuntimeMode }
+        self.remoteOnlyImportTimeout = remoteOnlyImportTimeout
         writingStore = composition.writingStore
         kernel = composition.kernel
         planner = composition.planner
@@ -217,6 +227,7 @@ public actor SyncV2Application {
     public func beginAccountTransitionRemoteSuspension() -> SyncV2AccountTransitionRemoteSuspensionToken {
         let token = SyncV2AccountTransitionRemoteSuspensionToken()
         remoteSchedulingSuspensions.insert(token.rawValue)
+        historyScopeGeneration &+= 1
         let affectedWorkIDs = Set(workerTasks.keys).union(retryTasks.keys).union(workerOwners.keys)
         for workID in affectedWorkIDs {
             cancelWorker(for: workID)

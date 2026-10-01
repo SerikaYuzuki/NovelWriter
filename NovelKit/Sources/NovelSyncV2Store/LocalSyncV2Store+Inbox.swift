@@ -14,11 +14,13 @@ public extension LocalSyncV2Store {
         _ graph: V2RemoteSnapshotGraph,
         scope: V2LocalWorkScope
     ) throws {
+        try Task.checkCancellation()
         try requireNotDeleting(graph.workID)
         guard case let .bound(binding) = scope else {
             throw SyncV2StoreError.accountMismatch
         }
         let anchor = try validateGraph(graph)
+        try Task.checkCancellation()
         try inTransaction {
             if let work = try scopedWorkRow(workID: graph.workID, scope: scope) {
                 guard work[1].text == anchor.documentID.description,
@@ -65,6 +67,7 @@ public extension LocalSyncV2Store {
                 ]
             )
             for snapshot in graph.snapshots {
+                try Task.checkCancellation()
                 try exec(
                     """
                     INSERT INTO inbox_snapshots(
@@ -92,6 +95,7 @@ public extension LocalSyncV2Store {
                 )
             }
             for snapshot in graph.snapshots {
+                try Task.checkCancellation()
                 for entry in snapshot.manifest.entries {
                     try exec(
                         """
@@ -119,6 +123,7 @@ public extension LocalSyncV2Store {
         guard case let .bound(binding) = scope else {
             throw SyncV2StoreError.accountMismatch
         }
+        try Task.checkCancellation()
         let state = try inboxState(inboxID: inboxID, binding: binding)
         guard state == "staged" || state == "verified" || state == "adopted" else {
             throw SyncV2StoreError.inboxNotFound
@@ -157,6 +162,7 @@ public extension LocalSyncV2Store {
         guard case let .bound(binding) = scope else {
             throw SyncV2StoreError.accountMismatch
         }
+        try Task.checkCancellation()
         let state = try inboxState(inboxID: inboxID, binding: binding)
         if state == "adopted" {
             return
@@ -186,6 +192,7 @@ extension LocalSyncV2Store {
         var anchor: GraphAnchor?
         var parents: [SnapshotID: [SnapshotID]] = [:]
         for snapshot in graph.snapshots {
+            try Task.checkCancellation()
             guard snapshot.snapshotId == SnapshotID(data: snapshot.manifestBytes),
                   snapshot.manifest.workId == graph.workID else {
                 throw SyncV2StoreError.invalidSnapshot
@@ -594,8 +601,10 @@ extension LocalSyncV2Store {
             )
         }
         for snapshot in try topologicalSnapshots(graph) {
+            try Task.checkCancellation()
             try insertValidatedEncoded(snapshot, workID: graph.workID)
         }
+        try Task.checkCancellation()
         let next = graph.expectedLocalGeneration + 1
         try exec(
             """

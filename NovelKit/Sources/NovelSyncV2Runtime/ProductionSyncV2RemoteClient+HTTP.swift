@@ -152,9 +152,24 @@ extension ProductionSyncV2RemoteClient {
         _ request: URLRequest,
         session originalSession: FuminiwaSession
     ) async throws -> (Data, URLResponse) {
+        let (data, response, _) = try await requestDataWithSession(request, session: originalSession)
+        return (data, response)
+    }
+
+    func requestDataWithSession(
+        _ request: URLRequest,
+        session originalSession: FuminiwaSession
+    ) async throws -> (Data, URLResponse, FuminiwaSession) {
+        var request = request
+        let originalSession: FuminiwaSession = if let context = SnapshotDownloadContext.current {
+            try await context.session(matching: originalSession)
+        } else {
+            originalSession
+        }
+        request.setValue("Bearer \(originalSession.accessToken)", forHTTPHeaderField: "Authorization")
         let first = try await performRequest(request)
         guard (first.1 as? HTTPURLResponse)?.statusCode == 401 else {
-            return first
+            return (first.0, first.1, originalSession)
         }
         let refreshed: FuminiwaSession
         do {
@@ -171,17 +186,20 @@ extension ProductionSyncV2RemoteClient {
               refreshed.refreshGeneration > originalSession.refreshGeneration else {
             throw SyncV2Failure.accountFenceChanged
         }
+        await SnapshotDownloadContext.current?.update(refreshed)
         var retry = request
         retry.setValue("Bearer \(refreshed.accessToken)", forHTTPHeaderField: "Authorization")
         // Exactly one retry. Method, path, body, operation ID and digest are
         // preserved; only Authorization is replaced.
-        return try await performRequest(retry)
+        let response = try await performRequest(retry)
+        return (response.0, response.1, refreshed)
     }
 
     private func performRequest(_ request: URLRequest) async throws -> (Data, URLResponse) {
         do {
             return try await session.data(for: request)
         } catch {
+            try Task.checkCancellation()
             if (error as NSError).domain == NSURLErrorDomain,
                (error as NSError).code == NSURLErrorNotConnectedToInternet {
                 throw SyncV2Failure.offline

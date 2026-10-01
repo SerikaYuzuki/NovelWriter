@@ -47,7 +47,7 @@ struct RemoteHTTPLineageTests {
         default: .retryable(.serverUnavailable)
         }
         await #expect(throws: expected) { try await client.downloadRemoteOnly(workID: fixture.workID) }
-        #expect(state.count(path: path) == (status == 503 ? 3 : 1))
+        #expect(state.count(path: path) == (status == 503 ? 6 : 1))
     }
 
     @Test("publish conflict decodes its sealed base and store accepts B to L/R divergence")

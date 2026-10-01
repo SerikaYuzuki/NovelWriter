@@ -1,14 +1,22 @@
 import Foundation
+import NovelAuth
 import NovelSyncV2
 import NovelSyncV2Application
 
 #if canImport(FoundationNetworking)
-import FoundationNetworking
+import Foundation
+import NovelAuthNetworking
 #endif
 
 extension ProductionSyncV2RemoteClient {
     func downloadRemoteOnly(workID: WorkID) async throws -> SyncV2RemoteInbox {
         let session = try await loadSession()
+        return try await SnapshotDownloadContext.$current.withValue(SnapshotDownloadContext(session: session)) {
+            try await downloadRemoteOnly(workID: workID, session: session)
+        }
+    }
+
+    private func downloadRemoteOnly(workID: WorkID, session: FuminiwaSession) async throws -> SyncV2RemoteInbox {
         let binding = SealedCommand.Binding(
             accountFence: session.accountFence,
             accountId: session.accountID,
@@ -51,7 +59,8 @@ extension ProductionSyncV2RemoteClient {
             snapshots: snapshots,
             expectedCurrentSnapshotID: nil,
             expectedLocalGeneration: 0,
-            expectedRemoteHead: head
+            expectedRemoteHead: head,
+            binding: binding
         )
     }
 

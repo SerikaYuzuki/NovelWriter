@@ -13,6 +13,7 @@ final class LineageHTTPState: @unchecked Sendable {
     private let lock = NSLock()
     private let replies: [String: LineageHTTPReply]
     private var paths: [String] = []
+    private var queries: [String: [String?]] = [:]
     private var failures: [String: [LineageHTTPReply]] = [:]
 
     func failNext(path: String, replies: [LineageHTTPReply]) {
@@ -127,13 +128,20 @@ final class LineageHTTPState: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         paths.append(path)
+        queries[path, default: []].append(request.url?.query)
         if var queued = failures[path], !queued.isEmpty {
             let reply = queued.removeFirst()
             failures[path] = queued
             return reply
         }
-        return replies["\(method) \(path)"] ?? (path.hasSuffix("/download")
+        return replies["\(method) \(path)"] ?? ((path.hasSuffix("/download") || path.hasPrefix("/v2/protection/"))
             ? LineageHTTPReply(status: 404, headers: [:], body: Data()) : nil)
+    }
+
+    func requestedQueries(path: String) -> [String?] {
+        lock.lock()
+        defer { lock.unlock() }
+        return queries[path, default: []]
     }
 
     func count(path: String) -> Int {

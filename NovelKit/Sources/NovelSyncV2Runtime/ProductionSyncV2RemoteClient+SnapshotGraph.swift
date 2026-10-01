@@ -25,7 +25,13 @@ extension ProductionSyncV2RemoteClient {
                 )
             }
         }
-        let snapshots = try await fetchSnapshot(workID: workID, id: id, session: session, traversal: traversal)
+        let snapshots: [EncodedSnapshot]
+        do {
+            snapshots = try await fetchSnapshot(workID: workID, id: id, session: session, traversal: traversal)
+        } catch SyncV2Failure.fatal(.remoteDataUnavailable) {
+            try await rejectKnownRemoteDeletion(workID: workID)
+            throw SyncV2Failure.fatal(.remoteDataUnavailable)
+        }
         if let batch, snapshots.count != batch.manifests.count {
             throw SyncV2Failure.quarantined(.invalidRemoteData)
         }
@@ -57,7 +63,8 @@ extension ProductionSyncV2RemoteClient {
             expectedRemoteHead: SyncV2RemoteHead(
                 snapshotID: head.snapshotID,
                 generation: head.generation
-            )
+            ),
+            binding: binding(for: session)
         )
     }
 

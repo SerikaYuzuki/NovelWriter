@@ -97,10 +97,10 @@ extension AppState {
             if let local = worksByID[remote.workID] {
                 let availability: StartupLibraryWorkAvailability = local.availability == .conflict
                     ? .conflict
-                    : .cached
+                    : (local.availability == .remoteOnly ? .remoteOnly : .cached)
                 worksByID[remote.workID] = StartupLibraryWork(
                     id: remote.workID.rawValue,
-                    title: local.title.isEmpty ? remote.title : local.title,
+                    title: local.availability == .remoteOnly || local.title.isEmpty ? remote.title : local.title,
                     availability: availability,
                     workID: remote.workID,
                     remoteProgress: local.remoteProgress,
@@ -312,6 +312,7 @@ extension AppState {
                 #else
                 let opened = try await application.open(workID: work.workID)
                 #endif
+                guard opened.document != nil else { throw SyncV2ApplicationError.workNotFound }
                 guard !Task.isCancelled,
                       let self,
                       snapshotSyncV2RemoteOnlyOpenToken == operationToken,
@@ -334,6 +335,7 @@ extension AppState {
                     if expectedWorkID != nil {
                         guard await saveNow() else { return false }
                     }
+                    guard await (try? application.isCurrentLocalVersion(opened)) == true else { return false }
                     guard !Task.isCancelled,
                           snapshotSyncV2RemoteOnlyOpenToken == operationToken,
                           matchesSnapshotSyncV2AccountScope(accountScope),

@@ -41,10 +41,18 @@ extension IOSDocumentStore {
     /// can change the session. The task itself must not clear a newer task's
     /// owner slot from its defer block.
     func cancelSnapshotSyncV2BackgroundOperations() {
-        snapshotSyncV2RemoteOnlyOpenToken = nil
-        snapshotSyncV2RemoteOnlyOpeningWorkID = nil
-        snapshotSyncV2RemoteOnlyOpenTask?.cancel()
-        snapshotSyncV2RemoteOnlyOpenTask = nil
+        // Keep ownership until the cancelled task has actually finished.
+        if let task = snapshotSyncV2RemoteOnlyOpenTask {
+            let token = snapshotSyncV2RemoteOnlyOpenToken
+            task.cancel()
+            Task { @MainActor [weak self] in
+                await task.value
+                guard let self, snapshotSyncV2RemoteOnlyOpenToken == token else { return }
+                snapshotSyncV2RemoteOnlyOpenTask = nil
+                snapshotSyncV2RemoteOnlyOpenToken = nil
+                snapshotSyncV2RemoteOnlyOpeningWorkID = nil
+            }
+        }
         snapshotSyncV2RemoteOnlyReadyWorkID = nil
         snapshotSyncV2ReprojectionToken = nil
         snapshotSyncV2ReprojectionTask?.cancel()

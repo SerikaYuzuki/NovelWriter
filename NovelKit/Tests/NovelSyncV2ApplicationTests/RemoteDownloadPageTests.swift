@@ -125,6 +125,81 @@ extension RemoteHTTPLineageTests {
         #expect(batch?.manifests.count == 1)
         #expect(batch?.objects.count == Set(manifest.entries.map(\.objectId)).count)
     }
+
+    @Test("a later page retries its cursor without fetching the first page again")
+    func laterPageResumesCursor() async throws {
+        let fixture = LineageFixture()
+        let snapshot = try fixture.snapshot(title: "two pages")
+        let items = downloadItems([snapshot])
+        let path = "/v2/works/\(fixture.workID.description)/download"
+        let state = LineageHTTPState(workID: fixture.workID, snapshots: [snapshot], publishResponse: nil)
+        try state.failNext(path: path, replies: [
+            downloadPage(head: snapshot.snapshotId, items: Array(items.prefix(1)), cursor: "next"),
+            LineageHTTPReply(status: 503, headers: ["Retry-After": "0"], body: Data()),
+            downloadPage(head: snapshot.snapshotId, items: Array(items.dropFirst()), cursor: nil)
+        ])
+        let client = try fixture.client(snapshots: [], overrideState: state)
+        let inbox = try await client.downloadRemoteOnly(workID: fixture.workID)
+        #expect(inbox.snapshots.first?.snapshotId == snapshot.snapshotId)
+        let queries = state.requestedQueries(path: path)
+        #expect(queries.count == 3)
+        #expect(queries[0]?.contains("cursor=") == false)
+        #expect(queries[1] == queries[2])
+        #expect(queries[1]?.contains("cursor=next") == true)
+    }
+
+    @Test("typed missing roots fail closed and fallback checks remote deletion", arguments: ["missingRoot", "deleted", "oldServer"])
+    func missingEndpointOrRoot(kind: String) async throws {
+        let fixture = LineageFixture()
+        let snapshot = try fixture.snapshot(title: "remote")
+        let path = "/v2/works/\(fixture.workID.description)/download"
+        let statusPath = "/v2/protection/\(fixture.workID.description)/status"
+        let manifestPath = "/v2/snapshots/\(snapshot.snapshotId.rawValue)/manifest"
+        let state = LineageHTTPState(workID: fixture.workID, snapshots: [snapshot], publishResponse: nil)
+        if kind == "missingRoot" {
+            state.failNext(path: path, replies: [LineageHTTPReply(status: 404, headers: downloadHeaders,
+                                                                  body: Data(#"{"error":"notFoundInAccount","result":"parked","retryable":false}"#.utf8))])
+        } else if kind == "deleted" {
+            try state.failNext(path: statusPath, replies: [LineageHTTPReply(status: 200, headers: downloadHeaders,
+                                                                            body: productionJSON(["result": "noChanges", "workId": fixture.workID.description, "deleted": true]))])
+        }
+        let client = try fixture.client(snapshots: [], overrideState: state)
+        if kind == "oldServer" {
+            #expect(try await client.downloadRemoteOnly(workID: fixture.workID).snapshots.first?.snapshotId == snapshot.snapshotId)
+            #expect(state.count(path: manifestPath) == 1)
+        } else {
+            let expected: SyncV2Failure = kind == "deleted" ? .fatal(.remoteWorkDeleted) : .fatal(.remoteDataUnavailable)
+            await #expect(throws: expected) { try await client.downloadRemoteOnly(workID: fixture.workID) }
+            #expect(state.count(path: manifestPath) == 0)
+        }
+        #expect(state.count(path: statusPath) == 1)
+    }
+
+    @Test("Retry-After supports bounded seconds and HTTP dates")
+    func boundedRetryAfter() {
+        let now = Date(timeIntervalSince1970: 0)
+        #expect(ProductionSyncV2RemoteClient.downloadRetryAfter("900") == 30)
+        #expect(ProductionSyncV2RemoteClient.downloadRetryAfter("2") == 2)
+        #expect(ProductionSyncV2RemoteClient.downloadRetryAfter("Thu, 01 Jan 1970 00:00:10 GMT", now: now) == 10)
+        #expect(ProductionSyncV2RemoteClient.downloadRetryAfter("invalid") == nil)
+    }
+
+    @Test("cancellation interrupts server-directed retry sleep")
+    func cancelBackoff() async throws {
+        let fixture = LineageFixture()
+        let path = "/v2/works/\(fixture.workID.description)/head"
+        let state = LineageHTTPState(replies: ["GET \(path)":
+                LineageHTTPReply(status: 503, headers: ["Retry-After": "30"], body: Data())])
+        let client = try fixture.client(snapshots: [], overrideState: state)
+        let task = Task { try await client.downloadRemoteOnly(workID: fixture.workID) }
+        try await eventually { state.count(path: path) == 1 }
+        try await Task.sleep(for: .milliseconds(30))
+        let start = ContinuousClock.now
+        task.cancel()
+        await #expect(throws: CancellationError.self) { try await task.value }
+        #expect(start.duration(to: .now) < .seconds(1))
+        #expect(state.count(path: path) == 1)
+    }
 }
 
 private let downloadHeaders = ["Content-Type": "application/vnd.fuminiwa.sync.v2+jcs", "Cache-Control": "no-store", "Pragma": "no-cache"]

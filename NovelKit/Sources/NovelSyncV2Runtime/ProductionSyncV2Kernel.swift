@@ -409,13 +409,27 @@ extension ProductionSyncV2Kernel {
     func installRemoteOnly(
         _ inbox: SyncV2RemoteInbox
     ) async throws -> SyncV2OpenedWork {
-        guard let binding = try await scope.activeBinding() else {
-            throw SyncV2Failure.authenticationRequired
+        func checkedBinding() async throws -> V2AccountBinding {
+            try Task.checkCancellation()
+            guard let binding = try await scope.activeBinding() else {
+                throw SyncV2Failure.authenticationRequired
+            }
+            guard let downloaded = inbox.binding,
+                  downloaded.accountId == binding.accountID,
+                  downloaded.accountFence == binding.accountFence,
+                  downloaded.serverInstanceId == binding.serverInstanceID,
+                  downloaded.protocolEpoch == binding.protocolEpoch else {
+                throw SyncV2Failure.accountFenceChanged
+            }
+            try Task.checkCancellation()
+            return binding
         }
         do {
-            let localScope = V2LocalWorkScope.bound(binding)
+            let localScope = try await V2LocalWorkScope.bound(checkedBinding())
             try await store.stageRemoteGraph(inbox.storeGraph, scope: localScope)
+            _ = try await checkedBinding()
             try await store.verifyInbox(inboxID: inbox.inboxID, scope: localScope)
+            _ = try await checkedBinding()
             try await store.adoptInbox(inboxID: inbox.inboxID, scope: localScope)
             let opened = try await store.open(workID: inbox.workID, scope: localScope)
             return SyncV2OpenedWork(
@@ -575,6 +589,7 @@ private extension ProductionSyncV2Kernel {
     func parkedItems() async throws -> [SyncV2LibraryItem] {
         try await withThrowingTaskGroup(of: SyncV2LibraryItem.self) { group in
             for summary in try await store.listParkedWorks() {
+                guard summary.currentSnapshotID != nil || summary.localGeneration != 0 else { continue }
                 guard try await store.workDeletion(workID: summary.workID) == nil else { continue }
                 group.addTask { [store] in
                     let opened = try await store.open(
@@ -610,6 +625,11 @@ private extension ProductionSyncV2Kernel {
             for summary in summaries {
                 guard try await store.workDeletion(workID: summary.workID) == nil else { continue }
                 group.addTask { [store] in
+                    if summary.currentSnapshotID == nil, summary.localGeneration == 0 {
+                        return SyncV2LibraryItem(workID: summary.workID, title: "名称未設定の作品",
+                                                 availability: .remoteOnly, accountState: accountState,
+                                                 localGeneration: 0, remoteProgress: .idle)
+                    }
                     let opened = try await store.open(
                         workID: summary.workID,
                         scope: localScope

@@ -16,7 +16,8 @@ extension IOSDocumentStore {
         do {
             // Only a server-only work needs a download; local renames stay offline.
             if item.availability == .remoteOnly {
-                _ = try await application.open(workID: item.workID)
+                // The application joins any open already importing this WorkID.
+                _ = try await openRemoteOnlyWithBackgroundTime(application, workID: item.workID)
             }
             let renamed = await documentOperationGate.perform { [weak self] in
                 guard let self, currentDocumentSessionToken == expectedSession,

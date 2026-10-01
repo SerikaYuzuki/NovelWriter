@@ -77,6 +77,32 @@ struct RemoteAuthRefreshTests {
         #expect(await provider.refreshCount() == 1)
     }
 
+    @Test("one download retains refreshed credentials for later reads")
+    func downloadRetainsRefresh() async throws {
+        let old = refreshSession(binding: refreshBinding(account: "acct"), generation: 1)
+        let provider = FixedSessionProvider(session: old)
+        Auth401URLProtocol.reset()
+        Auth401URLProtocol.acceptRefreshed = true
+        defer { Auth401URLProtocol.reset() }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [Auth401URLProtocol.self]
+        let url = try #require(URL(string: "https://auth-refresh.test"))
+        let client = try ProductionSyncV2RemoteClient(
+            origin: ProductionHTTPSOrigin(url: url), vault: InMemoryAuthSessionVault(session: old),
+            session: URLSession(configuration: configuration), sessionProvider: provider
+        )
+        try await SnapshotDownloadContext.$current.withValue(SnapshotDownloadContext(session: old)) {
+            for path in ["head", "page", "object"] {
+                var request = URLRequest(url: url.appendingPathComponent(path))
+                request.httpMethod = "GET"
+                request.setValue("Bearer \(old.accessToken)", forHTTPHeaderField: "Authorization")
+                _ = try await client.requestSnapshotData(request, session: old)
+            }
+        }
+        #expect(await provider.refreshCount() == 1)
+        #expect(Auth401URLProtocol.requestCount == 4)
+    }
+
     @Test("refresh transport failure keeps the command retryable")
     func refreshTransportFailureIsRetryable() async throws {
         let session = refreshSession(binding: refreshBinding(account: "acct"), generation: 1)
@@ -179,9 +205,11 @@ private actor FixedSessionProvider: SyncV2SessionProvider {
 
 private final class Auth401URLProtocol: URLProtocol, @unchecked Sendable {
     nonisolated(unsafe) static var requestCount = 0
+    nonisolated(unsafe) static var acceptRefreshed = false
 
     static func reset() {
         requestCount = 0
+        acceptRefreshed = false
     }
 
     override class func canInit(with _: URLRequest) -> Bool {
@@ -201,7 +229,7 @@ private final class Auth401URLProtocol: URLProtocol, @unchecked Sendable {
         ]
         let response = HTTPURLResponse(
             url: request.url!,
-            statusCode: 401,
+            statusCode: Self.acceptRefreshed && request.value(forHTTPHeaderField: "Authorization") == "Bearer fat_access_2" ? 200 : 401,
             httpVersion: nil,
             headerFields: headers
         )!

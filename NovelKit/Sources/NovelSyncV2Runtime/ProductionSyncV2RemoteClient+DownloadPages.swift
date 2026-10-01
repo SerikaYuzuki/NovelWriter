@@ -30,6 +30,14 @@ extension ProductionSyncV2RemoteClient {
                 request, session: session, allowMissingEndpoint: cursor == nil
             )
             if cursor == nil, let http = response as? HTTPURLResponse, [404, 405].contains(http.statusCode) {
+                try await rejectKnownRemoteDeletion(workID: workID)
+                // A typed account-scoped 404 means the route exists but its root
+                // is missing. Only an untyped router 404/405 is old-server fallback.
+                let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+                if http.statusCode == 404,
+                   httpContentType(response) == mediaType || object?["error"] != nil || object?["code"] != nil {
+                    throw SyncV2Failure.fatal(.remoteDataUnavailable)
+                }
                 return nil
             }
             let page = try decodeDownloadPage(data, response: response, id: id)
