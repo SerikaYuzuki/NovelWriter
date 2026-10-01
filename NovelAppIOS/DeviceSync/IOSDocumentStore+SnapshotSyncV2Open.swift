@@ -140,22 +140,10 @@ extension IOSDocumentStore {
                     }
                     return transitioned && installed
                 }
-                guard !Task.isCancelled, snapshotSyncV2AccountScope == expectedAccountScope else { return }
-                if !installed, shouldOpen(), currentDocumentSessionToken == expectedSession {
-                    let failure = SyncV2Failure.fatal(.invalidLocalState)
-                    snapshotSyncV2RemoteOnlyOpenFailure = failure
-                    logSyncV2PresentationFailure(failure)
-                    operationErrorMessage = remoteOnlyOpenErrorMessage(failure)
-                    AccessibilityNotification.Announcement(remoteOnlyOpenErrorMessage(failure)).post()
-                    _ = try? await reloadLibraryItems()
-                    return
-                }
-                let notice = "『\(title)』をこの端末に取り込みました"
-                if !installed {
-                    libraryNotice = notice
-                }
-                AccessibilityNotification.Announcement(notice).post()
-                _ = try? await reloadLibraryItems()
+                await reportRemoteOnlySnapshotSyncV2OpenResult(
+                    installed: installed, title: title, expectedSession: expectedSession,
+                    expectedAccountScope: expectedAccountScope, shouldOpen: shouldOpen
+                )
             } catch is CancellationError {
                 return
             } catch {
@@ -170,5 +158,30 @@ extension IOSDocumentStore {
             }
         }
         return true
+    }
+
+    private func reportRemoteOnlySnapshotSyncV2OpenResult(
+        installed: Bool,
+        title: String,
+        expectedSession: IOSDocumentSessionToken?,
+        expectedAccountScope: IOSSnapshotSyncV2AccountScope,
+        shouldOpen: @MainActor () -> Bool
+    ) async {
+        guard !Task.isCancelled, snapshotSyncV2AccountScope == expectedAccountScope else { return }
+        if !installed, shouldOpen(), currentDocumentSessionToken == expectedSession {
+            let failure = SyncV2Failure.fatal(.invalidLocalState)
+            snapshotSyncV2RemoteOnlyOpenFailure = failure
+            logSyncV2PresentationFailure(failure)
+            operationErrorMessage = remoteOnlyOpenErrorMessage(failure)
+            AccessibilityNotification.Announcement(remoteOnlyOpenErrorMessage(failure)).post()
+            _ = try? await reloadLibraryItems()
+            return
+        }
+        let notice = "『\(title)』をこの端末に取り込みました"
+        if !installed {
+            libraryNotice = notice
+        }
+        AccessibilityNotification.Announcement(notice).post()
+        _ = try? await reloadLibraryItems()
     }
 }

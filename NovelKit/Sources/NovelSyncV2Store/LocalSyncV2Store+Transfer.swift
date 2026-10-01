@@ -129,7 +129,9 @@ public extension LocalSyncV2Store {
                     guard let bytes = row.first?.blob else { throw SyncV2StoreError.invalidSnapshot }
                     return try SnapshotID(rawValue: bytes.hexString)
                 })
-                registeredAncestorCache = (workID, binding, head.snapshotID, ancestors)
+                registeredAncestorCache = RegisteredAncestorCache(
+                    work: workID, binding: binding, head: head.snapshotID, ids: ancestors
+                )
                 ids.formUnion(ancestors)
             }
         }

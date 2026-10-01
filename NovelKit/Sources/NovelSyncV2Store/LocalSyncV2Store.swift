@@ -7,8 +7,15 @@ public actor LocalSyncV2Store {
     public let databaseURL: URL
     var db: OpaquePointer?
     var statements: [String: OpaquePointer] = [:]
+    struct RegisteredAncestorCache {
+        let work: WorkID
+        let binding: V2AccountBinding
+        let head: SnapshotID
+        let ids: Set<SnapshotID>
+    }
+
     // One immutable head closure, bounded to the last work/binding requested.
-    var registeredAncestorCache: (work: WorkID, binding: V2AccountBinding, head: SnapshotID, ids: Set<SnapshotID>)?
+    var registeredAncestorCache: RegisteredAncestorCache?
     var transactionObjects: Set<ObjectID>?
 
     public init(root: URL, policy: V2StoreOpenPolicy) throws {

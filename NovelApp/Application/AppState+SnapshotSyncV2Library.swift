@@ -311,12 +311,7 @@ extension AppState {
         snapshotSyncLibraryOpenFailure = nil
         let task = Task { @MainActor [weak self] in
             defer {
-                if let self, self.snapshotSyncV2RemoteOnlyOpenToken == operationToken {
-                    self.snapshotSyncV2RemoteOnlyOpenToken = nil
-                    self.snapshotSyncV2RemoteOnlyOpenTask = nil
-                    self.snapshotSyncV2RemoteOnlyOpeningWorkID = nil
-                    self.snapshotSyncV2RemoteOnlyOpenStartedAt = nil
-                }
+                self?.finishRemoteOnlyOpen(operationToken: operationToken)
             }
             do {
                 #if FUMINIWA_TEST_COMPOSITION
@@ -382,24 +377,10 @@ extension AppState {
                     await refreshSnapshotSyncV2UIState()
                     return true
                 }
-                if !installed,
-                   !Task.isCancelled,
-                   snapshotSyncV2RemoteOnlyOpenToken == operationToken,
-                   matchesSnapshotSyncV2AccountScope(accountScope),
-                   documentSessionToken == expectedSession,
-                   containsSnapshotSyncV2LibraryWork(work),
-                   !validationRejected {
-                    operationMessage = "作品の取得が完了しました。作品一覧を更新してから開いてください。"
-                }
-                if validationRejected {
-                    let failure = SyncV2Failure.fatal(.invalidLocalState)
-                    snapshotSyncLibraryOpenFailure = failure
-                    logSyncV2PresentationFailure(failure)
-                    AccessibilityNotification.Announcement(remoteOnlyOpenErrorMessage(failure)).post()
-                }
-                if installed {
-                    AccessibilityNotification.Announcement("作品をこの端末に取り込みました").post()
-                }
+                reportRemoteOnlyOpenResult(
+                    installed: installed, validationRejected: validationRejected, work: work,
+                    operationToken: operationToken, accountScope: accountScope, expectedSession: expectedSession
+                )
                 return installed
             } catch is CancellationError {
                 return false
@@ -409,14 +390,55 @@ extension AppState {
                       matchesSnapshotSyncV2AccountScope(accountScope),
                       documentSessionToken == expectedSession,
                       containsSnapshotSyncV2LibraryWork(work) else { return false }
-                snapshotSyncLibraryOpenFailure = syncV2FailureKind(error)
-                logSyncV2PresentationFailure(error)
-                operationMessage = remoteOnlyOpenErrorMessage(error)
-                AccessibilityNotification.Announcement(operationMessage ?? "作品を取り込めませんでした").post()
+                reportRemoteOnlyOpenFailure(error)
                 return false
             }
         }
         snapshotSyncV2RemoteOnlyOpenTask = task
         return await task.value
+    }
+
+    private func reportRemoteOnlyOpenFailure(_ error: Error) {
+        snapshotSyncLibraryOpenFailure = syncV2FailureKind(error)
+        logSyncV2PresentationFailure(error)
+        operationMessage = remoteOnlyOpenErrorMessage(error)
+        AccessibilityNotification.Announcement(operationMessage ?? "作品を取り込めませんでした").post()
+    }
+
+    private func finishRemoteOnlyOpen(operationToken: UUID) {
+        if snapshotSyncV2RemoteOnlyOpenToken == operationToken {
+            snapshotSyncV2RemoteOnlyOpenToken = nil
+            snapshotSyncV2RemoteOnlyOpenTask = nil
+            snapshotSyncV2RemoteOnlyOpeningWorkID = nil
+            snapshotSyncV2RemoteOnlyOpenStartedAt = nil
+        }
+    }
+
+    private func reportRemoteOnlyOpenResult(
+        installed: Bool,
+        validationRejected: Bool,
+        work: StartupLibraryWork,
+        operationToken: UUID,
+        accountScope: SnapshotSyncV2AccountScopeToken,
+        expectedSession: AppDocumentSessionToken
+    ) {
+        if !installed,
+           !Task.isCancelled,
+           snapshotSyncV2RemoteOnlyOpenToken == operationToken,
+           matchesSnapshotSyncV2AccountScope(accountScope),
+           documentSessionToken == expectedSession,
+           containsSnapshotSyncV2LibraryWork(work),
+           !validationRejected {
+            operationMessage = "作品の取得が完了しました。作品一覧を更新してから開いてください。"
+        }
+        if validationRejected {
+            let failure = SyncV2Failure.fatal(.invalidLocalState)
+            snapshotSyncLibraryOpenFailure = failure
+            logSyncV2PresentationFailure(failure)
+            AccessibilityNotification.Announcement(remoteOnlyOpenErrorMessage(failure)).post()
+        }
+        if installed {
+            AccessibilityNotification.Announcement("作品をこの端末に取り込みました").post()
+        }
     }
 }
