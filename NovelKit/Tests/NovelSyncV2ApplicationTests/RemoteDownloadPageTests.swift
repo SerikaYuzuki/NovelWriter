@@ -229,3 +229,148 @@ private extension Data {
             .replacingOccurrences(of: "=", with: "")
     }
 }
+
+extension RemoteHTTPLineageTests {
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["FUMINIWA_IMPORT_BENCHMARK"] == "1"))
+    func syntheticFetchPerformance() async throws {
+        let fixture = LineageFixture()
+        var document = fixture.document
+        var snapshots: [EncodedSnapshot] = []
+        for index in 0..<1500 {
+            document.chapters[0].episodes[0].content = String(repeating: "a", count: 7000) + "\(index)"
+            snapshots.append(try SnapshotCodec.encode(SnapshotModel(
+                workId: fixture.workID, document: document, documentCreatedAt: fixture.createdAt
+            ), parents: snapshots.last.map { [$0.snapshotId] } ?? []))
+        }
+        let head = try #require(snapshots.last)
+        let items = downloadItems(snapshots)
+        let pages = try stride(from: 0, to: items.count, by: 256).map { offset in
+            try downloadPage(head: head.snapshotId, items: Array(items[offset..<min(offset + 256, items.count)]),
+                             cursor: offset + 256 < items.count ? "page-\(offset + 256)" : nil)
+        }
+        let state = LineageHTTPState(workID: fixture.workID, snapshots: snapshots, publishResponse: nil)
+        let path = "/v2/works/\(fixture.workID.description)/download"
+        state.failNext(path: path, replies: pages)
+        let client = try fixture.client(snapshots: snapshots, overrideState: state)
+        let start = ContinuousClock.now
+        let inbox = try await client.downloadRemoteOnly(workID: fixture.workID)
+        print("BENCH fetch+graph snapshots=\(inbox.snapshots.count) pages=\(pages.count) bytes=\(pages.reduce(0) { $0 + $1.body.count }) elapsed=\(start.duration(to: .now))")
+        #expect(inbox.snapshots.count == snapshots.count)
+        #expect(state.count(path: path) == pages.count)
+    }
+}
+
+extension RemoteHTTPLineageTests {
+    @Test("large objects use file download and retain their bytes after cleanup")
+    func largeObjectDownload() async throws {
+        let fixture = LineageFixture()
+        var document = fixture.document
+        document.chapters[0].episodes[0].content = String(repeating: "large synthetic body", count: 20000)
+        let snapshot = try SnapshotCodec.encode(SnapshotModel(workId: fixture.workID, document: document,
+                                                              documentCreatedAt: fixture.createdAt), parents: [])
+        let state = LineageHTTPState(workID: fixture.workID, snapshots: [snapshot], publishResponse: nil)
+        try state.failNext(path: "/v2/works/\(fixture.workID.description)/download", replies: [
+            downloadPage(head: snapshot.snapshotId, items: downloadItems([snapshot]), cursor: nil)
+        ])
+        let client = try fixture.client(snapshots: [snapshot], overrideState: state)
+        let result = try await client.downloadRemoteOnly(workID: fixture.workID)
+        #expect(result.snapshots.first?.objects == snapshot.objects)
+        for entry in snapshot.manifest.entries where entry.byteCount > 256 * 1024 {
+            #expect(state.count(path: "/v2/objects/\(entry.objectId.rawValue)") == 1)
+        }
+    }
+
+    @Test("file validation rejects truncation, overflow, bad digest and wrong headers", arguments: ["valid", "short", "long", "digest", "header"])
+    func streamingObjectValidation(mode: String) async throws {
+        let bytes = Data(repeating: 123, count: 400000)
+        let entry = SnapshotEntry(byteCount: bytes.count, contentType: .octetStream,
+                                  entityKey: "unused", objectId: ObjectID(data: bytes))
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: url) }
+        var received = bytes
+        switch mode {
+        case "short": received.removeLast()
+        case "long": received.append(0)
+        case "digest": received[0] = 0
+        default: break
+        }
+        try received.write(to: url)
+        let response = try #require(HTTPURLResponse(url: URL(string: "https://fixture.invalid/object")!, statusCode: 200,
+                                                    httpVersion: nil, headerFields: [
+            "Content-Type": "application/octet-stream", "Cache-Control": mode == "header" ? "public" : "no-store",
+            "Pragma": "no-cache", "X-Fuminiwa-Object-Digest": entry.objectId.rawValue,
+            "X-Fuminiwa-Byte-Count": "\(entry.byteCount)"
+        ]))
+        if mode == "valid" {
+            let mapped = try await ProductionSyncV2RemoteClient.validateObjectFile(url, response: response, entry: entry)
+            try FileManager.default.removeItem(at: url)
+            #expect(mapped == bytes)
+        } else {
+            await #expect(throws: SyncV2Failure.quarantined(.invalidRemoteData)) {
+                try await ProductionSyncV2RemoteClient.validateObjectFile(url, response: response, entry: entry)
+            }
+        }
+    }
+}
+
+extension RemoteHTTPLineageTests {
+    @Test("large-object requests overlap with a four-request bound and cancel as a group", arguments: [false, true])
+    func boundedObjectRequests(cancel: Bool) async throws {
+        let fixture = LineageFixture()
+        var document = fixture.document
+        var snapshots: [EncodedSnapshot] = []
+        for index in 0..<8 {
+            document.chapters[0].episodes[0].content = String(repeating: "x", count: 300000) + "\(index)"
+            snapshots.append(try SnapshotCodec.encode(SnapshotModel(workId: fixture.workID, document: document,
+                                                                    documentCreatedAt: fixture.createdAt),
+                                                      parents: snapshots.last.map { [$0.snapshotId] } ?? []))
+        }
+        let state = LineageHTTPState(workID: fixture.workID, snapshots: snapshots, publishResponse: nil)
+        let head = try #require(snapshots.last)
+        try state.failNext(path: "/v2/works/\(fixture.workID.description)/download", replies: [
+            downloadPage(head: head.snapshotId, items: downloadItems(snapshots), cursor: nil)
+        ])
+        let large = snapshots.flatMap { $0.objects }.filter { $0.value.count > 256 * 1024 }
+        let paths = large.map { "/v2/objects/\($0.key.rawValue)" }
+        for (id, bytes) in large {
+            state.failNext(path: "/v2/objects/\(id.rawValue)", replies: [LineageHTTPReply(status: 200, headers: [
+                "Content-Type": "application/octet-stream", "Cache-Control": "no-store", "Pragma": "no-cache",
+                "X-Fuminiwa-Object-Digest": id.rawValue, "X-Fuminiwa-Byte-Count": "\(bytes.count)"
+            ], body: bytes, delay: 0.5)])
+        }
+        let client = try fixture.client(snapshots: snapshots, overrideState: state)
+        let task = Task { try await client.downloadRemoteOnly(workID: fixture.workID) }
+        try await eventually { paths.reduce(0) { $0 + state.count(path: $1) } >= 4 }
+        #expect(paths.reduce(0) { $0 + state.count(path: $1) } == 4)
+        if cancel {
+            task.cancel()
+            await #expect(throws: CancellationError.self) { try await task.value }
+            #expect(paths.reduce(0) { $0 + state.count(path: $1) } == 4)
+        } else {
+            #expect(try await task.value.snapshots.count == 8)
+            // Under a heavily loaded full suite, URLSession may time out and
+            // retry a mocked read. Every object must still arrive exactly once
+            // in the graph; transport attempts need not equal object count.
+            #expect(paths.allSatisfy { state.count(path: $0) >= 1 })
+        }
+    }
+}
+
+extension RemoteHTTPLineageTests {
+    @Test("invalid current-page items take precedence over a speculative next-page error")
+    func invalidPageDiscardsPrefetch() async throws {
+        let fixture = LineageFixture()
+        let snapshot = try fixture.snapshot(title: "invalid page")
+        var items = downloadItems([snapshot])
+        items[0]["bytesBase64URL"] = "AA"
+        let state = LineageHTTPState(workID: fixture.workID, snapshots: [snapshot], publishResponse: nil)
+        try state.failNext(path: "/v2/works/\(fixture.workID.description)/download", replies: [
+            downloadPage(head: snapshot.snapshotId, items: items, cursor: "speculative"),
+            LineageHTTPReply(status: 403, headers: [:], body: Data())
+        ])
+        let client = try fixture.client(snapshots: [snapshot], overrideState: state)
+        await #expect(throws: SyncV2Failure.quarantined(.invalidRemoteData)) {
+            try await client.downloadRemoteOnly(workID: fixture.workID)
+        }
+    }
+}

@@ -77,6 +77,19 @@ struct RemoteAuthRefreshTests {
         #expect(await provider.refreshCount() == 1)
     }
 
+    @Test("a slower parallel response cannot undo a download session refresh")
+    func downloadRefreshIsMonotonic() async throws {
+        let binding = refreshBinding(account: "acct")
+        let old = refreshSession(binding: binding, generation: 1)
+        let refreshed = refreshSession(binding: binding, generation: 2)
+        let context = SnapshotDownloadContext(session: old)
+        await context.update(refreshed)
+        await context.update(old)
+        #expect(try await context.session(matching: old).refreshGeneration == 2)
+        await context.update(refreshSession(binding: refreshBinding(account: "other"), generation: 3))
+        #expect(try await context.session(matching: old).binding == binding)
+    }
+
     @Test("one download retains refreshed credentials for later reads")
     func downloadRetainsRefresh() async throws {
         let old = refreshSession(binding: refreshBinding(account: "acct"), generation: 1)

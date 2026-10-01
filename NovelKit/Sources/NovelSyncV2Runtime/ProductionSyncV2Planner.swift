@@ -28,13 +28,26 @@ actor ProductionSyncV2Planner: SyncV2CommandPlanner {
         let commandID: UUID
     }
 
+    // Object availability grows within a binding/work; checkpoints do not
+    // invalidate it. Revisions prevent late actor completions repopulating
+    // a cache invalidated during account transitions or deletion.
+    private var loadedPresence: [WorkID: V2AccountBinding] = [:]
+    private var presenceRevisions: [WorkID: UInt64] = [:]
+    private let loadKnownRemoteObjects: @Sendable (WorkID, V2LocalWorkScope) async throws -> Set<ObjectID>
     private var remoteObjectPresence: Set<RemoteObjectPresenceKey> = []
     private var transfers: [TransferSessionKey: SyncV2UploadTransfer] = [:]
     private var planningTasks: [WorkID: Task<SyncV2CommandPlan, Error>] = [:]
 
-    init(store: LocalSyncV2Store, scope: any SyncV2ScopeResolver) {
+    init(
+        store: LocalSyncV2Store,
+        scope: any SyncV2ScopeResolver,
+        loadKnownRemoteObjects: (@Sendable (WorkID, V2LocalWorkScope) async throws -> Set<ObjectID>)? = nil
+    ) {
         self.store = store
         self.scope = scope
+        self.loadKnownRemoteObjects = loadKnownRemoteObjects ?? { workID, scope in
+            try await store.knownRemoteObjectIDs(workID: workID, scope: scope)
+        }
     }
 
     func pendingWorkIDs() async throws -> [WorkID] {
@@ -44,6 +57,10 @@ actor ProductionSyncV2Planner: SyncV2CommandPlanner {
 
     func invalidateCaches(for workIDs: Set<WorkID>) async {
         guard !workIDs.isEmpty else { return }
+        for workID in workIDs {
+            loadedPresence.removeValue(forKey: workID)
+            presenceRevisions[workID, default: 0] &+= 1
+        }
         transfers = transfers.filter { !workIDs.contains($0.key.workID) }
         remoteObjectPresence = remoteObjectPresence.filter { !workIDs.contains($0.workID) }
     }
@@ -68,11 +85,14 @@ actor ProductionSyncV2Planner: SyncV2CommandPlanner {
             return .idle
         }
         let localScope = try await scope.existingScope(workID: workID)
-        guard case .bound = localScope else {
+        guard case let .bound(binding) = localScope else {
             await invalidateCaches(for: [workID])
             // Local-only works have no remote lane. Their durable intent is
             // retained locally; opening or saving them is not an auth failure.
             return .idle
+        }
+        if let loaded = loadedPresence[workID], loaded != binding {
+            await invalidateCaches(for: [workID])
         }
         if let reason = try await store.quarantinedUploadReason(workID: workID, scope: localScope) {
             return .blocked(.fatal(SyncV2FatalReason(rawValue: reason) ?? .unexpected))
@@ -205,6 +225,15 @@ private extension ProductionSyncV2Planner {
         scope localScope: V2LocalWorkScope,
         view: V2ImmutableTransferView
     ) async throws -> SyncV2CommandPlan? {
+        if loadedPresence[workID] != view.binding {
+            let revision = presenceRevisions[workID, default: 0]
+            let known = try await loadKnownRemoteObjects(workID, localScope)
+            guard presenceRevisions[workID, default: 0] == revision else { throw CancellationError() }
+            remoteObjectPresence.formUnion(known.map {
+                RemoteObjectPresenceKey(binding: view.binding, workID: workID, objectID: $0)
+            })
+            loadedPresence[workID] = view.binding
+        }
         // Read only this dependency occurrence, not every historical request.
         let currentRecords = try await store.completedTransferCommands(
             scope: localScope, workID: workID,
@@ -216,7 +245,9 @@ private extension ProductionSyncV2Planner {
             view: view,
             records: currentRecords
         )
-        if let object = view.snapshot.manifest.entries.map(\.objectId).first(where: { !progress.prepared.contains($0) }) {
+        if let object = view.snapshot.manifest.entries.map(\.objectId).first(where: { !progress.prepared.contains($0) &&
+            !remoteObjectPresence.contains(RemoteObjectPresenceKey(binding: view.binding, workID: workID, objectID: $0))
+        }) {
             let command = try makeObjectCommand(kind: "prepareObject", objectID: object, view: view)
             try await store.seal(command, scope: localScope)
             return .command(command)
@@ -230,11 +261,11 @@ private extension ProductionSyncV2Planner {
         ) {
             return upload
         }
-        let ready = progress.finalized.union(
-            remoteObjectPresence
-                .filter { $0.binding == view.binding && $0.workID == workID }
-                .map(\.objectID)
-        )
+        // Test only this occurrence's objects, without scanning the growing
+        // cache on every autosave command.
+        let ready = progress.finalized.union(progress.prepared.filter {
+            remoteObjectPresence.contains(RemoteObjectPresenceKey(binding: view.binding, workID: workID, objectID: $0))
+        })
         if !progress.prepared.isSubset(of: ready) {
             guard let object = progress.prepared.subtracting(ready).first else {
                 return .blocked(.fatal(.invalidLocalState))
@@ -273,11 +304,14 @@ private extension ProductionSyncV2Planner {
         view: V2ImmutableTransferView,
         records: [V2SealedCommandRecord]
     ) async throws -> TransferProgress {
+        let revision = presenceRevisions[workID, default: 0]
+        guard loadedPresence[workID] == view.binding else { throw CancellationError() }
         var prepared = Set<ObjectID>()
         var uploaded = Set<ObjectID>()
         var finalized = Set<ObjectID>()
         var registered = false
         for record in records {
+            guard presenceRevisions[workID, default: 0] == revision else { throw CancellationError() }
             switch record.commandKind {
             case "prepareObject":
                 let object = try objectID(record)
@@ -294,6 +328,7 @@ private extension ProductionSyncV2Planner {
                 prepared.insert(object)
                 if let receipt = try await store.receiptReadback(commandID: record.commandID, scope: localScope),
                    receipt.result == .noChanges {
+                    guard presenceRevisions[workID, default: 0] == revision else { throw CancellationError() }
                     remoteObjectPresence.insert(
                         RemoteObjectPresenceKey(
                             binding: view.binding,
@@ -303,13 +338,16 @@ private extension ProductionSyncV2Planner {
                     )
                 }
             case "finalizeObject":
-                try finalized.insert(objectID(record))
+                let object = try objectID(record)
+                finalized.insert(object)
+                remoteObjectPresence.insert(RemoteObjectPresenceKey(binding: view.binding, workID: workID, objectID: object))
             case "registerSnapshot":
                 registered = try commandSnapshotID(record) == view.snapshot.snapshotId
             default:
                 continue
             }
         }
+        guard presenceRevisions[workID, default: 0] == revision else { throw CancellationError() }
         return TransferProgress(prepared: prepared, uploaded: uploaded, finalized: finalized, registered: registered)
     }
 
@@ -500,6 +538,7 @@ extension ProductionSyncV2Planner {
     ) async throws {
         let workID = try command.workID
         let localScope = try await scope.existingScope(workID: workID)
+        let revision = presenceRevisions[workID, default: 0]
         do {
             try await store.acknowledge(
                 V2CommandAcknowledgement(
@@ -509,6 +548,18 @@ extension ProductionSyncV2Planner {
                 scope: localScope,
                 verifiedPublishInboxID: verifiedInboxID
             )
+            // Verification happens before acknowledgement in the worker, so
+            // inbox objects are known even if editor adoption is deferred.
+            let known = try await store.acknowledgedRemoteObjectIDs(
+                commandID: command.commandId, verifiedInboxID: verifiedInboxID, scope: localScope
+            )
+            if case let .bound(binding) = localScope,
+               loadedPresence[workID] == binding,
+               presenceRevisions[workID, default: 0] == revision {
+                remoteObjectPresence.formUnion(known.map {
+                    RemoteObjectPresenceKey(binding: binding, workID: workID, objectID: $0)
+                })
+            }
         } catch {
             throw SyncV2Failure.receiptMismatch
         }

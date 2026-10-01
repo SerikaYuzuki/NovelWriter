@@ -705,26 +705,37 @@ extension Data {
         return String(decoding: bytes, as: UTF8.self)
     }
 
-    init(hex: String) {
+    init?(hex: String) {
         let input = Array(hex.utf8)
-        func nibble(_ byte: UInt8) -> UInt8 {
-            byte <= 57 ? byte - 48 : byte - 87
+        guard input.count.isMultiple(of: 2) else { return nil }
+        func nibble(_ byte: UInt8) -> UInt8? {
+            switch byte {
+            case 48...57: return byte - 48
+            case 65...70: return byte - 65 + 10
+            case 97...102: return byte - 97 + 10
+            default: return nil
+            }
         }
-        self.init(stride(from: 0, to: input.count, by: 2).map {
-            nibble(input[$0]) << 4 | nibble(input[$0 + 1])
-        })
+        var bytes = Data()
+        bytes.reserveCapacity(input.count / 2)
+        for index in stride(from: 0, to: input.count, by: 2) {
+            guard let high = nibble(input[index]), let low = nibble(input[index + 1]) else { return nil }
+            bytes.append(high << 4 | low)
+        }
+        self = bytes
     }
+
 }
 
 extension ObjectID {
     var bytes: Data {
-        Data(hex: rawValue)
+        Data(hex: rawValue)! // Typed IDs already enforce a lowercase SHA-256 digest.
     }
 }
 
 extension SnapshotID {
     var bytes: Data {
-        Data(hex: rawValue)
+        Data(hex: rawValue)! // Typed IDs already enforce a lowercase SHA-256 digest.
     }
 }
 

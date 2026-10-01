@@ -42,7 +42,7 @@ public enum CanonicalJSON {
     }
 
     /// Validates an object and returns its parsed form for schema validation.
-    static func parseObject(
+    public static func parseObject(
         _ data: Data,
         maxBytes: Int = SnapshotSyncV2Limits.maxCommandBytes,
         maxDepth: Int = SnapshotSyncV2Limits.maxCanonicalJSONDepth
@@ -62,7 +62,7 @@ public enum CanonicalJSON {
         return value
     }
 
-    indirect enum Value: Sendable {
+    public indirect enum Value: Sendable {
         case object([(String, Value)])
         case array([Value])
         case string(String)
@@ -70,7 +70,12 @@ public enum CanonicalJSON {
         case bool(Bool)
         case null
 
-        var objectDictionary: [String: Value]? {
+        public var stringContents: String? {
+            guard case let .string(value) = self else { return nil }
+            return value
+        }
+
+        public var objectDictionary: [String: Value]? {
             guard case let .object(pairs) = self else {
                 return nil
             }

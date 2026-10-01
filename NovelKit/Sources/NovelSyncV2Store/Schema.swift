@@ -10,16 +10,16 @@ enum V2StoreSchema {
     static let version = "2"
     private static let legacyRestoreStateChecksum = Data(
         hex: "745d947270838584aa854262fd794c7808316a0aa507966a22e9d33fe9cccf74"
-    )
+    )!
     private static let legacyRetiredRestoreStateChecksum = Data(
         hex: "6b089b87ef6118cbf04e89b3e46295b8b1297463e68cde8e785d44149c76c467"
-    )
+    )!
     private static let legacyCleanTransferStateChecksum = Data(
         hex: "e38615c6acc8bbe4b16d28ec9144bf75c1cbf239024ae06b8cb77a2729ec43fa"
-    )
+    )!
     private static let legacyUnconstrainedTransferStateChecksum = Data(
         hex: "9af3fd4c7a743ccce0810aea444b93fd7df060b4d48a78fc5156555afbe98280"
-    )
+    )!
     private static let legacyUploadTransferTableDDL = [
         "CREATE TABLE upload_transfers (",
         "  transfer_id TEXT PRIMARY KEY,",
@@ -137,7 +137,7 @@ enum V2StoreSchema {
     }
 
     static func checksum(_ sql: Data) -> Data {
-        Data(hex: SHA256Digest.hex(sql))
+        Data(hex: SHA256Digest.hex(sql))!
     }
 
     static func open(_ db: OpaquePointer, create: Bool) throws {
@@ -656,7 +656,7 @@ enum V2StoreSchema {
                 bytes.append(0)
             }
         }
-        return Data(hex: SHA256Digest.hex(bytes))
+        return Data(hex: SHA256Digest.hex(bytes))!
     }
 
     private static func schemaObjects(

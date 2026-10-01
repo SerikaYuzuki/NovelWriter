@@ -7,7 +7,7 @@ import NovelSyncV2Application
 import FoundationNetworking
 #endif
 
-struct SnapshotDownloadBatch {
+struct SnapshotDownloadBatch: Sendable {
     var manifests: [SnapshotID: (manifest: SnapshotManifest, bytes: Data)] = [:]
     var objects: [ObjectID: Data] = [:]
 }
@@ -23,12 +23,17 @@ extension ProductionSyncV2RemoteClient {
         var seenCursors: Set<String> = []
         var lastKey: String?
         let budget = SnapshotFetchTraversal()
+        var pending: (Data, URLResponse)?
         repeat {
             try Task.checkCancellation()
             let request = try downloadPageRequest(workID: workID, id: id, cursor: cursor, session: session)
-            let (data, response) = try await requestSnapshotData(
-                request, session: session, allowMissingEndpoint: cursor == nil
-            )
+            let (data, response): (Data, URLResponse)
+            if let pending { (data, response) = pending }
+            else {
+                (data, response) = try await requestSnapshotData(
+                    request, session: session, allowMissingEndpoint: cursor == nil
+                )
+            }
             if cursor == nil, let http = response as? HTTPURLResponse, [404, 405].contains(http.statusCode) {
                 try await rejectKnownRemoteDeletion(workID: workID)
                 // A typed account-scoped 404 means the route exists but its root
@@ -40,30 +45,39 @@ extension ProductionSyncV2RemoteClient {
                 }
                 return nil
             }
-            let page = try decodeDownloadPage(data, response: response, id: id)
-            guard let items = page["items"] as? [[String: Any]], items.count <= 256 else {
-                throw SyncV2Failure.quarantined(.invalidRemoteData)
-            }
-            for item in items {
-                let key = try appendDownloadItem(item, workID: workID, batch: &batch, budget: budget)
-                guard lastKey.map({ $0 < key }) ?? true else {
+            let page = try await Self.decodeDownloadPage(data, response: response, id: id)
+            if let next = page.cursor {
+                guard seenCursors.insert(next).inserted else {
                     throw SyncV2Failure.quarantined(.invalidRemoteData)
                 }
-                lastKey = key
             }
-            if let next = page["nextCursor"] as? String {
-                guard !items.isEmpty, !next.isEmpty, next.utf8.count <= 2048,
-                      seenCursors.insert(next).inserted else {
+            // The envelope is canonical and scoped to this root. A speculative
+            // response is never consumed if any item in this page fails.
+            let nextRequest = try page.cursor.map {
+                try downloadPageRequest(workID: workID, id: id, cursor: $0, session: session)
+            }
+            async let prefetched: (Data, URLResponse)? = fetchNextPage(nextRequest, session: session)
+            let validated = try await Self.validatePageItems(page.items, workID: workID)
+            for item in validated {
+                guard lastKey.map({ $0 < item.key }) ?? true else {
                     throw SyncV2Failure.quarantined(.invalidRemoteData)
                 }
-                cursor = next
-            } else if page["nextCursor"] is NSNull {
-                cursor = nil
-            } else {
-                throw SyncV2Failure.quarantined(.invalidRemoteData)
+                lastKey = item.key
+                if let manifest = item.manifest {
+                    let snapshotID = try SnapshotID(rawValue: item.id)
+                    try budget.include(manifest)
+                    batch.manifests[snapshotID] = (manifest, item.bytes)
+                } else {
+                    guard batch.objects.count < SnapshotSyncV2Limits.maxEntries else {
+                        throw SyncV2Failure.quarantined(.invalidRemoteData)
+                    }
+                    batch.objects[try ObjectID(rawValue: item.id)] = item.bytes
+                }
             }
+            cursor = page.cursor
+            pending = try await prefetched
         } while cursor != nil
-        try validateDownloadClosure(batch, head: id)
+        try await Self.validateDownloadClosure(batch, head: id)
         return batch
     }
 
@@ -84,64 +98,83 @@ extension ProductionSyncV2RemoteClient {
         return request
     }
 
-    private func decodeDownloadPage(_ data: Data, response: URLResponse, id: SnapshotID) throws -> [String: Any] {
+    private func fetchNextPage(_ request: URLRequest?, session: FuminiwaSession) async throws -> (Data, URLResponse)? {
+        guard let request else { return nil }
+        return try await requestSnapshotData(request, session: session)
+    }
+
+    private struct DownloadPage: Sendable {
+        let items: [CanonicalJSON.Value]
+        let cursor: String?
+    }
+
+    private struct DownloadItem: Sendable {
+        let key: String
+        let id: String
+        let bytes: Data
+        let manifest: SnapshotManifest?
+    }
+
+    private nonisolated static func decodeDownloadPage(
+        _ data: Data, response: URLResponse, id: SnapshotID
+    ) async throws -> DownloadPage {
         guard data.count <= 24 * 1024 * 1024,
               let http = response as? HTTPURLResponse,
-              http.statusCode == 200, httpContentType(response) == mediaType,
+              http.statusCode == 200,
+              httpContentType(response) == "application/vnd.fuminiwa.sync.v2+jcs",
               http.value(forHTTPHeaderField: "Cache-Control")?.lowercased() == "no-store",
               http.value(forHTTPHeaderField: "Pragma")?.lowercased() == "no-cache" else {
             throw SyncV2Failure.quarantined(.invalidRemoteData)
         }
         do {
-            try CanonicalJSON.validate(data)
+            guard let page = try CanonicalJSON.parseObject(data).objectDictionary,
+                  Set(page.keys) == ["result", "snapshotId", "items", "nextCursor"],
+                  page["result"]?.stringContents == "noChanges", page["snapshotId"]?.stringContents == id.rawValue,
+                  case let .array(items) = page["items"], items.count <= 256 else {
+                throw SyncV2Failure.quarantined(.invalidRemoteData)
+            }
+            let cursor: String?
+            if case .null = page["nextCursor"] { cursor = nil }
+            else if let next = page["nextCursor"]?.stringContents,
+                    !items.isEmpty, !next.isEmpty, next.utf8.count <= 2048 { cursor = next }
+            else { throw SyncV2Failure.quarantined(.invalidRemoteData) }
+            return DownloadPage(items: items, cursor: cursor)
         } catch {
             throw SyncV2Failure.quarantined(.invalidRemoteData)
         }
-        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            throw SyncV2Failure.quarantined(.invalidRemoteData)
-        }
-        let page = try checkedObject(object, keys: ["result", "snapshotId", "items", "nextCursor"])
-        guard page["result"] as? String == "noChanges", page["snapshotId"] as? String == id.rawValue else {
-            throw SyncV2Failure.quarantined(.invalidRemoteData)
-        }
-        return page
     }
 
-    private func appendDownloadItem(
-        _ item: [String: Any], workID: WorkID, batch: inout SnapshotDownloadBatch, budget: SnapshotFetchTraversal
-    ) throws -> String {
-        let item = try checkedObject(item, keys: ["kind", "id", "bytesBase64URL"])
-        guard let kind = item["kind"] as? String, let rawID = item["id"] as? String,
-              let rawBytes = item["bytesBase64URL"] as? String,
-              let bytes = decodeDownloadBytes(rawBytes), ObjectID(data: bytes).rawValue == rawID else {
-            throw SyncV2Failure.quarantined(.invalidRemoteData)
-        }
-        switch kind {
-        case "manifest":
-            let manifest = try SnapshotValidator.validate(manifestBytes: bytes)
-            let snapshotID = SnapshotID(data: bytes)
-            guard manifest.workId == workID, batch.manifests[snapshotID] == nil else {
+    private nonisolated static func validatePageItems(
+        _ items: [CanonicalJSON.Value], workID: WorkID
+    ) async throws -> [DownloadItem] {
+        try items.map { value in
+            try Task.checkCancellation()
+            guard let item = value.objectDictionary,
+                  Set(item.keys) == ["kind", "id", "bytesBase64URL"],
+                  let kind = item["kind"]?.stringContents, let rawID = item["id"]?.stringContents,
+                  let rawBytes = item["bytesBase64URL"]?.stringContents,
+                  let bytes = Data(base64URL: rawBytes), ObjectID(data: bytes).rawValue == rawID else {
                 throw SyncV2Failure.quarantined(.invalidRemoteData)
             }
-            try budget.include(manifest)
-            batch.manifests[snapshotID] = (manifest, bytes)
-        case "object":
-            let objectID = ObjectID(data: bytes)
-            guard bytes.count <= 256 * 1024, batch.objects[objectID] == nil,
-                  batch.objects.count < SnapshotSyncV2Limits.maxEntries else {
-                throw SyncV2Failure.quarantined(.invalidRemoteData)
+            let manifest: SnapshotManifest?
+            switch kind {
+            case "manifest":
+                manifest = try SnapshotValidator.validate(manifestBytes: bytes)
+                guard manifest?.workId == workID else { throw SyncV2Failure.quarantined(.invalidRemoteData) }
+            case "object":
+                guard bytes.count <= 256 * 1024 else { throw SyncV2Failure.quarantined(.invalidRemoteData) }
+                manifest = nil
+            default: throw SyncV2Failure.quarantined(.invalidRemoteData)
             }
-            batch.objects[objectID] = bytes
-        default:
-            throw SyncV2Failure.quarantined(.invalidRemoteData)
+            return DownloadItem(key: "\(kind):\(rawID)", id: rawID, bytes: bytes, manifest: manifest)
         }
-        return "\(kind):\(rawID)"
     }
 
-    private func validateDownloadClosure(_ batch: SnapshotDownloadBatch, head: SnapshotID) throws {
+    private nonisolated static func validateDownloadClosure(_ batch: SnapshotDownloadBatch, head: SnapshotID) async throws {
         guard batch.manifests[head] != nil else { throw SyncV2Failure.quarantined(.invalidRemoteData) }
         var referenced: Set<ObjectID> = []
         for value in batch.manifests.values {
+            try Task.checkCancellation()
             guard value.manifest.parentSnapshotIds.allSatisfy({ batch.manifests[$0] != nil }) else {
                 throw SyncV2Failure.quarantined(.invalidRemoteData)
             }
@@ -157,12 +190,4 @@ extension ProductionSyncV2RemoteClient {
         }
     }
 
-    private func decodeDownloadBytes(_ value: String) -> Data? {
-        var base64 = value.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
-        base64 += String(repeating: "=", count: (4 - base64.count % 4) % 4)
-        guard let bytes = Data(base64Encoded: base64),
-              bytes.base64EncodedString().replacingOccurrences(of: "+", with: "-")
-              .replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "") == value else { return nil }
-        return bytes
-    }
 }

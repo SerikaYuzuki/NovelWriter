@@ -16,10 +16,16 @@ extension ProductionSyncV2RemoteClient {
         let batch = try await downloadSnapshotPages(workID: workID, id: id, session: session)
         if let batch {
             traversal.objects = batch.objects
-            for (snapshotID, value) in batch.manifests {
+            let ordered = batch.manifests.sorted { $0.key.rawValue < $1.key.rawValue }
+            for (_, value) in ordered { try traversal.include(value.manifest) }
+            // Collect the whole page graph first: attachments belonging to
+            // different historical snapshots share the same four-request bound.
+            _ = try await fetchObjects(entries: ordered.flatMap { $0.value.manifest.entries },
+                                       session: session, traversal: traversal)
+            for (snapshotID, value) in ordered {
                 try Task.checkCancellation()
-                try traversal.include(value.manifest)
-                let objects = try await fetchObjects(manifest: value.manifest, session: session, traversal: traversal)
+                let objects = Dictionary(value.manifest.entries.map { ($0.objectId, traversal.objects[$0.objectId]!) },
+                                         uniquingKeysWith: { first, _ in first })
                 traversal.memo[snapshotID] = EncodedSnapshot(
                     manifest: value.manifest, manifestBytes: value.bytes, objects: objects
                 )
@@ -141,7 +147,7 @@ extension ProductionSyncV2RemoteClient {
             throw SyncV2Failure.quarantined(.invalidRemoteData)
         }
         try traversal.include(manifest)
-        let objects = try await fetchObjects(manifest: manifest, session: session, traversal: traversal)
+        let objects = try await fetchObjects(entries: manifest.entries, session: session, traversal: traversal)
         return EncodedSnapshot(manifest: manifest, manifestBytes: bytes, objects: objects)
     }
 
@@ -157,6 +163,10 @@ extension ProductionSyncV2RemoteClient {
         request.httpMethod = "GET"
         addHeaders(&request, session: session, binding: binding(for: session))
         let (data, response) = try await requestSnapshotData(request, session: session)
+        return try await Self.decodeManifest(data, response: response, id: id)
+    }
+
+    private nonisolated static func decodeManifest(_ data: Data, response: URLResponse, id: SnapshotID) async throws -> (SnapshotManifest, Data) {
         let contentType = httpContentType(response)
         let cacheControl = (response as? HTTPURLResponse)?
             .value(forHTTPHeaderField: "Cache-Control")?.lowercased()
@@ -166,13 +176,13 @@ extension ProductionSyncV2RemoteClient {
               http.statusCode == 200,
               cacheControl == "no-store",
               pragma == "no-cache",
-              contentType == mediaType,
+              contentType == "application/vnd.fuminiwa.sync.v2+jcs",
               let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let raw = object["manifestBase64URL"] as? String,
               let digestRaw = object["manifestBytesDigest"] as? String,
               let bytes = Data(base64URL: raw),
-              SnapshotID(data: bytes) == id,
-              ObjectID(data: bytes).rawValue == digestRaw,
+              ObjectID(data: bytes).rawValue == id.rawValue,
+              id.rawValue == digestRaw,
               object["snapshotId"] as? String == id.rawValue,
               object["result"] as? String == "noChanges" else {
             throw SyncV2Failure.quarantined(.invalidRemoteData)
@@ -181,26 +191,46 @@ extension ProductionSyncV2RemoteClient {
     }
 
     private func fetchObjects(
-        manifest: SnapshotManifest,
+        entries: [SnapshotEntry],
         session: FuminiwaSession,
         traversal: SnapshotFetchTraversal
     ) async throws -> [ObjectID: Data] {
         var objects: [ObjectID: Data] = [:]
-        for entry in manifest.entries {
-            try Task.checkCancellation()
+        var missing: [SnapshotEntry] = []
+        var seen = Set<ObjectID>()
+        for entry in entries {
             if let bytes = traversal.objects[entry.objectId] {
-                guard bytes.count == entry.byteCount else {
-                    throw SyncV2Failure.quarantined(.invalidRemoteData)
-                }
+                guard bytes.count == entry.byteCount else { throw SyncV2Failure.quarantined(.invalidRemoteData) }
                 objects[entry.objectId] = bytes
-                continue
+            } else if seen.insert(entry.objectId).inserted { missing.append(entry) }
+        }
+        // Fixed windows bound network + validation memory. Await results in
+        // manifest order, so simultaneous failures have deterministic priority.
+        for offset in stride(from: 0, to: missing.count, by: 4) {
+            try Task.checkCancellation()
+            let entries = Array(missing[offset..<min(offset + 4, missing.count)])
+            let results = await withTaskGroup(of: (Int, Result<Data, Error>).self) { group in
+                for (index, entry) in entries.enumerated() {
+                    group.addTask {
+                        do { return (index, .success(try await self.fetchObject(entry: entry, session: session))) }
+                        catch { return (index, .failure(error)) }
+                    }
+                }
+                var results: [Int: Result<Data, Error>] = [:]
+                for await (index, result) in group { results[index] = result }
+                return results
             }
-            let bytes = try await fetchObject(
-                entry: entry,
-                session: session
-            )
-            traversal.objects[entry.objectId] = bytes
-            objects[entry.objectId] = bytes
+            try Task.checkCancellation()
+            for (index, entry) in entries.enumerated() {
+                let bytes = try results[index]!.get()
+                traversal.objects[entry.objectId] = bytes
+                objects[entry.objectId] = bytes
+            }
+        }
+        for entry in entries {
+            guard objects[entry.objectId]?.count == entry.byteCount else {
+                throw SyncV2Failure.quarantined(.invalidRemoteData)
+            }
         }
         return objects
     }
@@ -216,26 +246,19 @@ extension ProductionSyncV2RemoteClient {
         )
         request.httpMethod = "GET"
         addHeaders(&request, session: session, binding: binding(for: session))
-        let (rawObject, response) = try await requestSnapshotData(request, session: session)
-        let contentType = httpContentType(response)
-        let cacheControl = (response as? HTTPURLResponse)?
-            .value(forHTTPHeaderField: "Cache-Control")?.lowercased()
-        let pragma = (response as? HTTPURLResponse)?
-            .value(forHTTPHeaderField: "Pragma")?.lowercased()
-        guard let http = response as? HTTPURLResponse,
-              http.statusCode == 200,
-              cacheControl == "no-store",
-              pragma == "no-cache",
-              contentType == "application/octet-stream",
-              http.value(forHTTPHeaderField: "X-Fuminiwa-Object-Digest") ==
-              entry.objectId.rawValue,
-              Int(http.value(forHTTPHeaderField: "X-Fuminiwa-Byte-Count") ?? "") ==
-              rawObject.count,
-              rawObject.count == entry.byteCount,
-              ObjectID(data: rawObject) == entry.objectId else {
+        if entry.byteCount > 256 * 1024 {
+            return try await downloadObjectFile(request, entry: entry, session: session)
+        }
+        let (bytes, response) = try await requestSnapshotData(request, session: session)
+        return try await Self.validateObjectBytes(bytes, response: response, entry: entry)
+    }
+
+    private nonisolated static func validateObjectBytes(_ bytes: Data, response: URLResponse, entry: SnapshotEntry) async throws -> Data {
+        try validateObjectHeaders(response, entry: entry)
+        guard bytes.count == entry.byteCount, ObjectID(data: bytes) == entry.objectId else {
             throw SyncV2Failure.quarantined(.invalidRemoteData)
         }
-        return rawObject
+        return bytes
     }
 
     private func binding(for session: FuminiwaSession) -> SealedCommand.Binding {
@@ -283,14 +306,4 @@ func remoteClientWorkID(for command: SealedCommand) throws -> WorkID {
         throw SyncV2Failure.receiptMismatch
     }
     return try WorkID(uuidString: raw)
-}
-
-private extension Data {
-    init?(base64URL value: String) {
-        var text = value
-            .replacingOccurrences(of: "-", with: "+")
-            .replacingOccurrences(of: "_", with: "/")
-        text += String(repeating: "=", count: (4 - text.count % 4) % 4)
-        self.init(base64Encoded: text)
-    }
 }

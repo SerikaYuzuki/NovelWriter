@@ -81,3 +81,13 @@ func persistedInboxStillRejectsCorruption(version: String) async throws {
     #expect(try await store.query("SELECT COUNT(*) FROM snapshot_entries WHERE entity_key='work/title'").first?[0].int64 == 0)
     await store.close()
 }
+
+@Test func hexadecimalBytesAcceptUppercaseAndEmptyInput() {
+    #expect(Data(hex: "aBcDEF0190") == Data([0xab, 0xcd, 0xef, 0x01, 0x90]))
+    #expect(Data(hex: "") == Data())
+}
+
+@Test(arguments: ["a", "abc", "GG", "-1", "é", "0 "])
+func hexadecimalBytesRejectMalformedInput(_ value: String) {
+    #expect(Data(hex: value) == nil)
+}

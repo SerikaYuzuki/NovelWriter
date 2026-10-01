@@ -16,6 +16,10 @@ actor SnapshotDownloadContext {
     }
 
     func update(_ value: FuminiwaSession) {
+        // A slower concurrent 200 response can finish after another read's
+        // refresh. It must not roll credentials back to the older generation.
+        guard value.binding == session.binding,
+              value.refreshGeneration >= session.refreshGeneration else { return }
         session = value
     }
 

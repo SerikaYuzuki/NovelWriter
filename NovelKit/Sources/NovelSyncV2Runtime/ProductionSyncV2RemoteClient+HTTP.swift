@@ -470,7 +470,7 @@ func httpContentType(_ response: URLResponse) -> String? {
         .map(String.init)
 }
 
-private final class ImportByteProgress: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
+final class ImportByteProgress: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
     let progress: ImportProgress?
     init(progress: ImportProgress?) {
         self.progress = progress

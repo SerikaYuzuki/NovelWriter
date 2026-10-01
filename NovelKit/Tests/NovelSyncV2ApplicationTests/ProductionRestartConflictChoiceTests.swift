@@ -196,10 +196,10 @@ extension ProductionRestartTests {
         #expect(clone.workID != fixture.workID)
         #expect(try await app.open(workID: clone.workID).document != nil)
         try await app.resumePending()
-        try await Task.sleep(for: .milliseconds(100))
+        // Scheduling latency is not a transport invariant, especially while
+        // the synthetic import and other actor tests run concurrently.
+        try await eventually { !(await configuration.remote.recordedOperations()).isEmpty }
         #expect(await app.uiState(workID: fixture.workID)?.lastFailure == nil)
-        let earlyOperations = await configuration.remote.recordedOperations()
-        #expect(!earlyOperations.isEmpty)
         try await eventually {
             let operations = await configuration.remote.recordedOperations()
             return operations.contains { commandKind($0) == .cloneWork }

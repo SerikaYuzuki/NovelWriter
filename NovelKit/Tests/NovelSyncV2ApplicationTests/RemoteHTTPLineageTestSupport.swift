@@ -6,6 +6,7 @@ struct LineageHTTPReply: Sendable {
     let status: Int
     let headers: [String: String]
     let body: Data
+    var delay: TimeInterval = 0
     var transportError: URLError.Code?
 }
 
@@ -162,11 +163,24 @@ class LineageURLProtocol: URLProtocol, @unchecked Sendable {
         request
     }
 
+    private let deliveryLock = NSLock()
+    private var stopped = false
+
     override func startLoading() {
         guard let reply = Self.state?.reply(for: request) else {
             client?.urlProtocol(self, didFailWithError: URLError(.fileDoesNotExist))
             return
         }
+        if reply.delay > 0 {
+            DispatchQueue.global().asyncAfter(deadline: .now() + reply.delay) { [self] in deliver(reply) }
+        } else { deliver(reply) }
+    }
+
+    private func deliver(_ reply: LineageHTTPReply) {
+        deliveryLock.lock()
+        let shouldDeliver = !stopped
+        deliveryLock.unlock()
+        guard shouldDeliver else { return }
         if let error = reply.transportError {
             client?.urlProtocol(self, didFailWithError: URLError(error))
             return
@@ -187,7 +201,11 @@ class LineageURLProtocol: URLProtocol, @unchecked Sendable {
         client?.urlProtocolDidFinishLoading(self)
     }
 
-    override func stopLoading() {}
+    override func stopLoading() {
+        deliveryLock.lock()
+        stopped = true
+        deliveryLock.unlock()
+    }
 }
 
 private extension Data {
