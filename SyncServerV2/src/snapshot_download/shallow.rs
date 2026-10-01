@@ -918,3 +918,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "shallow/client_fixture_tests.rs"]
+mod client_fixture_tests;
