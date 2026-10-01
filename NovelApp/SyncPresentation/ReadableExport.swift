@@ -2,11 +2,12 @@ import Foundation
 import NovelCore
 import NovelExport
 import NovelSyncV2
+import NovelThumbnail
 
 /// This value capture is shared by the platform document-operation gates.
 enum ReadableExport {
     static func write(_ document: NovelDocument, attachments: [SyncAttachment], resources: [PortableResource], to url: URL) async throws {
-        let attachmentFiles = attachments.map {
+        let attachmentFiles = attachments.filter { !ThumbnailOwner.isReserved($0.fileName) }.map {
             ReadableExportFile(path: ["添付", $0.attachmentId.uuidString.lowercased(), $0.fileName], bytes: $0.bytes)
         }
         let resourceFiles = try resources.filter { $0.kind == .regularFile }.map { resource in

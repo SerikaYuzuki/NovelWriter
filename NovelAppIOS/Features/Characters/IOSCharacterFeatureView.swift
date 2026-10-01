@@ -1,4 +1,6 @@
 import NovelCore
+import NovelThumbnail
+import NovelUI
 import SwiftUI
 
 @MainActor
@@ -104,13 +106,25 @@ struct IOSCharacterOutlineView: View {
                     dismissAfterDeletion: true
                 )
             } label: {
-                IOSCharacterRow(character: character)
+                HStack(spacing: Spacing.small) {
+                    ThumbnailImage(data: store.thumbnailData(ThumbnailOwner(.character, character.id.rawValue)),
+                                   kind: .character, title: character.name, size: 28, color: character.colorHex.flatMap { Color(hex: $0) })
+                        .accessibilityHidden(true)
+                    Circle().fill(character.colorHex.flatMap { Color(hex: $0) } ?? FuminiwaColor.textTertiary.color).frame(width: 8, height: 8).accessibilityHidden(true)
+                    IOSCharacterRow(character: character)
+                }
             }
         } else {
             Button {
                 selection = character.id
             } label: {
-                IOSCharacterRow(character: character)
+                HStack(spacing: Spacing.small) {
+                    ThumbnailImage(data: store.thumbnailData(ThumbnailOwner(.character, character.id.rawValue)),
+                                   kind: .character, title: character.name, size: 28, color: character.colorHex.flatMap { Color(hex: $0) })
+                        .accessibilityHidden(true)
+                    Circle().fill(character.colorHex.flatMap { Color(hex: $0) } ?? FuminiwaColor.textTertiary.color).frame(width: 8, height: 8).accessibilityHidden(true)
+                    IOSCharacterRow(character: character)
+                }
             }
             .buttonStyle(.plain)
             .accessibilityAddTraits(selection == character.id ? .isSelected : [])
@@ -200,6 +214,9 @@ struct IOSCharacterDetailView: View {
 
     private func characterForm(_ character: NovelCore.Character) -> some View {
         Form {
+            Section {
+                IOSThumbnailEditor(store: store, owner: ThumbnailOwner(.character, character.id.rawValue), title: character.name, color: character.colorHex.flatMap { Color(hex: $0) })
+            }
             Section("基本情報") {
                 TextField("名前", text: characterBinding(character.id, \.name, fallback: ""))
                     .textInputAutocapitalization(.never)

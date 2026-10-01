@@ -209,9 +209,11 @@ struct CharacterColorSwatch: View {
 
 struct CharacterRow: View {
     let character: NovelCore.Character
+    var thumbnailData: Data?
 
     var body: some View {
         HStack(spacing: 8) {
+            ThumbnailImage(data: thumbnailData, kind: .character, title: character.name, size: 24, color: character.colorHex.flatMap { Color(hex: $0) }).accessibilityHidden(true)
             CharacterColorSwatch(colorHex: character.colorHex)
                 .layoutPriority(1)
 

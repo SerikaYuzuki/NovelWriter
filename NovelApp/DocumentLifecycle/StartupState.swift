@@ -33,6 +33,7 @@ struct StartupLibraryWork: Identifiable, Equatable {
     var oldestUnreceivedAt: Date?
     var accountState: SyncV2LibraryAccountState = .unbound
     var remoteHeadConfirmed = false
+    var localGeneration: Int64?
 
     var status: SyncV2LibraryStatus {
         let value = SyncV2LibraryStatus.resolve(availability: availability == .remoteOnly ? .remoteOnly : .localOnly,

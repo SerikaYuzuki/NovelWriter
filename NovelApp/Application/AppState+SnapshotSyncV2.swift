@@ -99,6 +99,7 @@ extension AppState {
     func checkpointSnapshotSyncV2(
         _ document: NovelDocument,
         reason: SyncV2CheckpointReason = .autosave,
+        attachments: [SyncAttachment]? = nil,
         resources: [PortableResource]? = nil,
         portableCreatedAt: Date? = nil
     ) async -> Bool {
@@ -138,6 +139,7 @@ extension AppState {
                 saveState = .failed
                 return false
             }
+            let checkpointAttachments = attachments ?? snapshotSyncV2Attachments
             if snapshotSyncV2Session?.workID != workID {
                 snapshotSyncV2Session = await application.beginSession(workID: workID)
             }
@@ -147,7 +149,7 @@ extension AppState {
                 document: document,
                 reason: reason,
                 documentCreatedAt: documentCreatedAt,
-                attachments: snapshotSyncV2Attachments,
+                attachments: checkpointAttachments,
                 resources: localResources
             )
             saveState = .saved

@@ -1,5 +1,6 @@
 import EditorKit
 import NovelCore
+import NovelThumbnail
 import NovelUI
 import SwiftUI
 import UniformTypeIdentifiers
@@ -442,15 +443,18 @@ private struct WorldbuildingOutlineView: View {
         VStack(spacing: 0) {
             List(selection: selectionBinding) {
                 ForEach(sessionBoundWorldNotes) { item in
-                    WorldNoteRow(note: item.value)
-                        .tag(item.value.id)
-                        .contextMenu {
-                            Button(role: .destructive) {
-                                notePendingDeletion = item
-                            } label: {
-                                Label("削除", systemImage: "trash")
-                            }
+                    HStack(spacing: Spacing.small) {
+                        ThumbnailImage(data: appState.thumbnailData(ThumbnailOwner(.worldNote, item.value.id.rawValue)), kind: .worldNote, title: item.value.title, size: 28).accessibilityHidden(true)
+                        WorldNoteRow(note: item.value)
+                    }
+                    .tag(item.value.id)
+                    .contextMenu {
+                        Button(role: .destructive) {
+                            notePendingDeletion = item
+                        } label: {
+                            Label("削除", systemImage: "trash")
                         }
+                    }
                 }
                 .onMove { offsets, destination in
                     appState.moveWorldNotes(fromOffsets: offsets, toOffset: destination)
@@ -552,6 +556,7 @@ private struct WorldNoteDetailView: View {
             if let note = appState.selectedWorldNote {
                 let session = appState.documentSessionToken
                 VStack(alignment: .leading, spacing: 16) {
+                    MacThumbnailEditor(owner: ThumbnailOwner(.worldNote, note.id.rawValue), title: note.title)
                     WorkbenchLabeledField("タイトル") {
                         TextField("ノートのタイトル", text: titleBinding(for: note))
                             .textFieldStyle(.roundedBorder)
@@ -652,7 +657,10 @@ private struct ProjectInfoView: View {
         SectionSurface(title: "作品情報", systemImage: "book.closed") {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    WorkInfoSummary(document: appState.document)
+                    HStack(alignment: .top, spacing: Spacing.outer) {
+                        MacThumbnailEditor(owner: ThumbnailOwner(.work, appState.document.id), title: appState.document.title)
+                        WorkInfoSummary(document: appState.document, showsCover: false)
+                    }
                     GroupBox("編集") {
                         VStack(alignment: .leading, spacing: 8) {
                             WorkbenchLabeledField("作品タイトル") {

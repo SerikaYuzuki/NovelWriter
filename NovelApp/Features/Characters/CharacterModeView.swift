@@ -1,5 +1,6 @@
 import AppKit
 import NovelCore
+import NovelThumbnail
 import NovelUI
 import SwiftUI
 
@@ -11,7 +12,7 @@ struct CharacterListView: View {
     var body: some View {
         List(selection: characterSelectionBinding) {
             ForEach(sessionBoundCharacters) { item in
-                CharacterRow(character: item.value)
+                CharacterRow(character: item.value, thumbnailData: appState.thumbnailData(ThumbnailOwner(.character, item.value.id.rawValue)))
                     .tag(item.value.id)
                     .contextMenu {
                         Button(role: .destructive) {
@@ -189,6 +190,9 @@ private struct CharacterSheetView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 8) {
+            if let character = appState.selectedCharacter {
+                MacThumbnailEditor(owner: ThumbnailOwner(.character, character.id.rawValue), title: character.name, color: character.colorHex.flatMap { Color(hex: $0) })
+            }
             TextField("名前", text: selectedCharacterNameBinding)
                 .font(.title2)
                 .textFieldStyle(.plain)

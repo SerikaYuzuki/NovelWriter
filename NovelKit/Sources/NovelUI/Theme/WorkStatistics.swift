@@ -72,8 +72,12 @@ public struct GeneratedCover: View {
 
 public struct WorkInfoSummary: View {
     private let document: NovelDocument
-    public init(document: NovelDocument) {
+    private let coverData: Data?
+    private let showsCover: Bool
+    public init(document: NovelDocument, coverData: Data? = nil, showsCover: Bool = true) {
         self.document = document
+        self.coverData = coverData
+        self.showsCover = showsCover
     }
 
     public var body: some View {
@@ -92,8 +96,11 @@ public struct WorkInfoSummary: View {
         }
     }
 
+    @ViewBuilder
     private var cover: some View {
-        GeneratedCover(title: document.title)
+        if showsCover {
+            ThumbnailImage(data: coverData, kind: .work, title: document.title, size: 96).accessibilityHidden(true)
+        }
     }
 
     private var title: some View {

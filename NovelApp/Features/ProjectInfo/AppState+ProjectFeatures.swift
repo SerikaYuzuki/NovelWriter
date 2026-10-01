@@ -2,6 +2,7 @@ import AppKit
 import EditorKit
 import Foundation
 import NovelCore
+import NovelThumbnail
 
 extension AppState {
     // MARK: - 登場人物
@@ -213,7 +214,9 @@ extension AppState {
     func deleteCharacter(id: CharacterID, expectedSession: DocumentSessionToken? = nil) -> Bool {
         guard permitsMutation(expectedSession: expectedSession) else { return false }
         guard let originalIndex = document.characters.firstIndex(where: { $0.id == id }) else { return false }
-        guard document.removeCharacter(id: id) != nil else { return false }
+        var replacement = document
+        guard replacement.removeCharacter(id: id) != nil else { return false }
+        applyOwnerRemoval(replacement)
 
         if selectedCharacterID == id {
             let fallbackIndex = min(originalIndex, document.characters.count - 1)

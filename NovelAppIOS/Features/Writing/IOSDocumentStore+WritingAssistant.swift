@@ -3,6 +3,7 @@ import Foundation
 import NovelCore
 import NovelSyncV2
 import NovelSyncV2Application
+import NovelThumbnail
 import NovelWritingSupport
 
 extension IOSDocumentStore {
@@ -75,7 +76,7 @@ extension IOSDocumentStore {
             workId: workUUID,
             document: captured,
             episodeId: selectedEpisodeID,
-            attachments: attachments.map { WritingAttachment(id: $0.attachmentId, fileName: $0.fileName, bytes: $0.bytes) }
+            attachments: attachments.filter { !ThumbnailOwner.isReserved($0.fileName) }.map { WritingAttachment(id: $0.attachmentId, fileName: $0.fileName, bytes: $0.bytes) }
         )
     }
 
@@ -101,6 +102,11 @@ extension IOSDocumentStore {
                     }
                     let mutation = try edit.applying(to: current.document, attachments: current.attachments, grant: grant)
                     let replacement = mutation.document
+                    let mergedAttachments = try WritingThumbnailBoundary.merging(mutation.attachments,
+                                                                                 with: (self.currentV2Attachments() ?? []).map {
+                                                                                     WritingAttachment(id: $0.attachmentId, fileName: $0.fileName, bytes: $0.bytes)
+                                                                                 },
+                                                                                 from: current.document, to: replacement)
                     if let id = self.selectedEpisodeID,
                        let old = current.document.chapters.flatMap(\.episodes).first(where: { $0.id == id }),
                        let new = replacement.chapters.flatMap(\.episodes).first(where: { $0.id == id }), old.content != new.content {
@@ -110,9 +116,9 @@ extension IOSDocumentStore {
                             self.editorContentGeneration &+= 1
                         }
                     }
-                    self.syncV2AttachmentPayloads = Dictionary(uniqueKeysWithValues: mutation.attachments.map { ($0.fileName, $0.bytes) })
-                    self.syncV2AttachmentIDs = Dictionary(uniqueKeysWithValues: mutation.attachments.map { ($0.fileName, $0.id) })
-                    self.attachments = mutation.attachments.map { Attachment(fileName: $0.fileName, byteCount: Int64($0.bytes.count)) }
+                    self.syncV2AttachmentPayloads = Dictionary(uniqueKeysWithValues: mergedAttachments.map { ($0.fileName, $0.bytes) })
+                    self.syncV2AttachmentIDs = Dictionary(uniqueKeysWithValues: mergedAttachments.map { ($0.fileName, $0.id) })
+                    self.attachments = mergedAttachments.map { Attachment(fileName: $0.fileName, byteCount: Int64($0.bytes.count)) }
                     self.document = replacement
                     self.repairWritingSelection()
                     self.markDocumentChanged()

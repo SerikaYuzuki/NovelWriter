@@ -75,3 +75,5 @@ The independent suite intentionally disables PostgreSQL integration. Real DB tra
 - [保管と別作品復元API](protection.md)、[復旧の操作手順](../../WORK_RECOVERY.md)。
 
 - [AI会話・プロンプト・MCP](assistant.md): 本文snapshotと独立した記録lane、scopeとUndo、保管・復元。
+
+- [サムネイル](thumbnails.md): 作品・人物・世界観の予約名attachment、縮小・所有者・AI/MCP除外（D-104）。

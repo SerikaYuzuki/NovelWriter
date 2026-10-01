@@ -8,6 +8,7 @@ let package = Package(
         .iOS(.v17)
     ],
     products: [
+        .library(name: "NovelThumbnail", targets: ["NovelThumbnail"]),
         .library(name: "NovelWritingSupport", targets: ["NovelWritingSupport"]),
         .library(name: "NovelWritingStore", targets: ["NovelWritingStore"]),
         .library(name: "NovelCore", targets: ["NovelCore"]),
@@ -25,9 +26,11 @@ let package = Package(
         .library(name: "PreviewSupport", targets: ["PreviewSupport"])
     ],
     targets: [
-        .target(name: "NovelWritingSupport", dependencies: ["NovelCore"]),
+        .target(name: "NovelThumbnail", dependencies: ["NovelCore"]),
+        .testTarget(name: "NovelThumbnailTests", dependencies: ["NovelThumbnail", "NovelStorage"]),
+        .target(name: "NovelWritingSupport", dependencies: ["NovelCore", "NovelThumbnail"]),
         .target(name: "NovelWritingStore", dependencies: ["NovelWritingSupport", "CSQLite"]),
-        .testTarget(name: "NovelWritingSupportTests", dependencies: ["NovelWritingSupport", "NovelCore"]),
+        .testTarget(name: "NovelWritingSupportTests", dependencies: ["NovelWritingSupport", "NovelCore", "NovelThumbnail"]),
         .testTarget(name: "NovelWritingStoreTests", dependencies: ["NovelWritingStore", "NovelWritingSupport"]),
         // NovelCore: 依存なし。他モジュール・UIに依存してはならない(DESIGN.md 9.1)。
         .target(
@@ -53,7 +56,7 @@ let package = Package(
         ),
         .target(
             name: "NovelSyncV2Application",
-            dependencies: ["NovelCore", "NovelSyncV2", "NovelAuth", "NovelWritingSupport"]
+            dependencies: ["NovelCore", "NovelSyncV2", "NovelAuth", "NovelWritingSupport", "NovelThumbnail"]
         ),
         .target(
             name: "NovelSyncV2Runtime",
@@ -93,7 +96,7 @@ let package = Package(
         ),
         .target(
             name: "NovelUI",
-            dependencies: ["NovelCore"]
+            dependencies: ["NovelCore", "NovelThumbnail"]
         ),
         .target(
             name: "PreviewSupport",
@@ -127,12 +130,13 @@ let package = Package(
                 "NovelSyncV2Store",
                 "NovelSyncV2",
                 "NovelCore",
+                "NovelThumbnail",
                 "NovelAuth"
             ]
         ),
         .testTarget(
             name: "NovelSyncV2PortableBridgeTests",
-            dependencies: ["NovelSyncV2PortableBridge", "NovelStorage", "NovelSyncV2", "NovelCore"]
+            dependencies: ["NovelSyncV2PortableBridge", "NovelStorage", "NovelSyncV2", "NovelCore", "NovelThumbnail"]
         ),
         .testTarget(
             name: "NovelAuthTests",

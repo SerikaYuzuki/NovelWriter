@@ -1,6 +1,7 @@
 import Foundation
 import NovelCore
 import NovelSyncV2
+import NovelThumbnail
 
 extension IOSDocumentStore {
     var supportsAttachments: Bool {
@@ -105,7 +106,7 @@ extension IOSDocumentStore {
         replaceV2Attachments(values)
     }
 
-    private func synchronizeActiveEditorForAttachmentMutation(
+    func synchronizeActiveEditorForAttachmentMutation(
         expectedSession: IOSDocumentSessionToken
     ) -> Bool {
         switch editorCommandSession.captureActiveCommittedText() {
@@ -183,7 +184,8 @@ extension IOSDocumentStore {
                       snapshotSyncV2AccountScope == expectedAccountScope,
                       validateCurrentDocumentSession(expectedSession) else { return nil }
                 let bytes = try Data(contentsOf: sourceURL)
-                let originalName = sourceURL.lastPathComponent.isEmpty ? "資料" : sourceURL.lastPathComponent
+                let sourceName = sourceURL.lastPathComponent.isEmpty ? "資料" : sourceURL.lastPathComponent
+                let originalName = ThumbnailOwner.isReserved(sourceName) ? "資料-" + sourceName : sourceName
                 let name = uniqueV2AttachmentName(originalName)
                 let value = Attachment(fileName: name, byteCount: Int64(bytes.count))
                 let previousAttachments = attachments

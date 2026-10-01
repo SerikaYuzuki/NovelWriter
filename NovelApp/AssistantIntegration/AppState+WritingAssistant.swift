@@ -4,6 +4,7 @@ import Foundation
 import NovelCore
 import NovelSyncV2
 import NovelSyncV2Application
+import NovelThumbnail
 import NovelWritingSupport
 
 extension AppState {
@@ -63,7 +64,7 @@ extension AppState {
             workId: workUUID,
             document: captured,
             episodeId: selectedEpisodeID,
-            attachments: snapshotSyncV2Attachments.map { WritingAttachment(id: $0.attachmentId, fileName: $0.fileName, bytes: $0.bytes) }
+            attachments: snapshotSyncV2Attachments.filter { !ThumbnailOwner.isReserved($0.fileName) }.map { WritingAttachment(id: $0.attachmentId, fileName: $0.fileName, bytes: $0.bytes) }
         )
     }
 
@@ -89,6 +90,11 @@ extension AppState {
                     }
                     let mutation = try edit.applying(to: current.document, attachments: current.attachments, grant: grant)
                     let replacement = mutation.document
+                    let mergedAttachments = try WritingThumbnailBoundary.merging(mutation.attachments,
+                                                                                 with: self.snapshotSyncV2Attachments.map {
+                                                                                     WritingAttachment(id: $0.attachmentId, fileName: $0.fileName, bytes: $0.bytes)
+                                                                                 },
+                                                                                 from: current.document, to: replacement)
                     if let id = self.selectedEpisodeID,
                        let old = current.document.chapters.flatMap(\.episodes).first(where: { $0.id == id }),
                        let new = replacement.chapters.flatMap(\.episodes).first(where: { $0.id == id }), old.content != new.content {
@@ -98,12 +104,12 @@ extension AppState {
                             self.editorContentGeneration &+= 1
                         }
                     }
-                    self.snapshotSyncV2Attachments = mutation.attachments.map { SyncAttachment(
+                    self.snapshotSyncV2Attachments = mergedAttachments.map { SyncAttachment(
                         attachmentId: $0.id,
                         fileName: $0.fileName,
                         bytes: $0.bytes
                     ) }
-                    self.attachments = mutation.attachments.map { Attachment(fileName: $0.fileName, byteCount: Int64($0.bytes.count)) }
+                    self.attachments = mergedAttachments.map { Attachment(fileName: $0.fileName, byteCount: Int64($0.bytes.count)) }
                     self.attachmentPreviewURLs.removeAll()
                     self.document = replacement
                     self.repairWritingSelection()

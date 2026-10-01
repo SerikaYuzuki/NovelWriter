@@ -75,7 +75,13 @@ struct LibraryPane: View {
                 Section {
                     ForEach(filteredWorks) { work in
                         HStack(spacing: Spacing.small) {
-                            // Leading slot reserved for a future cover thumbnail.
+                            LazyCoverThumbnail(title: work.title, identity: "\(work.workID)-\(appState.snapshotSyncV2AccountScopeToken)-\(work.localGeneration ?? 0)") {
+                                guard work.availability != .remoteOnly else { return nil }
+                                let account = appState.snapshotSyncV2AccountScopeToken
+                                let bytes = try? await appState.snapshotSyncV2Application?.localCoverThumbnail(workID: work.workID)
+                                guard account == appState.snapshotSyncV2AccountScopeToken else { return nil }
+                                return bytes
+                            }
                             VStack(alignment: .leading, spacing: Spacing.extraSmall) {
                                 Text(work.title).lineLimit(1)
                                 if appState.snapshotSyncV2RemoteOnlyOpeningWorkID == work.workID,

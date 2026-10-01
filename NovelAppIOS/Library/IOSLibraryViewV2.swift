@@ -63,7 +63,13 @@ struct IOSLibraryView: View {
                         openWork(item.workID)
                     } label: {
                         HStack(spacing: Spacing.small) {
-                            // Leading slot reserved for a future cover thumbnail.
+                            LazyCoverThumbnail(title: item.title, identity: "\(item.workID)-\(store.snapshotSyncV2AccountScope)-\(item.localGeneration ?? 0)") {
+                                guard item.availability != .remoteOnly else { return nil }
+                                let account = store.snapshotSyncV2AccountScope
+                                let bytes = try? await store.snapshotSyncV2Application?.localCoverThumbnail(workID: item.workID)
+                                guard account == store.snapshotSyncV2AccountScope else { return nil }
+                                return bytes
+                            }
                             VStack(alignment: .leading, spacing: Spacing.extraSmall) {
                                 Text(item.title.isEmpty ? "名称未設定の作品" : item.title)
                                     .foregroundStyle(FuminiwaColor.textPrimary.color)

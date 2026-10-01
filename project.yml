@@ -138,6 +138,8 @@ targets:
       - package: NovelKit
         product: NovelUI
       - package: NovelKit
+        product: NovelThumbnail
+      - package: NovelKit
         product: NovelExport
       - package: NovelKit
         product: NovelAuth
@@ -179,6 +181,7 @@ targets:
     sources:
       - path: NovelAppTests
       - path: NovelKit/Tests/NovelUITests/ThemeContrastTests.swift
+      - path: NovelKit/Tests/NovelThumbnailTests/SyntheticThumbnailImage.swift
     dependencies:
       - target: NovelApp
     settings:
@@ -220,6 +223,8 @@ targets:
       - package: NovelKit
         product: NovelUI
       - package: NovelKit
+        product: NovelThumbnail
+      - package: NovelKit
         product: NovelExport
       - package: NovelKit
         product: NovelAuth
@@ -260,6 +265,7 @@ targets:
       - path: NovelAppTests/V2DocumentSaveCoordinatorTests.swift
       - path: NovelAppIOSTests
       - path: NovelKit/Tests/NovelUITests/ThemeContrastTests.swift
+      - path: NovelKit/Tests/NovelThumbnailTests/SyntheticThumbnailImage.swift
     dependencies:
       - target: FUMINIWAIOS
     settings:

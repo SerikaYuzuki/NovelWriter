@@ -44,3 +44,7 @@ domain/store/workerはNovelKitで共有し、iOS側は入力・navigation・File
 - Macとの往復、offline分岐、競合3択、履歴復元、remote-only open、account切替。
 
 過去の実機結果はGit履歴で参照し、現在の受入完了へ流用しない。
+
+## サムネイル
+
+作品情報の表紙、人物詳細、世界観ノート詳細から写真（PhotosPicker）またはFilesの画像を選ぶ。対象形状の切り抜きsheetで位置・拡大率を調整後に保存する。置換・削除は画像の長押しmenuと詳細のmenuにあり、削除は確認付き。棚・人物・世界観の行は縮小画像またはSTYLEのplaceholderを表示する。[保存契約](sync/v2/thumbnails.md)。

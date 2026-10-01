@@ -1,5 +1,6 @@
 import Foundation
 import NovelCore
+import NovelThumbnail
 
 extension IOSDocumentStore {
     // MARK: - Characters
@@ -48,8 +49,10 @@ extension IOSDocumentStore {
     @discardableResult
     func deleteCharacter(id: CharacterID, expectedSession: IOSDocumentSessionToken) -> Bool {
         guard permitsProjectFeatureMutation,
-              validateCurrentDocumentSession(expectedSession),
-              document.removeCharacter(id: id) != nil else { return false }
+              validateCurrentDocumentSession(expectedSession) else { return false }
+        var replacement = document
+        guard replacement.removeCharacter(id: id) != nil else { return false }
+        applyOwnerRemoval(replacement)
         markDocumentChanged()
         return true
     }
@@ -227,7 +230,9 @@ extension IOSDocumentStore {
         guard permitsProjectFeatureMutation,
               validateCurrentDocumentSession(expectedSession),
               let index = document.worldNotes.firstIndex(where: { $0.id == id }) else { return false }
-        document.worldNotes.remove(at: index)
+        var replacement = document
+        replacement.worldNotes.remove(at: index)
+        applyOwnerRemoval(replacement)
         markDocumentChanged()
         return true
     }

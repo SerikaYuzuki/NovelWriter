@@ -155,6 +155,8 @@ public struct V2CheckpointResult: Sendable {
     public let generation: Int64
     public let intentID: UUID?
     public let noChanges: Bool
+    /// The same content may still have promoted a durable autosave leaf.
+    public var promotedLeaf: Bool = false
 }
 
 public struct V2PendingIntent: Hashable, Sendable {

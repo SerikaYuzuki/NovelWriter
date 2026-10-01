@@ -61,7 +61,8 @@ extension LocalSyncV2Store {
                 snapshotID: current,
                 generation: request.expectedGeneration,
                 intentID: intentID,
-                noChanges: true
+                noChanges: true,
+                promotedLeaf: promoted
             )
         }
     }

@@ -15,3 +15,5 @@
 CRLF／CRはLFに統一し、本文先頭の空白と内部空行を保つ。TXT／Markdownはブロック間に空行1つ、ファイル末尾にLF1つを置く。EPUBの見た目はEditorSettingsから独立する。
 
 実装と検証は`NovelKit/Sources/NovelExport/`、`NovelKit/Tests/NovelExportTests/`。通常保存・作品の転送形式は[保存・同期](SNAPSHOT_SYNC_V2.md)と[互換契約](CROSS_PLATFORM.md)を参照。
+
+サムネイルは原稿・可読フォルダの出力には含めない（作品の転送用`.novelpkg`では予約名attachmentとして保持する）。

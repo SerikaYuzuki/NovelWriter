@@ -43,3 +43,5 @@ AIパネルの「外部AI」でクライアント名を登録し、接続設定�
 HTTPSのResponsesまたはChat Completionsを使う。既存の用途別モデル・API設定を引き継ぎ、キーは明示送信時にKeychainから読む。キー・MCP資格情報・接続設定を作品や同期DB、ログへ書かない。ephemeral URLSession、cookie/cacheなし、redirect拒否、timeoutとpayload上限、`store:false`を維持する。提供元の保存・料金方針はそのサービスに従う。
 
 合成データで記録、範囲、同時編集、Undo、IME待ち、再送、復元、Swift/Rust間の日時互換を検証する。Test compositionは実HTTP・Keychain・MCP外部接続を拒否する。実APIの課金送信と私的原稿の送信は開発試験に使わない。署名済みアプリ、実端末の二台同期、実API接続はそれぞれ独立した受入として記録する。
+
+サムネイルの予約名attachmentは孤立したものも含めてチャット・校正・感想・MCPへ渡さず、MCPで読み書きできない。添付全体の置換時は除外画像を再結合し、資料編集で消失させない。人物・世界観を削除した場合だけ対応画像を同一checkpointから外し、以前から孤立している画像は保持する。[D-104契約](sync/v2/thumbnails.md)。

@@ -1,6 +1,7 @@
 import Foundation
 import NovelCore
 import NovelSyncV2
+import NovelThumbnail
 
 /// 添付はv2 snapshotの一部としてSQLiteへ保存する。`.novelpkg`のcodecは、
 /// この画面から明示的に書き出す／取り込む場合にだけ呼び出される。
@@ -36,7 +37,7 @@ extension AppState {
         }
     }
 
-    private func performSnapshotDataMutation(
+    func performSnapshotDataMutation(
         expectedSession: DocumentSessionToken? = nil,
         operation: () async -> Bool
     ) async -> Bool {
@@ -68,7 +69,8 @@ extension AppState {
         guard permitsMutation(expectedSession: expectedSession) else { return nil }
         do {
             let bytes = try Data(contentsOf: sourceURL, options: [.mappedIfSafe])
-            let originalName = sourceURL.lastPathComponent.isEmpty ? "資料" : sourceURL.lastPathComponent
+            let sourceName = sourceURL.lastPathComponent.isEmpty ? "資料" : sourceURL.lastPathComponent
+            let originalName = ThumbnailOwner.isReserved(sourceName) ? "資料-" + sourceName : sourceName
             let usedNames = Set(snapshotSyncV2Attachments.map(\.fileName))
             let fileName = Self.uniqueAttachmentName(originalName, usedNames: usedNames)
             let previousPayloads = snapshotSyncV2Attachments

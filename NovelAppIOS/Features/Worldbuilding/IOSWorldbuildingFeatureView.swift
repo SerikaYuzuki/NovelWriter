@@ -1,4 +1,6 @@
 import NovelCore
+import NovelThumbnail
+import NovelUI
 import SwiftUI
 
 @MainActor
@@ -105,13 +107,19 @@ struct IOSWorldNoteOutlineView: View {
                     dismissAfterDeletion: true
                 )
             } label: {
-                IOSWorldNoteRow(note: note)
+                HStack(spacing: Spacing.small) {
+                    ThumbnailImage(data: store.thumbnailData(ThumbnailOwner(.worldNote, note.id.rawValue)), kind: .worldNote, title: note.title, size: 28).accessibilityHidden(true)
+                    IOSWorldNoteRow(note: note)
+                }
             }
         } else {
             Button {
                 selection = note.id
             } label: {
-                IOSWorldNoteRow(note: note)
+                HStack(spacing: Spacing.small) {
+                    ThumbnailImage(data: store.thumbnailData(ThumbnailOwner(.worldNote, note.id.rawValue)), kind: .worldNote, title: note.title, size: 28).accessibilityHidden(true)
+                    IOSWorldNoteRow(note: note)
+                }
             }
             .buttonStyle(.plain)
             .accessibilityAddTraits(selection == note.id ? .isSelected : [])
@@ -201,6 +209,9 @@ struct IOSWorldNoteDetailView: View {
 
     private func noteForm(_ note: WorldNote) -> some View {
         Form {
+            Section {
+                IOSThumbnailEditor(store: store, owner: ThumbnailOwner(.worldNote, note.id.rawValue), title: note.title)
+            }
             Section("世界観ノート") {
                 TextField("タイトル", text: noteBinding(note.id, \.title, fallback: ""))
                     .textInputAutocapitalization(.never)

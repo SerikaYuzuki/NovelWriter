@@ -87,7 +87,8 @@ extension AppState {
                 workID: item.workID,
                 remoteProgress: remoteProgress,
                 oldestUnreceivedAt: item.oldestUnreceivedAt,
-                accountState: item.accountState, remoteHeadConfirmed: item.remoteHeadConfirmed
+                accountState: item.accountState, remoteHeadConfirmed: item.remoteHeadConfirmed,
+                localGeneration: item.localGeneration
             )
             return (item.workID, work)
         })
@@ -106,7 +107,8 @@ extension AppState {
                     workID: remote.workID,
                     remoteProgress: local.remoteProgress,
                     oldestUnreceivedAt: local.oldestUnreceivedAt,
-                    accountState: local.accountState, remoteHeadConfirmed: local.remoteHeadConfirmed
+                    accountState: local.accountState, remoteHeadConfirmed: local.remoteHeadConfirmed,
+                    localGeneration: local.localGeneration
                 )
             } else {
                 worksByID[remote.workID] = StartupLibraryWork(

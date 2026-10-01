@@ -116,7 +116,8 @@ actor ProductionSyncV2Kernel: SyncV2LocalKernel, SyncV2LibraryProvider {
                 snapshotID: result.snapshotID,
                 generation: result.generation,
                 intentID: result.intentID,
-                noChanges: result.noChanges
+                noChanges: result.noChanges,
+                promotedLeaf: result.promotedLeaf
             )
         } catch {
             throw mapStoreError(error)

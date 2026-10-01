@@ -291,6 +291,8 @@ extension SyncV2Application {
         let hasConflict = states[workID]?.conflict != nil || durableConflict
         let progress: SyncV2RemoteProgress = if hasConflict {
             .needsChoice
+        } else if local.noChanges, !local.promotedLeaf, hasPending, let previous = states[workID]?.remoteProgress {
+            previous
         } else if workerTasks[workID] != nil, let active = states[workID]?.remoteProgress,
                   case .syncing = active {
             active
@@ -306,7 +308,9 @@ extension SyncV2Application {
             remoteProgress: progress,
             result: result
         )
-        if hasPending, !hasConflict {
+        // A retained intent is not new work. Waking an offline worker for an
+        // identical save replays its command and can bypass retry backoff.
+        if hasPending, !hasConflict, !local.noChanges || local.promotedLeaf {
             scheduleWorker(for: workID)
         }
         return SyncV2OperationResult(state: state, typedResult: result)

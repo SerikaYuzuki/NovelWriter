@@ -84,3 +84,7 @@ iPhone / iPadにもGoogleログインを追加する。GoogleはMacと同じサ�
 明示保存、画面・作品切替、終了・background、明示同期、最終変更から60秒の待機、連続編集の5分上限で最新の葉を昇格する。起動・openでは中断時の葉を回収する。remote headの変化を照合する経路と同じaccountの再計画も、送信する葉を先に保護する。昇格は既存snapshotの保護付き履歴とintentを同一transactionで確定し、本文をeditorへ再installしない。タイマーは両OS共通の定数と差替え可能な時計を使う。
 
 新しい葉だけをhistory occurrenceの`reason=autosaveLeaf, pinned=0`で区別する。昇格時は同じsnapshotへ`promotion`（または保護理由）のpinned occurrenceを追加する。旧`autosave`、取り込み済みhead、復元・競合解決は従来の安定点として扱うため、SQLite schemaの追加・移行、wire、server変更は不要。旧履歴と未採用の葉は削除・書換えしない。復元・競合の3択、WorkID/session/account/IME境界とpublish CASを維持する。具体的な規範は[§4](SNAPSHOT_SYNC_V2.md#4-snapshot-and-checkpoint-schema)と[state machine](sync/v2/state-machine.md)。
+
+## D-104: サムネイル（作品・人物・世界観）（2026-10-01）
+
+作品の表紙・人物・WorldNoteだけに設定する。表紙は2:3、人物は円、世界観は角丸正方形。縮小・切り抜き・sRGB再描画済みJPEGだけを予約名attachmentとして保存し、元画像・EXIF・GPSを保持しない。上限は表紙1024 px／他768 px、200 KiB。所有者との紐付けはUUID入りの名前で行い、NovelCoreモデル・wire・schema・package形式を変えない。owner削除と画像削除を同一checkpointへまとめ、既存の孤立画像は通常資料として残す。AI／MCPへは公開せず、MCP書き戻しでも除外画像を保全する。削除は確認後に行い、復旧は作品履歴を使う。[契約](sync/v2/thumbnails.md)に詳細を定める。

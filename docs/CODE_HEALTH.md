@@ -45,3 +45,7 @@ AI実APIでの応答・編集、登録済みMCPクライアントとの実利用
 現行版のMac／iPhone／iPadでApple認証、長時間のIME・Undo、offline編集、二端末競合、履歴復元を確認する。署名・配布・clean install等の一般公開条件は[公開受入](COMMERCIALIZATION_IMPLEMENTATION.md)。ローカルテスト・個別画面・過去の実機成功から全項目を完了扱いにしない。
 
 自動保存のdebounce変更は利用者が不採用とした方針であり、不具合修正の残件へ戻さない。
+
+## サムネイル（D-104）
+
+NovelThumbnailが予約名・所有者判定とImageIO／CoreGraphicsでの縮小JPEG生成を担当し、NovelUIが両OS共通の表示・切り抜き・設定操作を提供する。作品情報・人物・世界観と棚に接続し、所有者との同時削除、AI／MCPからの除外と添付書き戻し保全を実装。schema／wire／package形式の変更はない。合成画像・隔離された端末ストアで検証し、実写真・実原稿・実accountによる試験は行わない。実機の写真権限・Files provider別の操作や二台同期の受入は別途必要。

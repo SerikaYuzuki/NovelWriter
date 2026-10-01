@@ -1,3 +1,4 @@
+import NovelThumbnail
 import NovelUI
 import SwiftUI
 
@@ -6,7 +7,8 @@ struct IOSProjectInfoView: View {
     var body: some View {
         Form {
             Section {
-                WorkInfoSummary(document: store.document)
+                IOSThumbnailEditor(store: store, owner: ThumbnailOwner(.work, store.document.id), title: store.document.title)
+                WorkInfoSummary(document: store.document, showsCover: false)
                     .listRowBackground(FuminiwaColor.paper.color)
             }
             Section("編集") {

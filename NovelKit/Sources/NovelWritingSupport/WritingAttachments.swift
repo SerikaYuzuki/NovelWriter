@@ -1,5 +1,6 @@
 import Foundation
 import NovelCore
+import NovelThumbnail
 
 public struct WritingAttachment: Codable, Equatable, Sendable, Identifiable {
     public var id: UUID
@@ -33,7 +34,9 @@ public extension WritingEdit {
         var body = self; body.changes = changes.filter { $0.path.first != "attachments" }
         let newDocument = try body.applying(to: document, grant: grant)
         let fileChanges = changes.filter { $0.path.first == "attachments" }
-        var result = attachments
+        let excluded = attachments.filter { ThumbnailOwner.isReserved($0.fileName) }
+        let protectedIDs = Set(excluded.map(\.id))
+        var result = attachments.filter { !ThumbnailOwner.isReserved($0.fileName) }
         var touched: Set<[String]> = []
         for change in fileChanges {
             guard grant.permits(change.path), !grant.appendOnly,
@@ -49,6 +52,7 @@ public extension WritingEdit {
                 continue
             }
             guard change.path.count == 2, let id = UUID(uuidString: change.path[1]) else { throw WritingError.invalidEdit }
+            guard !protectedIDs.contains(id) else { throw WritingError.outsideGrant }
             let index = result.firstIndex { $0.id == id }
             // Bound encoding to the selected file; unrelated large resources are never copied.
             if let index, result[index].bytes.count > 300_000 {
@@ -62,7 +66,7 @@ public extension WritingEdit {
                       file.id == id, file.bytes.count <= 300_000, !file.fileName.isEmpty,
                       file.fileName.utf8.count <= 255, file.fileName != ".", file.fileName != "..",
                       !file.fileName.contains("/"), !file.fileName.contains("\\"), !file.fileName.contains("\0"),
-                      !file.fileName.hasPrefix("fuminiwa-assistant-feedback-"), try file.value == after else { throw WritingError.invalidEdit }
+                      !ThumbnailOwner.isReserved(file.fileName), !file.fileName.hasPrefix("fuminiwa-assistant-feedback-"), try file.value == after else { throw WritingError.invalidEdit }
                 if let index {
                     result[index] = file
                 } else {
@@ -73,6 +77,6 @@ public extension WritingEdit {
             }
         }
         guard Set(result.map(\.fileName)).count == result.count else { throw WritingError.invalidEdit }
-        return WritingMutation(document: newDocument, attachments: result)
+        return try WritingMutation(document: newDocument, attachments: WritingThumbnailBoundary.merging(result, with: attachments, from: document, to: newDocument))
     }
 }
