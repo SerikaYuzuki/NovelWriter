@@ -21,6 +21,8 @@ macOSの滑らかなカーソルを通常EditorKitへ組み込み、端末の執
 
 ## 実装が残るもの
 
+- 端末未取得作品の初回表示の高速化。一括取得後も全履歴の検証・保存完了を待つため、履歴の多い作品は待ち時間が長い。[現状・測定結果・改善課題](INITIAL_IMPORT_LATENCY.md)。追加実装は保留。
+
 - 削除予約・取消のアプリ画面。サーバーAPIと720時間後のworkerは実装済み。[lifecycle](auth/v1/account-deletion.md)。
 - Package Validator / 共通fixtureの全体、Windows 11版とinstaller。[互換契約](CROSS_PLATFORM.md)。
 
