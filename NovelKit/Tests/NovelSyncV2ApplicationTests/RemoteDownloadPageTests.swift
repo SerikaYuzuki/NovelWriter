@@ -387,7 +387,7 @@ extension RemoteHTTPLineageTests {
         let path = "/v2/works/\(fixture.workID.description)/download"
         let state = LineageHTTPState(workID: fixture.workID, snapshots: [snapshot], publishResponse: nil)
         try state.failNext(path: path, replies: [
-            LineageHTTPReply(status: status, headers: [:], body: status == 422 ? Data(#"{"error":"schemaViolation"}"#.utf8) : Data()),
+            LineageHTTPReply(status: status, headers: status == 422 ? downloadHeaders : [:], body: status == 422 ? Data(#"{"error":"schemaViolation"}"#.utf8) : Data()),
             downloadPage(head: snapshot.snapshotId, items: downloadItems([snapshot]), cursor: nil)
         ])
         let progress = ImportProgress()

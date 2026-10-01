@@ -18,6 +18,7 @@ public extension LocalSyncV2Store {
             try retryQuarantinedUploads(workID: workID, scope: scope)
             try retryInitialCreateWork(workID: workID, scope: scope)
             try retryQuarantinedPublish(workID: workID, scope: scope)
+            try retryUnacknowledgedCommandsTransaction(workID: workID, scope: scope)
             guard try pendingIntents(scope: scope, workID: workID).isEmpty else { return }
             _ = try upsertCheckpointIntent(
                 workID: workID,

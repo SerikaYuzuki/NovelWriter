@@ -129,7 +129,7 @@ final class LineageHTTPState: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         if request.url?.query?.contains("mode=") == true, failures[path + "?mode"] == nil {
-            return LineageHTTPReply(status: 422, headers: [:], body: Data())
+            return LineageHTTPReply(status: 422, headers: ["Content-Type": "application/vnd.fuminiwa.sync.v2+jcs", "Cache-Control": "no-store", "Pragma": "no-cache"], body: Data())
         }
         let queueKey = request.url?.query?.contains("mode=") == true ? path + "?mode" : path
         paths.append(path)

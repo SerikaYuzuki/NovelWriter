@@ -44,7 +44,8 @@ extension RemoteHTTPLineageTests {
         let head = try fixture.snapshot(title: "head", parents: [base.snapshotId])
         let state = LineageHTTPState(workID: fixture.workID, snapshots: [base, head], publishResponse: nil)
         let path = "/v2/works/\(fixture.workID)/download"
-        state.failNext(path: path + "?mode", replies: [LineageHTTPReply(status: status, headers: [:], body: Data())])
+        state.failNext(path: path + "?mode", replies: [LineageHTTPReply(status: status, headers: status == 422
+                ? ["Content-Type": "application/vnd.fuminiwa.sync.v2+jcs", "Cache-Control": "no-store", "Pragma": "no-cache"] : [:], body: Data())])
         let client = try fixture.client(snapshots: [], overrideState: state)
         let inbox = try await client.downloadRemoteOnly(workID: fixture.workID)
         #expect(!inbox.shallow)

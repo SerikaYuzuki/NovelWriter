@@ -147,6 +147,7 @@ extension ProductionSyncV2RemoteClient {
     nonisolated static func decodeDownloadPage(
         _ data: Data, response: URLResponse, id: SnapshotID, allowsTotals: Bool, mode: String? = nil
     ) async throws -> DownloadPage {
+        try validateTransportStatus(response)
         guard data.count <= 24 * 1024 * 1024,
               let http = response as? HTTPURLResponse,
               http.statusCode == 200,

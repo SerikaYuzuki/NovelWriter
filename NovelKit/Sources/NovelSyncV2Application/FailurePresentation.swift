@@ -29,9 +29,13 @@ public func syncV2FailureKind(_ error: any Error) -> SyncV2Failure {
     if let failure = error as? SyncV2Failure {
         return failure
     }
+    if error is CancellationError {
+        return .retryable(.lostResponse)
+    }
     if let urlError = error as? URLError {
         switch urlError.code {
         case .notConnectedToInternet, .networkConnectionLost: return .offline
+        case .cancelled: return .retryable(.lostResponse)
         case .cannotConnectToHost, .cannotFindHost, .timedOut: return .retryable(.serverUnavailable)
         default: break
         }

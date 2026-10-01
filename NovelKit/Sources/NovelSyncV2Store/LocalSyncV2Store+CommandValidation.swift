@@ -86,6 +86,12 @@ extension LocalSyncV2Store {
                 binding.values + from.map(SQLiteValue.text)
         )
         guard try changes() == 1 else { throw SyncV2StoreError.invalidLifecycle }
+        if from.contains("quarantined"), to == "sealed" {
+            // Explicit and automatic release both consume the upgrade candidate.
+            // These releases run inside their caller's transaction.
+            try exec("UPDATE legacy_command_recovery SET consumed=1 WHERE command_id=?",
+                     [.text(commandID.uuidString.lowercased())])
+        }
     }
 
     func validateCommandSource(

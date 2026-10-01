@@ -77,7 +77,7 @@ extension ProductionSyncV2RemoteClient {
               http.value(forHTTPHeaderField: "Cache-Control")?.lowercased() == "no-store",
               http.value(forHTTPHeaderField: "Pragma")?.lowercased() == "no-cache",
               contentType == mediaType,
-              let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+              let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
             throw mapStatus((response as? HTTPURLResponse)?.statusCode ?? 599)
         }
         return object
@@ -129,6 +129,7 @@ extension ProductionSyncV2RemoteClient {
                   http.value(forHTTPHeaderField: "Cache-Control")?.lowercased() == "no-store",
                   http.value(forHTTPHeaderField: "Pragma")?.lowercased() == "no-cache" else {
                 if let http = response as? HTTPURLResponse, http.statusCode == 409 {
+                    try validateSyncResponseHeaders(http)
                     throw typedUploadFailure(data: data)
                 }
                 throw mapStatus((response as? HTTPURLResponse)?.statusCode ?? 599)
@@ -150,6 +151,10 @@ extension ProductionSyncV2RemoteClient {
         session originalSession: FuminiwaSession
     ) async throws -> (Data, URLResponse) {
         let (data, response, _) = try await requestDataWithSession(request, session: originalSession)
+        try Self.validateTransportStatus(response)
+        if let http = response as? HTTPURLResponse, [409, 422].contains(http.statusCode) {
+            try validateSyncResponseHeaders(response)
+        }
         return (data, response)
     }
 
@@ -262,7 +267,13 @@ extension ProductionSyncV2RemoteClient {
         return object
     }
 
-    func decode(
+    func decode(data: Data, response: URLResponse, command: SealedCommand) throws -> SyncV2ReceiptReadback {
+        do { return try decodeCommandResponse(data: data, response: response, command: command) }
+        catch let failure as SyncV2Failure { throw failure }
+        catch { throw SyncV2Failure.receiptMismatch }
+    }
+
+    private func decodeCommandResponse(
         data: Data,
         response: URLResponse,
         command: SealedCommand
@@ -270,11 +281,12 @@ extension ProductionSyncV2RemoteClient {
         guard let http = response as? HTTPURLResponse else {
             throw SyncV2Failure.retryable(.lostResponse)
         }
+        try Self.validateTransportStatus(response)
         let contentType = httpContentType(response)
         guard http.value(forHTTPHeaderField: "Cache-Control")?.lowercased() == "no-store",
               http.value(forHTTPHeaderField: "Pragma")?.lowercased() == "no-cache",
               contentType == mediaType else {
-            throw SyncV2Failure.fatal(.unexpected)
+            throw SyncV2Failure.receiptMismatch
         }
         if http.statusCode == 422, command.kind == .publish,
            data == Data(#"{"error":"lineageViolation","result":"parked","retryable":false}"#.utf8) {
@@ -287,7 +299,7 @@ extension ProductionSyncV2RemoteClient {
         // upload error instead of reporting a failed receipt verification.
         if http.statusCode == 409,
            command.kind == .finalizeObject,
-           let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
            object["error"] is String {
             throw typedUploadFailure(data: data)
         }
@@ -325,7 +337,7 @@ extension ProductionSyncV2RemoteClient {
         data: Data,
         command: SealedCommand
     ) throws -> ResponseEnvelope {
-        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+        guard let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
               let commandID = UUID(uuidString: object["commandId"] as? String ?? ""),
               commandID == command.commandId,
               object["commandKind"] as? String == command.commandKind,
@@ -415,7 +427,7 @@ extension ProductionSyncV2RemoteClient {
         case 408, 429, 500 ... 599:
             .retryable(.serverUnavailable)
         default:
-            .fatal(.unexpected)
+            .receiptMismatch
         }
     }
 
@@ -425,21 +437,23 @@ extension ProductionSyncV2RemoteClient {
             guard let decoded = try JSONSerialization.jsonObject(
                 with: data
             ) as? [String: Any] else {
-                return .retryable(.serverUnavailable)
+                return .receiptMismatch
             }
             object = decoded
         } catch {
-            return .retryable(.serverUnavailable)
+            return .receiptMismatch
         }
         guard let code = (object["error"] ?? object["code"]) as? String else {
-            return .retryable(.serverUnavailable)
+            return .receiptMismatch
         }
         switch code {
         case "uploadExpired":
             return .retryable(.uploadExpired)
         case "uploadCapabilityMismatch", "objectDigestMismatch":
-            return .fatal(.unexpected)
+            return .quarantined(.invalidRemoteData)
         default:
+            // Finalize can also return commandIdReused from receipt lookup.
+            // Preserve the existing retry behavior for other typed 409 codes.
             return .retryable(.serverUnavailable)
         }
     }

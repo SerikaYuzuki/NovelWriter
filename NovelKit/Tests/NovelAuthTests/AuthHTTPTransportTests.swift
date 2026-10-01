@@ -589,3 +589,25 @@ extension AuthHTTPTransportTests {
         }
     }
 }
+
+extension AuthHTTPTransportTests {
+    @Test(arguments: [408, 429, 502, 503, 504] + Array(520 ... 530), [false, true])
+    func edgeHTMLRemainsRetryable(status: Int, browser: Bool) async throws {
+        let state = try makeTransport { _ in
+            .init(status: status, headers: ["Content-Type": "text/html", "Retry-After": "12"], body: Data("<html>Cloudflare: Bad Gateway</html>".utf8))
+        }
+        do {
+            if browser {
+                _ = try await state.transport.startBrowserAuthentication(provider: .google, claimHash: String(repeating: "a", count: 64))
+            } else {
+                _ = try await state.transport.refresh(session: Self.session(), rotationID: UUID())
+            }
+            Issue.record("edge failure unexpectedly succeeded")
+        } catch let AuthError.remote(remote) {
+            #expect(remote.code == (status == 429 ? "rateLimited" : "temporarilyUnavailable"))
+            #expect(remote.retryability == .afterBackoff)
+            #expect(remote.recoveryAction == .retrySameRequestAfterBackoff)
+            #expect(remote.retryAfterSeconds == 12)
+        }
+    }
+}

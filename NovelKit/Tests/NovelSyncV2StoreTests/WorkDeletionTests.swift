@@ -69,7 +69,7 @@ import Testing
     let previous = String(decoding: current, as: UTF8.self).components(separatedBy: "\n-- Work deletion journal.")[0]
     let checksum = SnapshotSyncV2SchemaContract.checksum(Data(previous.utf8)).map { String(format: "%02x", $0) }.joined()
     #expect(try sqliteExecutionSucceeded(databaseURL: url, sql: """
-    DROP TABLE history_backfills; DROP TABLE shallow_boundaries; DROP TABLE work_deletions;
+    DROP TABLE legacy_command_recovery; DROP TABLE history_backfills; DROP TABLE shallow_boundaries; DROP TABLE work_deletions;
     UPDATE schema_meta SET checksum=X'\(checksum)' WHERE key='schema';
     """))
     let upgraded = try LocalSyncV2Store(root: root, policy: .openExisting)

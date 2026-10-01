@@ -43,11 +43,11 @@ struct RemoteHTTPLineageTests {
         let expected: SyncV2Failure = switch status {
         case 403: .accountFenceChanged
         case 404: .fatal(.remoteDataUnavailable)
-        case 429: .retryable(.rateLimited)
+        case 429: .retryable(.serverUnavailable)
         default: .retryable(.serverUnavailable)
         }
         await #expect(throws: expected) { try await client.downloadRemoteOnly(workID: fixture.workID) }
-        #expect(state.count(path: path) == (status == 503 ? 6 : 1))
+        #expect(state.count(path: path) == ([429, 503].contains(status) ? 6 : 1))
     }
 
     @Test("publish conflict decodes its sealed base and store accepts B to L/R divergence")
@@ -488,7 +488,7 @@ extension RemoteHTTPLineageTests {
             )
         ])
         let client = try fixture.client(snapshots: [], overrideState: state)
-        await #expect(throws: exact ? SyncV2Failure.retryable(.publishLineageRejected) : .fatal(.unexpected)) {
+        await #expect(throws: exact ? SyncV2Failure.retryable(.publishLineageRejected) : .receiptMismatch) {
             _ = try await client.execute(.command(SyncV2SealedRemoteCommand(command: command)))
         }
         #expect(state.count(path: "/v2/receipts/\(command.commandId.uuidString.lowercased())") == 0)

@@ -31,8 +31,8 @@ extension RemoteHTTPLineageTests {
         let split = try JSONSerialization.data(withJSONObject: page, options: [.sortedKeys, .withoutEscapingSlashes])
         let state = LineageHTTPState(workID: fixture.workID, snapshots: fixture.snapshots, publishResponse: nil)
         let path = "/v2/works/\(fixture.workID)/download?mode"
-        state.failNext(path: path, replies: [.init(status: 200, headers: fixture.backfillPage.headers, body: split),
-                                             .init(status: 429, headers: [:], body: Data())])
+        state.failNext(path: path, replies: [.init(status: 200, headers: fixture.backfillPage.headers, body: split)] +
+            Array(repeating: .init(status: 429, headers: [:], body: Data()), count: 6))
         let client = try http.client(snapshots: [], overrideState: state, localStore: store)
         await #expect(throws: (any Error).self) { try await client.backfillHistory(workID: fixture.workID) }
         #expect(try await store.backfillState(workID: fixture.workID)?.resumeCursor == nil)

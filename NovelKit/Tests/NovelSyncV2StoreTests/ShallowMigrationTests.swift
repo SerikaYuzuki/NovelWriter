@@ -16,7 +16,7 @@ func shallowMigrationAttestsEveryTail(marker: String) async throws {
     let checksum = V2StoreSchema.checksum(old).hexString
     let deletion = marker.contains("deletion") ? "DROP TABLE work_deletions;" : ""
     #expect(try sqliteExecutionSucceeded(databaseURL: databaseURL, sql: """
-    DROP TABLE history_backfills; DROP TABLE shallow_boundaries;
+    DROP TABLE legacy_command_recovery; DROP TABLE history_backfills; DROP TABLE shallow_boundaries;
     \(deletion) UPDATE schema_meta SET checksum=X'\(checksum)' WHERE key='schema';
     """))
     let upgraded = try LocalSyncV2Store(root: root, policy: .openExisting)

@@ -150,7 +150,7 @@ enum V2StoreSchema {
             return
         }
         let source = String(decoding: sql, as: UTF8.self)
-        let markers = ["\n-- Work deletion journal.", "\n-- Shallow history (D-106)."]
+        let markers = ["\n-- Work deletion journal.", "\n-- Shallow history (D-106).", "\n-- Legacy unexpected-command recovery (D-107)."]
         let boundaries = try markers.map { marker in
             guard let range = source.range(of: marker) else { throw SyncV2StoreError.schemaMismatch }
             return range.lowerBound

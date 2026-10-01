@@ -39,6 +39,40 @@ Required invariants:
    Once a head exists, keep the existing expected-head lineage rules.
    No later step may bootstrap a missing Work.
 
+## Recovery of response-less command quarantines
+
+The D-107 additive SQLite upgrade records the command IDs already quarantined
+with `command:unexpected` and no response/receipt/transfer/evidence. Fresh
+databases have no candidates; quarantines created after upgrade are never added.
+Automatic launch/foreground/network wakes and retries may replay one of these
+candidates at most once, only when the original
+account/server/epoch/fence binding is still active and there is no stored
+response, verified receipt, upload transfer or quarantine response evidence.
+The release and durable candidate consumption commit in the same transaction.
+Explicit release also consumes the candidate. Re-quarantine stays blocked across
+wakes and restarts until explicit sync; planners scan once per binding per launch,
+not on every UI poll or command. All nine sealed command kinds are covered.
+Keep the command ID, request digest,
+canonical request bytes and intent unchanged; the server may already have
+committed the original receipt. Deleted or reserved works remain excluded.
+Other quarantine reasons (including missing reasons) and response-bearing
+commands remain blocked on automatic paths. Explicit sync keeps its existing
+manual retry of uploads, initial createWork and the sealed intent's publish
+with the same command ID and canonical request bytes. Explicit sync also keeps
+the generalized response-less retry without the legacy candidate restriction.
+
+HTTP 408/429/5xx, including proxy-generated HTML without sync headers, are
+transport failures and remain retryable before envelope validation. Invalid
+2xx/409/422 headers or payloads remain fail-closed as receipt/remote-data
+failures, so new invalid responses cannot enter this legacy recovery path.
+
+After exact receipt verification, check the capability expiry even when no
+transfer row existed before replay. An expired receipt remains immutable and
+completed; seal a new prepare command to obtain a fresh upload ID/capability
+before sending object bytes. Do not rewrite the old receipt or reuse its expired
+capability. The same check applies after a process restart between receipt
+acknowledgement and transfer creation.
+
 ## Conflict choices
 
 The resolver is closed to the three values `useDevice`, `useServer`, and

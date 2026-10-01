@@ -71,6 +71,7 @@ extension ProductionSyncV2RemoteClient {
         // This endpoint accepts ordinary JSON; v2 commands retain their JCS media type.
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         let (data, response) = try await requestData(request, session: current)
+        try validateSyncResponseHeaders(response)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200,
               httpContentType(response) == mediaType,
               let result = try JSONSerialization.jsonObject(with: data) as? [String: Any],

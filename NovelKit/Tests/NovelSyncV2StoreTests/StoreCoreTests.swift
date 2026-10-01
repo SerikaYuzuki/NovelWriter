@@ -459,7 +459,7 @@ func legacyRestoreStateMigratesPreparedAndSealedRowsWithoutDataLoss() async thro
         .joined()
     let rewrite = """
     BEGIN IMMEDIATE;
-    DROP TABLE history_backfills; DROP TABLE shallow_boundaries; DROP TABLE work_deletions;
+    DROP TABLE legacy_command_recovery; DROP TABLE history_backfills; DROP TABLE shallow_boundaries; DROP TABLE work_deletions;
     ALTER TABLE restore_records RENAME TO restore_records_modern;
     \(legacyRestoreDDL)
     INSERT INTO restore_records(

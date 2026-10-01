@@ -43,9 +43,6 @@ extension ProductionSyncV2RemoteClient {
                     }
                     retryAfter = Self.downloadRetryAfter(http.value(forHTTPHeaderField: "Retry-After"))
                     guard http.statusCode == 200 else {
-                        if http.statusCode == 429 {
-                            throw SyncV2Failure.retryable(.rateLimited)
-                        }
                         throw mapStatus(http.statusCode)
                     }
                     return try await Self.validateObjectFile(url, response: response, entry: entry)
@@ -97,6 +94,7 @@ extension ProductionSyncV2RemoteClient {
     }
 
     nonisolated static func validateObjectHeaders(_ response: URLResponse, entry: SnapshotEntry) throws {
+        try validateTransportStatus(response)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200,
               http.value(forHTTPHeaderField: "Cache-Control")?.lowercased() == "no-store",
               http.value(forHTTPHeaderField: "Pragma")?.lowercased() == "no-cache",

@@ -1330,3 +1330,7 @@ mod upload_authentication_tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "prepare_receipt_wire_tests.rs"]
+mod prepare_receipt_wire_tests;

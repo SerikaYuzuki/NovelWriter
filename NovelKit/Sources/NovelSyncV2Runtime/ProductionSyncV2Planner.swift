@@ -6,6 +6,7 @@ import NovelSyncV2Store
 actor ProductionSyncV2Planner: SyncV2CommandPlanner {
     let store: LocalSyncV2Store
     let scope: any SyncV2ScopeResolver
+    private var recoveredCommandBindings: Set<V2AccountBinding> = []
     private var recoveredLeafBindings: Set<V2AccountBinding> = []
     /// Immutable object presence is reusable only in this exact account,
     /// server, protocol, fence, and Work namespace. It is separate from a
@@ -63,7 +64,18 @@ actor ProductionSyncV2Planner: SyncV2CommandPlanner {
                 throw error
             }
         }
+        try await recoverLegacyCommandsOnce(binding: binding)
         return try await store.pendingWorkIDs(scope: .bound(binding))
+    }
+
+    private func recoverLegacyCommandsOnce(binding: V2AccountBinding) async throws {
+        guard recoveredCommandBindings.insert(binding).inserted else { return }
+        do {
+            try await store.retryUnacknowledgedCommands(scope: .bound(binding))
+        } catch {
+            recoveredCommandBindings.remove(binding)
+            throw error
+        }
     }
 
     func invalidateCaches(for workIDs: Set<WorkID>) async {
@@ -105,6 +117,7 @@ actor ProductionSyncV2Planner: SyncV2CommandPlanner {
         if let loaded = loadedPresence[workID], loaded != binding {
             await invalidateCaches(for: [workID])
         }
+        try await recoverLegacyCommandsOnce(binding: binding)
         if let reason = try await store.quarantinedUploadReason(workID: workID, scope: localScope) {
             return .blocked(.fatal(SyncV2FatalReason(rawValue: reason) ?? .unexpected))
         }
@@ -334,7 +347,15 @@ private extension ProductionSyncV2Planner {
             switch record.kind {
             case .prepareObject:
                 let object = try objectID(record)
-                if let transfer = try await store.uploadTransfer(commandID: record.commandID, scope: localScope) {
+                // A replayed receipt can already be expired before any transfer
+                // was created (for example after a response-less quarantine).
+                // Materialize it before counting the object as prepared so the
+                // ordinary fresh-command path renews the capability without PUT.
+                var stored = try await store.uploadTransfer(commandID: record.commandID, scope: localScope)
+                if stored == nil, try await makeTransfer(from: record, view: view) != nil {
+                    stored = try await store.uploadTransfer(commandID: record.commandID, scope: localScope)
+                }
+                if let transfer = stored {
                     if transfer.expiresAt <= Date() {
                         continue
                     }

@@ -750,3 +750,18 @@ CREATE TABLE history_backfills (
   FOREIGN KEY (work_id, server_instance_id, protocol_epoch, account_id, account_fence)
     REFERENCES account_bindings(work_id, server_instance_id, protocol_epoch, account_id, account_fence)
 );
+
+-- Legacy unexpected-command recovery (D-107).
+-- Seed only during the additive upgrade. New databases have no candidates.
+CREATE TABLE legacy_command_recovery (
+  command_id TEXT PRIMARY KEY REFERENCES sealed_commands(command_id) ON DELETE CASCADE,
+  consumed INTEGER NOT NULL DEFAULT 0 CHECK (consumed IN (0, 1))
+);
+INSERT INTO legacy_command_recovery(command_id)
+SELECT c.command_id FROM sealed_commands c
+JOIN quarantine_records q ON q.quarantine_id=c.command_id
+WHERE c.status='quarantined' AND q.reason='command:unexpected'
+  AND length(q.evidence_bytes)=0
+  AND c.canonical_response IS NULL AND c.response_status IS NULL AND c.receipt_verified=0
+  AND NOT EXISTS (SELECT 1 FROM remote_receipts r WHERE r.command_id=c.command_id)
+  AND NOT EXISTS (SELECT 1 FROM upload_transfers u WHERE u.command_id=c.command_id);

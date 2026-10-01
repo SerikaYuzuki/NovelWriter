@@ -231,7 +231,7 @@ public struct FuminiwaHTTPAuthTransport: FuminiwaAuthTransport, Sendable {
 
     private func validate(_ response: URLResponse, data: Data, status: Int, allowedErrorCodes: Set<String>) throws {
         guard let http = response as? HTTPURLResponse else { throw AuthError.providerRejected }
-        if let transient = transientHTTPError(statusCode: http.statusCode) {
+        if let transient = transientHTTPError(statusCode: http.statusCode, retryAfter: http.value(forHTTPHeaderField: "Retry-After")) {
             let hasContractHeaders = http.value(forHTTPHeaderField: "Cache-Control")?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "no-store" &&
                 http.value(forHTTPHeaderField: "Pragma")?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "no-cache" &&
                 http.value(forHTTPHeaderField: "Content-Type")?.trimmingCharacters(in: .whitespacesAndNewlines) == Self.mediaType
@@ -262,7 +262,7 @@ public struct FuminiwaHTTPAuthTransport: FuminiwaAuthTransport, Sendable {
     /// checks. Proxies and load balancers often return a plain 408/429/5xx
     /// body without cache or media headers; those failures remain retryable
     /// without exposing their response bytes or misclassifying them as auth.
-    private func transientHTTPError(statusCode: Int) -> AuthError? {
+    private func transientHTTPError(statusCode: Int, retryAfter: String?) -> AuthError? {
         let code: String
         if statusCode == 429 {
             code = "rateLimited"
@@ -275,8 +275,24 @@ public struct FuminiwaHTTPAuthTransport: FuminiwaAuthTransport, Sendable {
             code: code,
             recoveryAction: .retrySameRequestAfterBackoff,
             retryability: .afterBackoff,
-            requestID: UUID()
+            requestID: UUID(),
+            retryAfterSeconds: Self.transportRetryAfter(retryAfter)
         ))
+    }
+
+    private static func transportRetryAfter(_ value: String?) -> UInt64? {
+        guard let value else { return nil }
+        let seconds: TimeInterval?
+        if let number = TimeInterval(value), number.isFinite {
+            seconds = number
+        } else {
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.timeZone = TimeZone(secondsFromGMT: 0)
+            formatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss z"
+            seconds = formatter.date(from: value)?.timeIntervalSinceNow
+        }
+        return seconds.map { UInt64(min(3600, max(1, $0.rounded(.up)))) }
     }
 
     // swiftlint:disable:next cyclomatic_complexity
@@ -674,10 +690,14 @@ extension FuminiwaHTTPAuthTransport: BrowserAuthTransport {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         let (data, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse, http.url == request.url,
-              http.value(forHTTPHeaderField: "Cache-Control")?.lowercased().contains("no-store") == true,
-              http.value(forHTTPHeaderField: "Content-Type")?.lowercased().hasPrefix("application/json") == true,
-              data.count <= 65536 else { throw AuthError.invalidWireResponse }
+        guard let http = response as? HTTPURLResponse, http.url == request.url else { throw AuthError.invalidWireResponse }
+        if let transient = transientHTTPError(statusCode: http.statusCode, retryAfter: http.value(forHTTPHeaderField: "Retry-After")) {
+            throw transient
+        }
+        guard
+            http.value(forHTTPHeaderField: "Cache-Control")?.lowercased().contains("no-store") == true,
+            http.value(forHTTPHeaderField: "Content-Type")?.lowercased().hasPrefix("application/json") == true,
+            data.count <= 65536 else { throw AuthError.invalidWireResponse }
         if allowPending, http.statusCode == 202 {
             return Data()
         }

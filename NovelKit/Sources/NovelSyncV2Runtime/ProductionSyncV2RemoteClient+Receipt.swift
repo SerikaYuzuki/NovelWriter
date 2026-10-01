@@ -23,15 +23,7 @@ extension ProductionSyncV2RemoteClient {
         guard let http = response as? HTTPURLResponse else {
             throw SyncV2Failure.retryable(.lostResponse)
         }
-        if [408, 429].contains(http.statusCode) || (500 ... 599).contains(http.statusCode) {
-            throw SyncV2Failure.retryable(.serverUnavailable)
-        }
-        if http.statusCode == 401 {
-            throw SyncV2Failure.authenticationRequired
-        }
-        if http.statusCode == 403 {
-            throw SyncV2Failure.accountFenceChanged
-        }
+        try Self.validateTransportStatus(response)
         guard http.statusCode == 200,
               httpContentType(response) == mediaType,
               http.value(forHTTPHeaderField: "Cache-Control")?.lowercased() == "no-store",
@@ -46,7 +38,7 @@ extension ProductionSyncV2RemoteClient {
                 expectation: .response(status: receipt.responseStatus, result: receipt.result.rawValue,
                                        canonicalBytes: receipt.canonicalResponse)
             )
-        } catch SyncV2ReceiptValidationError.mismatch {
+        } catch {
             throw SyncV2Failure.receiptMismatch
         }
         return SyncV2ReceiptReadback(

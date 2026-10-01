@@ -107,7 +107,7 @@ extension SyncV2Application {
             } catch {
                 guard isCurrentWorker(workID: workID, owner: owner) else { return }
                 recordSyncDiagnosticIfAbsent(workID: workID, stage: "worker/plan-command", error: error)
-                let failure = (error as? SyncV2Failure) ?? .fatal(.unexpected)
+                let failure = syncV2FailureKind(error)
                 record(failure: failure, workID: workID)
                 if finishWorkerIfUnchanged(
                     workID: workID,
@@ -152,7 +152,7 @@ extension SyncV2Application {
                 return false
             }
             recordSyncDiagnostic(workID: workID, stage: diagnosticStage, error: error)
-            let failure = (error as? SyncV2Failure) ?? .fatal(.unexpected)
+            let failure = syncV2FailureKind(error)
             let failureDisposition: SyncV2CommandFailureDisposition = if case .upload = sending, case let .fatal(reason) = failure {
                 .rejectUpload(reason)
             } else if case .command = sending, case let .fatal(reason) = failure {

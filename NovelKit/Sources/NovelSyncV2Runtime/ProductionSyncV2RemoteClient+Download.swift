@@ -59,12 +59,12 @@ extension ProductionSyncV2RemoteClient {
                     throw SyncV2Failure.retryable(.lostResponse)
                 }
                 retryAfter = Self.downloadRetryAfter(http.value(forHTTPHeaderField: "Retry-After"))
+                if [409, 422].contains(http.statusCode) {
+                    try validateSyncResponseHeaders(response)
+                }
                 guard http.statusCode == 200 ||
                     (allowMissingEndpoint && [404, 405].contains(http.statusCode)) ||
                     (allowTotalsFallback && [400, 422].contains(http.statusCode)) else {
-                    if http.statusCode == 429 {
-                        throw SyncV2Failure.retryable(.rateLimited)
-                    }
                     throw mapStatus(http.statusCode)
                 }
                 return (data, response)
