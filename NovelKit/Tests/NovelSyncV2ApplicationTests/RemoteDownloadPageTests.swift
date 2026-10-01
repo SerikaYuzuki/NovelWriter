@@ -295,12 +295,13 @@ extension RemoteHTTPLineageTests {
         default: break
         }
         try received.write(to: url)
-        let response = try #require(try HTTPURLResponse(url: #require(URL(string: "https://fixture.invalid/object")), statusCode: 200,
-                                                        httpVersion: nil, headerFields: [
-                                                            "Content-Type": "application/octet-stream", "Cache-Control": mode == "header" ? "public" : "no-store",
-                                                            "Pragma": "no-cache", "X-Fuminiwa-Object-Digest": entry.objectId.rawValue,
-                                                            "X-Fuminiwa-Byte-Count": "\(entry.byteCount)"
-                                                        ]))
+        let objectURL = try #require(URL(string: "https://fixture.invalid/object"))
+        let response = try #require(HTTPURLResponse(url: objectURL, statusCode: 200,
+                                                    httpVersion: nil, headerFields: [
+                                                        "Content-Type": "application/octet-stream", "Cache-Control": mode == "header" ? "public" : "no-store",
+                                                        "Pragma": "no-cache", "X-Fuminiwa-Object-Digest": entry.objectId.rawValue,
+                                                        "X-Fuminiwa-Byte-Count": "\(entry.byteCount)"
+                                                    ]))
         if mode == "valid" {
             let mapped = try await ProductionSyncV2RemoteClient.validateObjectFile(url, response: response, entry: entry)
             try FileManager.default.removeItem(at: url)
