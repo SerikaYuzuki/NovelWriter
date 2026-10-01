@@ -98,6 +98,29 @@ paths:
         '403': { $ref: '#/components/responses/FenceMismatch' }
         '426': { $ref: '#/components/responses/ProtocolMismatch' }
         default: { $ref: '#/components/responses/TypedError' }
+  /v2/works/{workId}/download:
+    get:
+      operationId: v2DownloadSnapshotGraphPage
+      description: Read-only bounded page of a pinned snapshot's full ancestry and deduplicated small objects. See download.md.
+      parameters:
+        - { $ref: '#/components/parameters/WorkId' }
+        - { $ref: '#/components/parameters/ServerInstance' }
+        - { $ref: '#/components/parameters/ProtocolEpoch' }
+        - { $ref: '#/components/parameters/AccountFence' }
+        - { $ref: '#/components/parameters/Cursor' }
+        - name: snapshotId
+          in: query
+          required: true
+          schema: { type: string, pattern: '^[0-9a-f]{64}$' }
+      responses:
+        '200':
+          description: Canonical JCS page with no-store/no-cache headers; at most 256 items and normally 2 MiB of decoded payload.
+          content: { application/vnd.fuminiwa.sync.v2+jcs: { schema: { $ref: './download-page.schema.json' } } }
+        '404': { $ref: '#/components/responses/NotFoundInAccount' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/FenceMismatch' }
+        '426': { $ref: '#/components/responses/ProtocolMismatch' }
+        default: { $ref: '#/components/responses/TypedError' }
   /v2/works/{workId}/history:
     get:
       operationId: v2ListHistory

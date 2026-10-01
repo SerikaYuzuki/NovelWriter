@@ -1,5 +1,7 @@
 //! Opt-in PostgreSQL/HTTP gate. Ordinary test runs emit an explicit skip and
 //! never connect to a fixed development or LAN server.
+#[path = "support/download_pages.rs"]
+mod download_pages;
 mod support;
 
 use axum::{
@@ -694,7 +696,19 @@ async fn postgres_and_http_scenarios_are_opt_in() {
     verify_http_contract(&context).await;
     verify_chunk_upload_http(&context).await;
     verify_assistant_lane(&context).await;
+    download_pages::verify_download_pages(&context).await;
     verify_work_deletion(&context).await;
+    let (deleted_download, _, _) = get(
+        &context,
+        &context.account_a.account_id,
+        &format!(
+            "/v2/works/{}/download?snapshotId={}",
+            context.primary_work,
+            hex::encode(context.root_snapshot)
+        ),
+    )
+    .await;
+    assert_eq!(deleted_download, StatusCode::NOT_FOUND);
     context.repo.pool.close().await;
 }
 

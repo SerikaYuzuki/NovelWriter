@@ -362,6 +362,10 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/v2/works/{work_id}", delete(delete_work))
         .route("/v2/works/{work_id}/head", get(head))
+        .route(
+            "/v2/works/{work_id}/download",
+            get(crate::snapshot_download::download),
+        )
         .route("/v2/works/{work_id}/history", get(history))
         .route("/v2/snapshots/{snapshot_id}/manifest", get(manifest))
         .route("/v2/objects/{object_id}", get(object))

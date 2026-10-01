@@ -10,6 +10,7 @@ by ``conformance-v2.sh``.
 from __future__ import annotations
 
 import hashlib
+import base64
 import json
 import re
 import sys
@@ -246,9 +247,33 @@ def check_assistant(repo: Path) -> int:
 
 def main() -> int:
     repo = Path(__file__).resolve().parent.parent
-    count = check_canonical(repo / "docs/sync/v2/fixtures/canonical") + check_protection(repo) + check_assistant(repo)
+    count = check_canonical(repo / "docs/sync/v2/fixtures/canonical") + check_protection(repo) + check_assistant(repo) + check_download(repo)
     print(f"v2 independent canonical fixture checks passed ({count} vectors)")
     return 0
+
+
+def check_download(repo: Path) -> int:
+    base = repo / "docs/sync/v2"
+    schema = read_json(base / "download-page.schema.json")
+    path = base / "fixtures/canonical/download-page.json"
+    page = read_json(path)
+    assert_canonical(path)
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == path.with_suffix(".sha256").read_text().strip()
+    assert set(page) == set(schema["required"]) == set(schema["properties"])
+    assert schema["additionalProperties"] is False
+    assert page["result"] == "noChanges" and page["nextCursor"] is None
+    assert len(page["items"]) <= schema["properties"]["items"]["maxItems"]
+    keys = []
+    for item in page["items"]:
+        assert set(item) == {"kind", "id", "bytesBase64URL"}
+        assert item["kind"] in {"manifest", "object"}
+        assert HEX256.fullmatch(item["id"])
+        raw = base64.urlsafe_b64decode(item["bytesBase64URL"] + "=" * (-len(item["bytesBase64URL"]) % 4))
+        assert hashlib.sha256(raw).hexdigest() == item["id"]
+        keys.append((item["kind"], item["id"]))
+    assert keys == sorted(set(keys))
+    assert ("manifest", page["snapshotId"]) in keys
+    return 1
 
 
 if __name__ == "__main__":

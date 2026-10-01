@@ -258,19 +258,20 @@ extension LocalSyncV2Store {
               encoded.manifest.workId == workID else {
             throw SyncV2StoreError.invalidSnapshot
         }
-        try SnapshotValidator.validateObjects(encoded)
         guard let work = try query(
             "SELECT document_id,document_created_at FROM works WHERE work_id=?",
             [.text(workID.description)]
         ).first else { throw SyncV2StoreError.workNotFound }
-        let model = try SnapshotCodec.decode(
-            manifestBytes: encoded.manifestBytes,
-            objects: encoded.objects
-        )
+        let model = try SnapshotCodec.decode(encoded)
         guard work[0].text == DocumentID(model.document.id).description,
               try work[1].text == Self.iso8601(model.documentCreatedAt) else {
             throw SyncV2StoreError.invalidSnapshot
         }
+        try insertValidatedEncoded(encoded, workID: workID)
+    }
+
+    /// Caller must validate the immutable snapshot and its document anchor in this transaction.
+    func insertValidatedEncoded(_ encoded: EncodedSnapshot, workID: WorkID) throws {
         try validateParents(encoded, workID: workID)
 
         for (objectID, bytes) in encoded.objects {

@@ -11,7 +11,8 @@ extension ProductionSyncV2RemoteClient {
     /// by this traversal. Never replay mutations or retry validation/scope failures.
     func requestSnapshotData(
         _ request: URLRequest,
-        session: FuminiwaSession
+        session: FuminiwaSession,
+        allowMissingEndpoint: Bool = false
     ) async throws -> (Data, URLResponse) {
         guard request.httpMethod == "GET" else {
             throw SyncV2Failure.fatal(.unexpected)
@@ -23,7 +24,8 @@ extension ProductionSyncV2RemoteClient {
                 guard let http = response.1 as? HTTPURLResponse else {
                     throw SyncV2Failure.retryable(.lostResponse)
                 }
-                guard http.statusCode == 200 else {
+                guard http.statusCode == 200 ||
+                    (allowMissingEndpoint && [404, 405].contains(http.statusCode)) else {
                     if http.statusCode == 429 {
                         // Leave server-directed throttling to a later user retry.
                         throw SyncV2Failure.retryable(.rateLimited)

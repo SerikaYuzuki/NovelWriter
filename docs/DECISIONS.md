@@ -67,3 +67,7 @@ D-043、D-046〜D-054、D-059〜D-061、D-063、D-065、D-069、D-071〜D-075、
 ## D-100: iOSのGoogleログイン（2026-09-27）
 
 iPhone / iPadにもGoogleログインを追加する。GoogleはMacと同じサーバー上のブラウザ認証をシステムブラウザで使い、同じGoogle identityを同じFUMINIWA AccountIDへ対応させる。iOSのAppleログインは現行native flowを維持する。両provider間の連携・自動統合は行わず、account切替時は既存の端末作品保全を通す。[Auth v2](auth/v2/README.md)に共通契約を記す。
+
+## D-101: 初回取り込みの一括読取（2026-10-01）
+
+履歴が多い作品の初回取り込みは、Snapshot Sync v2の読取専用ページでmanifestと重複排除した小さなobjectをまとめて取得する。履歴の件数制限や削除で速くせず、既存のdigest・graph・Inbox・編集境界の検証を維持する。ページは取得開始時のSnapshot IDへ固定し、account/fence/workに束縛する。旧serverは初回404/405に限り既存の個別読取へ戻る。DB schema、保存方式、通常編集を変更しない。[一括読取契約](sync/v2/download.md)に上限と互換境界を定める。

@@ -39,11 +39,10 @@ extension ProductionSyncV2RemoteClient {
             snapshotID: SnapshotID(rawValue: raw),
             generation: generation
         )
-        let snapshots = try await fetchSnapshot(
+        let snapshots = try await fetchRemoteOnlyGraph(
             workID: workID,
             id: head.snapshotID,
-            session: session,
-            traversal: SnapshotFetchTraversal()
+            session: session
         )
         return SyncV2RemoteInbox(
             inboxID: UUID(),

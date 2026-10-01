@@ -190,11 +190,7 @@ extension LocalSyncV2Store {
                   snapshot.manifest.workId == graph.workID else {
                 throw SyncV2StoreError.invalidSnapshot
             }
-            try SnapshotValidator.validateObjects(snapshot)
-            let model = try SnapshotCodec.decode(
-                manifestBytes: snapshot.manifestBytes,
-                objects: snapshot.objects
-            )
+            let model = try SnapshotCodec.decode(snapshot)
             let next = try GraphAnchor(
                 documentID: DocumentID(model.document.id),
                 createdAt: Self.iso8601(model.documentCreatedAt)
@@ -562,7 +558,7 @@ extension LocalSyncV2Store {
         binding: V2AccountBinding
     ) throws {
         try requireNotDeleting(graph.workID)
-        _ = try validateGraph(graph)
+        let anchor = try validateGraph(graph)
         try validateGraphParents(graph)
         let inboxID = graph.inboxID.uuidString.lowercased()
         guard try inboxState(inboxID: graph.inboxID, binding: binding) == "verified",
@@ -570,6 +566,8 @@ extension LocalSyncV2Store {
                   workID: graph.workID,
                   scope: .bound(binding)
               ),
+              current[1].text == anchor.documentID.description,
+              current[5].text == anchor.createdAt,
               current[3].blob == graph.expectedCurrentSnapshotID?.bytes,
               current[2].int64 == graph.expectedLocalGeneration else {
             throw SyncV2StoreError.staleCAS
@@ -596,7 +594,7 @@ extension LocalSyncV2Store {
             )
         }
         for snapshot in try topologicalSnapshots(graph) {
-            try insertEncoded(snapshot, workID: graph.workID)
+            try insertValidatedEncoded(snapshot, workID: graph.workID)
         }
         let next = graph.expectedLocalGeneration + 1
         try exec(

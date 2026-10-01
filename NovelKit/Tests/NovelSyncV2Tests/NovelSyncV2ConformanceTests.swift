@@ -50,6 +50,13 @@ struct NovelSyncV2ConformanceTests {
             JSONSerialization.jsonObject(with: expectedBytes) as? [String: Any]
         )
         #expect(materialized(model).asNSDictionary.isEqual(to: expected))
+        #expect(try materialized(SnapshotCodec.decode(encoded)).asNSDictionary.isEqual(to: expected))
+        let mismatched = EncodedSnapshot(
+            manifest: SnapshotManifest(workId: WorkID(UUID()), entries: manifest.entries),
+            manifestBytes: snapshotBytes,
+            objects: objects
+        )
+        #expect(throws: Error.self) { try SnapshotCodec.decode(mismatched) }
         let reencoded = try SnapshotCodec.encode(model)
         #expect(reencoded.manifestBytes == snapshotBytes)
 
@@ -58,6 +65,7 @@ struct NovelSyncV2ConformanceTests {
         pollutedObjects[ObjectID(data: unreferenced)] = unreferenced
         let polluted = EncodedSnapshot(manifest: manifest, manifestBytes: snapshotBytes, objects: pollutedObjects)
         #expect(throws: Error.self) { try SnapshotValidator.validateObjects(polluted) }
+        #expect(throws: Error.self) { try SnapshotCodec.decode(polluted) }
     }
 
     @Test func allSealedCommandDigestsMatchFixtures() throws {

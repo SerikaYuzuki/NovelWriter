@@ -132,7 +132,8 @@ final class LineageHTTPState: @unchecked Sendable {
             failures[path] = queued
             return reply
         }
-        return replies["\(method) \(path)"]
+        return replies["\(method) \(path)"] ?? (path.hasSuffix("/download")
+            ? LineageHTTPReply(status: 404, headers: [:], body: Data()) : nil)
     }
 
     func count(path: String) -> Int {

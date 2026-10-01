@@ -21,6 +21,7 @@ pub use domain::{AuthenticatedPrincipal, CommandKind, SealedCommand, SyncError};
 pub use http::{router, AppState};
 pub use postgres::Repository;
 
+mod snapshot_download;
 mod work_deletion;
 
 pub mod upload_chunks;

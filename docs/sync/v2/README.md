@@ -12,6 +12,8 @@ Use this directory when changing the synchronization contract. For a UI-only cha
 
 ## Contract files
 
+- [Initial graph download](download.md): bounded read-only pages, deduplicated objects, account-bound cursor and old-server fallback; [response schema](download-page.schema.json).
+
 - `snapshot.schema.json`: closed v2 manifest envelope.
 - `command.schema.json`: common sealed-command envelope.
 - `wire.md`: endpoint, header, receipt, and error rules.

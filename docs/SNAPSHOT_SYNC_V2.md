@@ -164,6 +164,7 @@ The v2 wire has these endpoints under `/v2`:
 | POST | `/v2/works/{work_id}/conflict/resolve` | one of the three choices |
 | POST | `/v2/works/{work_id}/restore` | new two-parent restore Snapshot |
 | GET | `/v2/works` | account-scoped catalog; no cross-account existence leak |
+| GET | `/v2/works/{work_id}/download` | [bounded, read-only pages](sync/v2/download.md) of pinned ancestry and deduplicated small objects |
 
 Every sealed-command body contains `schemaVersion: 2`, `commandId`, `binding`, and
 the operation-specific payload. The server derives the authenticated account

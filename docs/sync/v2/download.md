@@ -1,0 +1,50 @@
+# Bounded initial graph download (D-101)
+
+`GET /v2/works/{workId}/download?snapshotId={digest}[&cursor={opaque}]`
+is a read-only, additive v2 endpoint. It does not seal commands, create receipts,
+advance a head, or change the SQLite/PostgreSQL schema. Existing clients keep
+using individual manifest/object reads. A new client may fall back to those
+reads only when its first page request returns 404 or 405; a failed later page
+or invalid data must not turn into a successful partial import.
+
+The client first obtains the head and pins that immutable Snapshot ID for every
+page. The server requires the usual bearer, server instance, protocol epoch and
+account fence headers. The WorkID and root snapshot must belong to that account
+and the same active, non-deleted work. Foreign, deleted and missing roots have
+the same account-scoped 404 response. Cursors bind account, fence, server,
+protocol, WorkID and root Snapshot ID; they cannot be moved to another query.
+
+The [closed response schema](download-page.schema.json) uses the v2 JCS media
+type, `Cache-Control: no-store`, and `Pragma: no-cache`. `items` are globally
+ordered by `(kind, id)`, manifests before objects, with each identity occurring
+once across all pages. Manifest bytes cover the root's complete ancestry;
+object bytes are deduplicated across that ancestry. The cursor resumes strictly
+after the last returned identity. A concurrently published head does not alter
+this pinned graph.
+
+A page has at most 256 items and normally at most 2 MiB of decoded payload.
+One legal manifest larger than that budget is returned alone (the existing
+16 MiB manifest cap still applies). The server selects sizes before fetching
+BYTEA payloads. Objects up to and including 256 KiB are included; larger objects
+use the existing authenticated, digest-checked object GET. The complete JSON
+response is bounded by 24 MiB on the client, including Base64 expansion. Empty
+terminal pages are legal; nonterminal empty pages and repeated cursors are not.
+
+Clients validate canonical response bytes, closed keys, root identity, ordering,
+digest of every item, manifest WorkID/schema, complete parent closure, the
+existing unique-object budget and object byte counts. Missing small objects,
+extra unreferenced objects and unreachable or cyclic manifests are rejected.
+The verified graph still passes the normal Inbox stage/verify/adopt transaction
+and work/session/account/generation checks. Downloading does not select a work
+or loosen the editor boundary. Failed imports preserve the current manuscript.
+
+Each temporary transport/5xx failure retries only that page with the same root
+and cursor, at most twice. Authorization, scope, throttling and validation
+failures are not silently retried. No history-count cutoff, pruning, lossy
+conversion or portable-package shortcut is introduced.
+
+Local import validates persisted inbox bytes again at verification and adoption.
+Within one adoption transaction, the already validated immutable graph and its
+work/document anchor feed snapshot insertion without decoding the same graph
+again. Parent checks, existing-row byte attestation, scope and CAS checks remain
+in the transaction; no validation cache survives a call or trusts mutable rows.

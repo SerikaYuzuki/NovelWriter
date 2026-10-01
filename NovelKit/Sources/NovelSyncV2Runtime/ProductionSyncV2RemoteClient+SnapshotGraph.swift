@@ -9,6 +9,29 @@ import FoundationNetworking
 #endif
 
 extension ProductionSyncV2RemoteClient {
+    func fetchRemoteOnlyGraph(
+        workID: WorkID, id: SnapshotID, session: FuminiwaSession
+    ) async throws -> [EncodedSnapshot] {
+        let traversal = SnapshotFetchTraversal()
+        let batch = try await downloadSnapshotPages(workID: workID, id: id, session: session)
+        if let batch {
+            traversal.objects = batch.objects
+            for (snapshotID, value) in batch.manifests {
+                try Task.checkCancellation()
+                try traversal.include(value.manifest)
+                let objects = try await fetchObjects(manifest: value.manifest, session: session, traversal: traversal)
+                traversal.memo[snapshotID] = EncodedSnapshot(
+                    manifest: value.manifest, manifestBytes: value.bytes, objects: objects
+                )
+            }
+        }
+        let snapshots = try await fetchSnapshot(workID: workID, id: id, session: session, traversal: traversal)
+        if let batch, snapshots.count != batch.manifests.count {
+            throw SyncV2Failure.quarantined(.invalidRemoteData)
+        }
+        return snapshots
+    }
+
     func inbox(
         command: SealedCommand,
         receipt: SyncV2ReceiptReadback,
@@ -70,9 +93,10 @@ extension ProductionSyncV2RemoteClient {
                 accountID: session.accountID, accountFence: session.accountFence,
                 serverInstanceID: session.serverInstanceID.uuidString.lowercased()
             ))
-            if let snapshot = try await localStore?.committedSnapshot(
-                workID: workID, snapshotID: next.id, scope: scope
-            ) {
+            if traversal.memo[next.id] == nil,
+               let snapshot = try await localStore?.committedSnapshot(
+                   workID: workID, snapshotID: next.id, scope: scope
+               ) {
                 // Committed parents remain a verified lineage anchor in SQLite.
                 try traversal.include(snapshot.manifest)
                 traversal.memo[next.id] = snapshot
@@ -96,6 +120,9 @@ extension ProductionSyncV2RemoteClient {
         workID: WorkID, id: SnapshotID, scope: V2LocalWorkScope,
         session: FuminiwaSession, traversal: SnapshotFetchTraversal
     ) async throws -> EncodedSnapshot {
+        if let prefetched = traversal.memo[id] {
+            return prefetched
+        }
         if let cached = try await localStore?.verifiedInboxSnapshot(
             workID: workID, snapshotID: id, scope: scope
         ) {
