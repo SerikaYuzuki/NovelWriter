@@ -23,7 +23,6 @@ macOSの滑らかなカーソルを通常EditorKitへ組み込み、端末の執
 
 ## 実装が残るもの
 
-- D-106 Step 3: 未取得履歴の優先取得・復元導線、深いInbox／競合の待機表示。Step 2のhead-first install、履歴backfill、最小表示は実装済み。[検証記録と残る制約](shallow-step2-verification.md)。
 - Sync v2全体の不具合・性能・構造・UIの課題。[全体レビュー](SYNC_REVIEW.md)。D-01の端末内自動保存・昇格は実装済み。残る項目は個別に扱う。
 - 削除予約・取消のアプリ画面。サーバーAPIと720時間後のworkerは実装済み。[lifecycle](auth/v1/account-deletion.md)。
 - Package Validator / 共通fixtureの全体、Windows 11版とinstaller。[互換契約](CROSS_PLATFORM.md)。
@@ -39,6 +38,8 @@ macOSの滑らかなカーソルを通常EditorKitへ組み込み、端末の執
 2026-09-26の実装・全体検証・サーバー反映と端末インストールは[受入記録](PROTECTION_AI_ACCEPTANCE.md)を参照する。
 
 ## 受入が残るもの
+
+D-106 Step 1〜3は実装済み。head-first／backfill、優先取得、未取得版の復元確認、深いInbox／競合の待機、通信・検証エラー、従量接続の確認を両OSへ接続した。[検証範囲と残る制約](sync/v2/shallow-history-verification.md)。実accountでの二台同期・実機Low Data Mode・VoiceOver受入と稼働反映は未実施。
 
 AI実APIでの応答・編集、登録済みMCPクライアントとの実利用、Mac／iPhone／iPadでのAI記録と指示の二台同期は別途受入する。
 

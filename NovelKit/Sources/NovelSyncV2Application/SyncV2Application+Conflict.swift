@@ -80,6 +80,10 @@ public extension SyncV2Application {
         guard runtimeIdentity != .preview else {
             throw SyncV2ApplicationError.previewReadOnly
         }
+        if try await kernel.snapshotAvailability(workID: workID, snapshotID: snapshotID) == .unfetched {
+            prioritizeHistory(workID: workID)
+            throw SyncV2Failure.retryable(.historyIncomplete)
+        }
         let prepared = try await kernel.prepareRestore(
             SyncV2RestoreRequest(workID: workID, snapshotID: snapshotID)
         )

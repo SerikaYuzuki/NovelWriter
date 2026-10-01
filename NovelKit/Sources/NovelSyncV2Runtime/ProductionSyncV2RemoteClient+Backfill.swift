@@ -13,24 +13,28 @@ extension ProductionSyncV2RemoteClient {
     }
 
     func backfillHistory(workID: WorkID, progress: @escaping @Sendable () async -> Void = {}) async throws {
+        try await backfillHistory(workID: workID, manual: false, progress: progress)
+    }
+
+    func backfillHistory(workID: WorkID, manual: Bool, allowConstrained: Bool = false, progress: @escaping @Sendable () async -> Void) async throws {
         guard let store = localStore else { return }
         let session = try await loadSession()
         let binding = V2AccountBinding(accountID: session.accountID, accountFence: session.accountFence,
                                        serverInstanceID: session.serverInstanceID.uuidString.lowercased())
-        guard let state = try await store.resumeBackfill(workID: workID, binding: binding) else { return }
+        guard let state = try await store.resumeBackfill(workID: workID, binding: binding, manual: manual) else { return }
         do {
-            try await SnapshotDownloadContext.$current.withValue(SnapshotDownloadContext(session: session, backgroundBackfill: true)) {
+            try await SnapshotDownloadContext.$current.withValue(SnapshotDownloadContext(session: session, backgroundBackfill: !allowConstrained)) {
                 try await downloadBackfill(state, session: session, store: store, progress: progress)
             }
         } catch {
             let status: V2BackfillStatus = switch error {
             case SyncV2Failure.authenticationRequired, SyncV2Failure.fatal(.remoteDataUnavailable),
                  SyncV2Failure.fatal(.remoteWorkDeleted): .suspended
-            case SyncV2Failure.quarantined, SyncV2StoreError.invalidSnapshot, is SyncV2TypeError: .failed
+            case SyncV2Failure.quarantined, SyncV2Failure.receiptMismatch, SyncV2StoreError.invalidSnapshot, is SyncV2TypeError: .failed
             default: .paused
             }
             try await store.setBackfillStatus(workID: workID, binding: binding, status: status,
-                                              failureCode: status == .failed ? "invalidRemoteData" : nil)
+                                              failureCode: status == .failed ? "invalidRemoteData" : (error is CancellationError ? nil : "interrupted"))
             throw error
         }
     }
@@ -45,7 +49,10 @@ extension ProductionSyncV2RemoteClient {
             try Task.checkCancellation()
             var request = try downloadPageRequest(workID: state.workID, id: state.rootSnapshotID,
                                                   cursor: cursor, session: session, includeTotals: cursor == nil, mode: "backfill")
-            request.allowsConstrainedNetworkAccess = false
+            if SnapshotDownloadContext.current?.backgroundBackfill == true {
+                request.allowsConstrainedNetworkAccess = false
+                request.allowsExpensiveNetworkAccess = false
+            }
             let (data, response) = try await requestSnapshotData(request, session: session)
             let page = try await Self.decodeDownloadPage(data, response: response, id: state.rootSnapshotID,
                                                          allowsTotals: cursor == nil, mode: "backfill")

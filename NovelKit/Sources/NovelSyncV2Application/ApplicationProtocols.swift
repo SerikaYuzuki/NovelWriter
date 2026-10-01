@@ -84,6 +84,7 @@ public protocol SyncV2RemoteClient: Sendable {
     func deleteWork(workID: WorkID, binding: SyncV2AccountScopeBinding) async throws
     func execute(_ operation: SyncV2RemoteOperation) async throws -> SyncV2RemoteExecution
     func backfillWorkIDs() async throws -> [WorkID]
+    func backfillHistory(workID: WorkID, manual: Bool, allowConstrained: Bool, progress: @escaping @Sendable () async -> Void) async throws
     func backfillHistory(workID: WorkID, progress: @escaping @Sendable () async -> Void) async throws
     func downloadRemoteOnly(workID: WorkID) async throws -> SyncV2RemoteInbox
     func catalogPage(cursor: String?, pageSize: Int) async throws -> SyncV2RemoteCatalogPage
@@ -93,6 +94,10 @@ public protocol SyncV2RemoteClient: Sendable {
 }
 
 public extension SyncV2RemoteClient {
+    func backfillHistory(workID: WorkID, manual _: Bool, allowConstrained _: Bool = false, progress: @escaping @Sendable () async -> Void) async throws {
+        try await backfillHistory(workID: workID, progress: progress)
+    }
+
     func backfillWorkIDs() async throws -> [WorkID] {
         []
     }
@@ -164,6 +169,7 @@ public protocol SyncV2LocalKernel: Sendable {
     /// intentionally a local read so a process restart can restore the
     /// conflict UI without a network round trip.
     func activeConflict(workID: WorkID) async throws -> SyncV2ConflictProjection?
+    func historyFetchState(workID: WorkID) async throws -> SyncV2HistoryFetchState
     func snapshotAvailability(workID: WorkID, snapshotID: SnapshotID) async throws -> SyncV2SnapshotAvailability
     func localHistoryPage(
         workID: WorkID,
@@ -231,6 +237,10 @@ public extension SyncV2LocalKernel {
 }
 
 public extension SyncV2LocalKernel {
+    func historyFetchState(workID _: WorkID) async throws -> SyncV2HistoryFetchState {
+        .complete
+    }
+
     func snapshotAvailability(workID _: WorkID, snapshotID _: SnapshotID) async throws -> SyncV2SnapshotAvailability {
         .local
     }

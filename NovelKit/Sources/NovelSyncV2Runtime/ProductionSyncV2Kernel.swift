@@ -4,8 +4,8 @@ import NovelSyncV2Application
 import NovelSyncV2Store
 
 actor ProductionSyncV2Kernel: SyncV2LocalKernel, SyncV2LibraryProvider {
-    private let store: LocalSyncV2Store
-    private let scope: any SyncV2ScopeResolver
+    let store: LocalSyncV2Store
+    let scope: any SyncV2ScopeResolver
     private let remote: (any SyncV2RemoteClient)?
 
     init(store: LocalSyncV2Store, scope: any SyncV2ScopeResolver, remote: (any SyncV2RemoteClient)? = nil) {

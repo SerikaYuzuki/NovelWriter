@@ -4,10 +4,6 @@ import SwiftUI
 struct IOSSnapshotHistoryView: View {
     let store: IOSDocumentStore
     @Environment(\.dismiss) private var dismiss
-    @State private var snapshotID: String?
-    @State private var restoreSession: IOSDocumentSessionToken?
-    @State private var restoreAccountScope: IOSSnapshotSyncV2AccountScope?
-
     var body: some View {
         List {
             Section("スナップショット履歴") {
@@ -20,23 +16,19 @@ struct IOSSnapshotHistoryView: View {
                         .foregroundStyle(.secondary)
                 } else {
                     ForEach(store.syncV2HistoryItems, id: \.occurrenceID) { entry in
-                        Button {
-                            restoreSession = store.currentDocumentSessionToken
-                            restoreAccountScope = store.snapshotSyncV2AccountScope
-                            snapshotID = entry.snapshotID.rawValue
-                        } label: {
-                            VStack(alignment: .leading, spacing: 3) {
-                                if entry.snapshotAvailability == .unfetched {
-                                    Text("古い履歴を取得中…").font(.caption).foregroundStyle(.secondary)
+                        VStack(alignment: .leading) {
+                            Text(entry.displayReason + "・" + entry.createdAt.formatted(date: .abbreviated, time: .shortened))
+                                .font(.caption)
+                            if let application = store.snapshotSyncV2Application,
+                               let workID = store.syncV2ActiveWorkID {
+                                let session = store.currentDocumentSessionToken
+                                let scope = store.snapshotSyncV2AccountScope
+                                HistoryFetchControls(application: application, workID: workID, snapshotID: entry.snapshotID,
+                                                     announcesStatus: entry.occurrenceID == store.syncV2HistoryItems.first?.occurrenceID) {
+                                    guard store.currentDocumentSessionToken == session,
+                                          store.snapshotSyncV2AccountScope == scope else { return }
+                                    _ = await store.restoreSnapshotSyncV2(snapshotID: entry.snapshotID.rawValue)
                                 }
-                                Text(
-                                    entry.reason + "・" + entry.createdAt.formatted(
-                                        date: .abbreviated,
-                                        time: .shortened
-                                    )
-                                )
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
                             }
                         }
                     }
@@ -75,33 +67,8 @@ struct IOSSnapshotHistoryView: View {
                 Button("閉じる") { dismiss() }
             }
         }
-        .confirmationDialog("この版を復元しますか？", isPresented: Binding(
-            get: { snapshotID != nil },
-            set: {
-                if !$0 {
-                    snapshotID = nil
-                }
-            }
-        )) {
-            Button("復元") {
-                guard let selected = snapshotID,
-                      store.currentDocumentSessionToken == restoreSession,
-                      store.snapshotSyncV2AccountScope == restoreAccountScope else { return }
-                let session = restoreSession
-                let scope = restoreAccountScope
-                Task {
-                    guard store.currentDocumentSessionToken == session,
-                          store.snapshotSyncV2AccountScope == scope else { return }
-                    _ = await store.restoreSnapshotSyncV2(snapshotID: selected)
-                }
-                snapshotID = nil
-            }.disabled(!store.canRestoreLocalSnapshot)
-            Button("キャンセル", role: .cancel) { snapshotID = nil }
-        } message: {
-            Text("現在の内容を履歴に残してから、選んだ版へ戻します。")
-        }
-        .onChange(of: store.currentDocumentSessionToken) { _, _ in snapshotID = nil }
-        .onChange(of: store.snapshotSyncV2AccountScope) { _, _ in snapshotID = nil }
+        .onChange(of: store.currentDocumentSessionToken) { _, _ in dismiss() }
+        .onChange(of: store.snapshotSyncV2AccountScope) { _, _ in dismiss() }
         .task {
             if let workID = store.syncV2ActiveWorkID, store.canRefreshSnapshotHistory {
                 _ = await store.refreshSnapshotHistory(for: workID, reset: true)

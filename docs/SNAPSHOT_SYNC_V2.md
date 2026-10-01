@@ -104,7 +104,7 @@ transaction; edits, promotion and publish continue against H. Newer heads enter
 through the existing Inbox/document gate. Missing ancestry is retryable
 `historyIncomplete`, never evidence of disjointness or a null conflict base.
 Initial mode rejection falls back to the complete D-101/D-102 import. See
-[design](sync/v2/shallow-history-design.md) and [verification](shallow-step2-verification.md).
+[design](sync/v2/shallow-history-design.md) and [verification](sync/v2/shallow-history-verification.md).
 
 Checkpoint capture is atomic and has these required fields:
 

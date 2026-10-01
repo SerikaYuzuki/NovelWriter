@@ -70,7 +70,7 @@ struct IOSSnapshotSyncV2ConflictSelection: Equatable, Sendable {
     let conflict: SyncV2ConflictProjection
 }
 
-struct IOSSnapshotSyncV2AccountScope: Equatable, Sendable {
+struct IOSSnapshotSyncV2AccountScope: Hashable, Sendable {
     let accountID: String?
     let accountFence: String?
     let serverInstanceID: String?

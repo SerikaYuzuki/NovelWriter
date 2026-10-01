@@ -5,6 +5,7 @@ import NovelSyncV2
 import NovelSyncV2Application
 import NovelSyncV2PortableBridge
 import NovelSyncV2Runtime
+import SwiftUI
 
 extension IOSDocumentStore {
     @discardableResult
@@ -55,6 +56,10 @@ extension IOSDocumentStore {
     }
 
     func applySnapshotSyncV2State(_ state: SyncUIState?) {
+        if state?.remoteProgress == .retryable(.historyIncomplete),
+           snapshotSyncState?.remoteProgress != state?.remoteProgress {
+            AccessibilityNotification.Announcement(SyncV2HistoryFetchState.conflictWaiting).post()
+        }
         snapshotSyncState = state
         snapshotSyncConflict = state?.conflict
         guard let state else { return }

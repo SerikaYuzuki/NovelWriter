@@ -49,6 +49,7 @@ extension ProductionSyncV2RemoteClient {
                 request.timeoutInterval = 30
                 if SnapshotDownloadContext.current?.backgroundBackfill == true {
                     request.allowsConstrainedNetworkAccess = false
+                    request.allowsExpensiveNetworkAccess = false
                 }
                 request.setValue("Bearer \(current.accessToken)", forHTTPHeaderField: "Authorization")
                 let (data, response, refreshed) = try await requestDataWithSession(request, session: current)

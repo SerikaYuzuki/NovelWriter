@@ -95,9 +95,9 @@ U-05・U-10の利用者判断に従い、初回downloadに`include=totals`を付
 
 棚に受信・確認・保存・開くの進捗、中止、作品別の失敗・再試行を表示する。「この端末に取り込む」は手動だけとし、開く処理と作品単位で合流するがeditorは開かない。取消しの境界はD-102のまま維持し、COMMIT済み作品を取消しのために削除しない。
 
-## D-106: head-first openと履歴backfill（2026-10-02、Step 3未完了）
+## D-106: head-first openと履歴backfill（2026-10-02、実装済み）
 
-状態: owner承認済みの[設計](sync/v2/shallow-history-design.md)に基づくStep 1・2の方針を確定。server契約、clientのhead install・履歴backfillと最小表示を実装。Step 3の優先取得・復元導線・競合待機表示、実機受入は未完了。検証範囲と制約は[Step 2検証記録](shallow-step2-verification.md)を参照する。
+状態: owner承認済みの[設計](sync/v2/shallow-history-design.md)に基づくStep 1〜3を実装済み。server契約、clientのhead install・履歴backfill、優先取得・復元導線・競合待機表示を含む。実機受入・稼働反映は別段階とする。[検証範囲と制約](sync/v2/shallow-history-verification.md)を参照する。
 
 未取得作品を開くときは、固定した最新snapshot Hのmanifestと参照objectを先に取得し、検証・端末保存後にeditorを開く。H以前の履歴は同じHに固定してbackgroundで補完する。履歴を削除・間引きせず、v2名称、digest・graph・anchor・scope・CAS検証、ローカルで完結する編集・自動保存・IME・Undo・終了、WorkID/session/account/generationの境界を維持する。失敗時は原稿と未送信intentを保持する。
 
@@ -105,4 +105,4 @@ Step 1では`mode=head`と`mode=backfill`を追加した。[download契約](sync
 
 Step 2ではSQLiteへappend-only migrationで`shallow_boundaries`と`history_backfills`を追加する。各manifestの親は既存parent辺かboundaryのどちらか一方に必ず存在し、boundaryは検証済みのserver由来snapshotだけに作る。親の到着時には同一transactionで辺へ置換する。HのinstallはD-102の単一transaction・generation 0/current NULL CAS・binding再照合を維持する。backfillもdigest・entity・document anchor・Hへの祖先証明を検証し、保存とresume cursorを同一transactionで確定する。部分履歴を「共通祖先なし」と誤認せず、深い祖先が必要な操作は`historyIncomplete`で待機する。通常編集・公開、取得済み履歴のpreview/restore、exportは継続する。旧serverの初回400/404/405/422ではmodeなしへ一度戻り、D-101/D-102の完全取り込みを行う。
 
-Step 2で作品別／全体1本のworker、constrained networkでの停止、再起動再開、履歴項目ごとの取得状態を追加した。Step 3では「オンラインで取得」、未取得版の復元・深いmerge/競合の優先取得、停止理由の詳しい表示を実装する。対象は利用者が開いた／明示取り込みした作品だけとする（U-10）。同じHから再開し、新しいheadは通常Inboxで受ける。同一accountのfence変更ではcursorを捨てて再検証、別accountではpark、削除・認証失効ではsuspendして端末原稿を残す。Step 3の完了と実機受入は別々に記録する。
+Step 2で作品別／全体1本のworker、constrained networkでの停止、再起動再開、履歴項目ごとの取得状態を追加した。Step 3で「オンラインで取得」、未取得版の復元・深いmerge/競合の優先取得、停止理由の表示を実装した。優先要求は全体1本の取得レーンの先頭へ移し、他作品の取得は保存済みcursorから再開する。Inboxとsealed commandを保持し、祖先のcommit通知で通常のworkerを再実行する。未取得版の復元待ちはeditor gateを保持せず、到着後に明示確認して通常のローカル復元へ進む。通信中断は再試行でき、検証エラーは自動再試行せず、識別子や内部エラーを出さない詳細を表示する。offline・Low Data Mode・constrained・expensiveでは自動取得を停止する。従量接続の明示確認は取得要求ごとに扱い、offlineで解除する。通常回線での手動開始だけでは従量接続の許可としない。対象は利用者が開いた／明示取り込みした作品だけとする（U-10）。同じHから再開し、新しいheadは通常Inboxで受ける。同一accountのfence変更ではcursorを捨てて再検証、別accountではpark、削除・認証失効ではsuspendして端末原稿を残す。両OSの履歴・棚は共通の状態と文言を使い、状態変更と取得後の復元可能状態をアクセシビリティへ通知する。

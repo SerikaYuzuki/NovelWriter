@@ -145,6 +145,7 @@ extension SyncV2Application {
             guard isCurrentWorker(workID: workID, owner: owner) else { return false }
             try await accept(execution, for: sending, workID: workID, owner: owner)
             guard isCurrentWorker(workID: workID, owner: owner) else { return false }
+            historyWaiting.remove(workID)
             return true
         } catch {
             if !isCurrentWorker(workID: workID, owner: owner) {
@@ -428,6 +429,10 @@ extension SyncV2Application {
 
     @discardableResult
     func record(failure: SyncV2Failure, workID: WorkID) -> SyncUIState {
+        if failure == .retryable(.historyIncomplete) {
+            historyWaiting.insert(workID)
+            prioritizeHistory(workID: workID)
+        }
         let progress: SyncV2RemoteProgress = switch failure {
         case .offline: .offline
         case .authenticationRequired: .authenticationRequired

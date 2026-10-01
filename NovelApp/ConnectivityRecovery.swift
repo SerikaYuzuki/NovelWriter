@@ -6,15 +6,15 @@ import SwiftUI
 final class ConnectivityRecovery {
     private var monitor: NWPathMonitor?
 
-    func start(constrained: @escaping @MainActor @Sendable (Bool) async -> Void = { _ in }, recovered: @escaping @MainActor @Sendable () async -> Void) {
+    func start(constrained: @escaping @MainActor @Sendable (Bool, Bool) async -> Void = { _, _ in }, recovered: @escaping @MainActor @Sendable () async -> Void) {
         guard monitor == nil else { return }
         #if !FUMINIWA_TEST_COMPOSITION
         let monitor = NWPathMonitor()
         monitor.pathUpdateHandler = { path in
             let reachable = path.status == .satisfied
-            let limited = path.isConstrained || !reachable
+            let limited = path.isConstrained || path.isExpensive
             Task { @MainActor in
-                await constrained(limited)
+                await constrained(reachable, limited)
                 if path.status == .satisfied {
                     await recovered()
                 }

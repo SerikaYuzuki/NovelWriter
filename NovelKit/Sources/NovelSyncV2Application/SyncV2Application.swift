@@ -42,6 +42,11 @@ public actor SyncV2Application {
     var backfillTask: Task<Void, Never>?
     var backfillQueue: [WorkID] = []
     var backfillConstrained = false
+    var backfillOnline = true
+    var activeBackfill: WorkID?
+    var constrainedBackfills: Set<WorkID> = []
+    var manualBackfills: Set<WorkID> = []
+    var historyWaiting: Set<WorkID> = []
     var remoteOnlyOpens: [WorkID: Task<SyncV2OpenedWork, Error>] = [:]
     var remoteOnlyOpeningRequests: Set<WorkID> = []
     var importProgress: [WorkID: ImportProgress] = [:]
@@ -75,6 +80,11 @@ public actor SyncV2Application {
     /// page can append stale rows.
     var historyScopeGeneration: UInt64 = 0 {
         didSet {
+            backfillTask?.cancel()
+            backfillQueue.removeAll()
+            constrainedBackfills.removeAll()
+            manualBackfills.removeAll()
+            historyWaiting.removeAll()
             importFailures.removeAll()
             importProgress.removeAll()
             for task in remoteOnlyOpens.values {
@@ -303,6 +313,8 @@ extension SyncV2Application {
         let hasConflict = states[workID]?.conflict != nil || durableConflict
         let progress: SyncV2RemoteProgress = if hasConflict {
             .needsChoice
+        } else if historyWaiting.contains(workID) {
+            .retryable(.historyIncomplete)
         } else if local.noChanges, !local.promotedLeaf, hasPending, let previous = states[workID]?.remoteProgress {
             previous
         } else if workerTasks[workID] != nil, let active = states[workID]?.remoteProgress,

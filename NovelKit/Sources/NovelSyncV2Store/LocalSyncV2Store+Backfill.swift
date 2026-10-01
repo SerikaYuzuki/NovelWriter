@@ -36,7 +36,7 @@ public extension LocalSyncV2Store {
 
     /// Same account/fence restart is idempotent. Foreign accounts remain parked
     /// through the existing account binding; they cannot mutate this journal.
-    func resumeBackfill(workID: WorkID, binding: V2AccountBinding) throws -> V2BackfillState? {
+    func resumeBackfill(workID: WorkID, binding: V2AccountBinding, manual: Bool = false) throws -> V2BackfillState? {
         try inTransaction {
             try requireNotDeleting(workID)
             guard let state = try backfillState(workID: workID) else { return nil }
@@ -44,7 +44,7 @@ public extension LocalSyncV2Store {
                   state.binding.serverInstanceID == binding.serverInstanceID,
                   state.binding.protocolEpoch == binding.protocolEpoch,
                   try bindingIsActive(workID: workID, binding: binding) else { throw SyncV2StoreError.accountMismatch }
-            guard state.status == .running || state.status == .paused else { return nil }
+            guard state.status == .running || state.status == .paused || (manual && state.status == .failed) else { return nil }
             if state.binding != binding {
                 try exec("UPDATE history_backfills SET account_fence=?,resume_cursor=NULL WHERE work_id=?",
                          [.text(binding.accountFence), .text(workID.description)])

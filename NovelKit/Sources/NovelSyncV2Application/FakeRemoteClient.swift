@@ -50,6 +50,9 @@ public actor FakeSyncV2RemoteClient: SyncV2RemoteClient {
         return try await headHandler(workID)
     }
 
+    var historyEntries: [WorkID: [SyncV2RemoteHistoryEntry]] = [:]
+    var historyBackfillHandler: (@Sendable (WorkID, Bool, @escaping @Sendable () async -> Void) async throws -> Void)?
+
     public init() {}
 
     public func setBehaviors(_ behaviors: [Behavior]) {

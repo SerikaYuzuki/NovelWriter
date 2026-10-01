@@ -27,6 +27,24 @@ import Testing
     _ = await app.beginAccountTransitionRemoteSuspension()
 }
 
+@Test func priorityHistoryPreemptsAndPreservesOtherWork() async throws {
+    let works = [WorkID(UUID()), WorkID(UUID()), WorkID(UUID())]
+    let remote = BackfillCoordinatorRemote(works: works)
+    let app = try applicationTestApp(state: InMemorySyncV2RuntimeState(), remote: remote)
+    try await app.resumePending()
+    try await eventually { await remote.started == [works[0]] }
+    await app.prioritizeHistory(workID: works[2])
+    try await eventually { await remote.started == [works[0], works[2]] }
+    #expect(await remote.maximumActive == 1)
+    await remote.finish()
+    try await eventually { await remote.started.count == 3 }
+    #expect(await remote.started == [works[0], works[2], works[1]])
+    await remote.finish()
+    try await eventually { await remote.started.count == 4 }
+    #expect(await remote.started == [works[0], works[2], works[1], works[0]])
+    _ = await app.beginAccountTransitionRemoteSuspension()
+}
+
 private actor BackfillCoordinatorRemote: SyncV2RemoteClient {
     let works: [WorkID]
     var started: [WorkID] = []

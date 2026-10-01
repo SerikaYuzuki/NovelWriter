@@ -4,6 +4,7 @@ import NovelSyncV2
 import NovelSyncV2Application
 import NovelSyncV2PortableBridge
 import os
+import SwiftUI
 
 private let snapshotSyncV2StartupLogger = Logger(
     subsystem: "dev.serikayuzuki.fuminiwa",
@@ -315,6 +316,10 @@ extension AppState {
         let state = await application.uiState(workID: workID)
         guard matchesSnapshotSyncV2AccountScope(accountScope),
               currentSnapshotSyncV2WorkID == workID else { return }
+        if state?.remoteProgress == .retryable(.historyIncomplete),
+           snapshotSyncV2UIState?.remoteProgress != state?.remoteProgress {
+            AccessibilityNotification.Announcement(SyncV2HistoryFetchState.conflictWaiting).post()
+        }
         snapshotSyncV2UIState = state
         snapshotSyncConflict = state?.conflict
         if state?.remoteProgress == .authenticationRequired, case .signedIn = authUIState {

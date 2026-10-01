@@ -55,7 +55,6 @@ public enum SyncV2SnapshotAvailability: String, Hashable, Sendable {
 
 public struct SyncV2HistoryItem: Hashable, Sendable {
     public var snapshotAvailability: SyncV2SnapshotAvailability = .local
-    // Step 3: priority fetch and restore-after-fetch use this field.
 
     public var displayReason: String {
         switch reason {

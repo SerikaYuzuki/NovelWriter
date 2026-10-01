@@ -203,6 +203,7 @@ targets:
         excludes:
           - Info.plist
       - path: NovelApp/ConnectivityRecovery.swift
+      - path: NovelApp/HistoryFetchControls.swift
       - path: NovelApp/SyncPresentation
       - path: NovelApp/WritingAssistant
         excludes:

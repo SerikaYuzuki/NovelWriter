@@ -75,6 +75,13 @@ extension RemoteHTTPLineageTests {
         await #expect(throws: (any Error).self) { try await client.backfillHistory(workID: fixture.workID) }
         #expect(try await store.query("SELECT COUNT(*) FROM snapshots").first?[0].int64 == 1)
         #expect(try await store.backfillState(workID: fixture.workID)?.status == .failed)
+        let requestCount = state.count(path: "/v2/works/\(fixture.workID)/download")
+        try await client.backfillHistory(workID: fixture.workID)
+        #expect(state.count(path: "/v2/works/\(fixture.workID)/download") == requestCount)
+        #expect(try await client.backfillWorkIDs().isEmpty)
+        state.failNext(path: "/v2/works/\(fixture.workID)/download?mode", replies: [fixture.backfillPage])
+        try await client.backfillHistory(workID: fixture.workID, manual: true, progress: {})
+        #expect(try await store.backfillState(workID: fixture.workID)?.status == .complete)
         await store.close()
     }
 }

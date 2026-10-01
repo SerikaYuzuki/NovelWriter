@@ -265,6 +265,7 @@ extension ProductionSyncV2RemoteClient {
         addHeaders(&request, session: session, binding: binding(for: session))
         if SnapshotDownloadContext.current?.backgroundBackfill == true {
             request.allowsConstrainedNetworkAccess = false
+            request.allowsExpensiveNetworkAccess = false
         }
         if entry.byteCount > 256 * 1024 {
             return try await downloadObjectFile(request, entry: entry, session: session)

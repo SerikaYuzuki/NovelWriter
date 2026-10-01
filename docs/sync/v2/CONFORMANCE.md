@@ -113,4 +113,4 @@ The old `6b089b87...` retired-restore checksum candidate cannot be reproduced
 by its pre-existing DDL builder. It remains fail-closed; tests do not claim that
 unsupported historical schema migrated. Other reproducible legacy candidates,
 the pre-deletion base, deletion tail, fresh schema and tampering are exercised.
-See [verification record](../../shallow-step2-verification.md) for actual runs.
+See [verification record](shallow-history-verification.md) for actual runs.

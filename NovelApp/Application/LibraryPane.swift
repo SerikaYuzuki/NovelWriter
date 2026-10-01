@@ -317,8 +317,9 @@ private extension LibraryPane {
                     }
                 }
             }
-            if let note = work.historyBackfillNote {
-                Text(note).font(FuminiwaType.rowSecondary).foregroundStyle(.secondary)
+            if let note = work.historyBackfillNote, let application = appState.snapshotSyncV2Application {
+                HistoryFetchControls(application: application, workID: work.workID, snapshotID: nil, progressNote: note)
+                    .id(appState.snapshotSyncV2AccountScopeToken)
             }
             if !usesGrid {
                 Spacer()
@@ -477,9 +478,6 @@ private struct SnapshotHistorySheet: View {
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(entry.displayReason)
-                            if entry.snapshotAvailability == .unfetched {
-                                Text("古い履歴を取得中…").font(.caption).foregroundStyle(.secondary)
-                            }
                             Text(entry.createdAt.formatted(date: .abbreviated, time: .standard))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
@@ -493,14 +491,19 @@ private struct SnapshotHistorySheet: View {
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
-                        Button("復元") {
-                            Task {
+                        if let application = appState.snapshotSyncV2Application,
+                           let workID = appState.currentSnapshotSyncV2WorkID {
+                            let session = appState.documentSessionToken
+                            let scope = appState.snapshotSyncV2AccountScopeToken
+                            HistoryFetchControls(application: application, workID: workID, snapshotID: entry.snapshotID,
+                                                 announcesStatus: entry.occurrenceID == appState.snapshotSyncHistory.first?.occurrenceID) {
+                                guard appState.documentSessionToken == session,
+                                      appState.matchesSnapshotSyncV2AccountScope(scope) else { return }
                                 if await appState.restoreSnapshotV2(snapshotID: entry.snapshotID) {
                                     dismiss()
                                 }
                             }
                         }
-                        .buttonStyle(.bordered)
                     }
                 }
             }
@@ -510,5 +513,7 @@ private struct SnapshotHistorySheet: View {
         .padding(24)
         .frame(minWidth: 460, minHeight: 300)
         .accessibilityIdentifier("snapshotSyncV2.historySheet")
+        .onChange(of: appState.documentSessionToken) { _, _ in dismiss() }
+        .onChange(of: appState.snapshotSyncV2AccountScopeToken) { _, _ in dismiss() }
     }
 }

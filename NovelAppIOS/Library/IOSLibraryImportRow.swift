@@ -40,9 +40,6 @@ struct IOSLibraryImportRow: View {
                             .truncationMode(.tail).lineLimit(isGrid ? 2 : nil)
                             .foregroundStyle(FuminiwaColor.textPrimary.color)
                         status
-                        if let note = item.historyBackfillNote {
-                            Text(note).font(.caption).foregroundStyle(.secondary)
-                        }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .contentShape(Rectangle())
@@ -51,6 +48,10 @@ struct IOSLibraryImportRow: View {
                 .disabled(isRenaming)
                 .accessibilityHint(isRenaming ? "作品名を変更中です" : isImporting ? LibraryImportProgress.hint(SyncV2LibraryPresentation.longImportNotice) :
                     item.availability == .remoteOnly ? SyncV2LibraryPresentation.remoteOnlyHint : "")
+                if let note = item.historyBackfillNote, let application = store.snapshotSyncV2Application {
+                    HistoryFetchControls(application: application, workID: item.workID, snapshotID: nil, progressNote: note)
+                        .id(store.snapshotSyncV2AccountScope)
+                }
                 if isImporting {
                     Button(isGrid ? "中止" : "取り込みを中止") { Task { await store.cancelLibraryImport() } }
                         .buttonStyle(.borderless)
