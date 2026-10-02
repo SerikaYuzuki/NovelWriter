@@ -1,0 +1,679 @@
+{
+  "schemaVersion": 2,
+  "name": "dense-local-leaves-and-promotion",
+  "idleSeconds": 60,
+  "maximumSeconds": 300,
+  "localReason": "autosaveLeaf",
+  "conflictChoices": ["useDevice", "useServer", "keepBoth"],
+  "cases": [
+    {
+      "name": "explicit",
+      "initial": {
+        "parents": {
+          "s0": []
+        },
+        "current": "s0"
+      },
+      "steps": [
+        {
+          "op": "autosave",
+          "snapshot": "a",
+          "at": 0
+        },
+        {
+          "op": "autosave",
+          "snapshot": "b",
+          "at": 2
+        },
+        {
+          "op": "promote",
+          "reason": "explicit",
+          "at": 3
+        },
+        {
+          "op": "promote",
+          "reason": "explicit",
+          "at": 4
+        },
+        {
+          "op": "autosave",
+          "snapshot": "c",
+          "at": 5
+        }
+      ],
+      "expected": {
+        "parents": {
+          "s0": [],
+          "a": ["s0"],
+          "b": ["s0"],
+          "c": ["b"]
+        },
+        "current": "c",
+        "stable": "b",
+        "commands": [
+          ["registerSnapshot", "b"],
+          ["publish", "b"]
+        ],
+        "conflict": false
+      }
+    },
+    {
+      "name": "navigation",
+      "initial": {
+        "parents": {
+          "s0": []
+        },
+        "current": "s0"
+      },
+      "steps": [
+        {
+          "op": "autosave",
+          "snapshot": "a",
+          "at": 0
+        },
+        {
+          "op": "autosave",
+          "snapshot": "b",
+          "at": 2
+        },
+        {
+          "op": "promote",
+          "reason": "navigation",
+          "at": 3
+        },
+        {
+          "op": "promote",
+          "reason": "navigation",
+          "at": 4
+        },
+        {
+          "op": "autosave",
+          "snapshot": "c",
+          "at": 5
+        }
+      ],
+      "expected": {
+        "parents": {
+          "s0": [],
+          "a": ["s0"],
+          "b": ["s0"],
+          "c": ["b"]
+        },
+        "current": "c",
+        "stable": "b",
+        "commands": [
+          ["registerSnapshot", "b"],
+          ["publish", "b"]
+        ],
+        "conflict": false
+      }
+    },
+    {
+      "name": "close",
+      "initial": {
+        "parents": {
+          "s0": []
+        },
+        "current": "s0"
+      },
+      "steps": [
+        {
+          "op": "autosave",
+          "snapshot": "a",
+          "at": 0
+        },
+        {
+          "op": "autosave",
+          "snapshot": "b",
+          "at": 2
+        },
+        {
+          "op": "promote",
+          "reason": "close",
+          "at": 3
+        },
+        {
+          "op": "promote",
+          "reason": "close",
+          "at": 4
+        },
+        {
+          "op": "autosave",
+          "snapshot": "c",
+          "at": 5
+        }
+      ],
+      "expected": {
+        "parents": {
+          "s0": [],
+          "a": ["s0"],
+          "b": ["s0"],
+          "c": ["b"]
+        },
+        "current": "c",
+        "stable": "b",
+        "commands": [
+          ["registerSnapshot", "b"],
+          ["publish", "b"]
+        ],
+        "conflict": false
+      }
+    },
+    {
+      "name": "migration",
+      "initial": {
+        "parents": {
+          "s0": []
+        },
+        "current": "s0"
+      },
+      "steps": [
+        {
+          "op": "autosave",
+          "snapshot": "a",
+          "at": 0
+        },
+        {
+          "op": "autosave",
+          "snapshot": "b",
+          "at": 2
+        },
+        {
+          "op": "promote",
+          "reason": "migration",
+          "at": 3
+        },
+        {
+          "op": "promote",
+          "reason": "migration",
+          "at": 4
+        },
+        {
+          "op": "autosave",
+          "snapshot": "c",
+          "at": 5
+        }
+      ],
+      "expected": {
+        "parents": {
+          "s0": [],
+          "a": ["s0"],
+          "b": ["s0"],
+          "c": ["b"]
+        },
+        "current": "c",
+        "stable": "b",
+        "commands": [
+          ["registerSnapshot", "b"],
+          ["publish", "b"]
+        ],
+        "conflict": false
+      }
+    },
+    {
+      "name": "sync",
+      "initial": {
+        "parents": {
+          "s0": []
+        },
+        "current": "s0"
+      },
+      "steps": [
+        {
+          "op": "autosave",
+          "snapshot": "a",
+          "at": 0
+        },
+        {
+          "op": "autosave",
+          "snapshot": "b",
+          "at": 2
+        },
+        {
+          "op": "promote",
+          "reason": "sync",
+          "at": 3
+        },
+        {
+          "op": "promote",
+          "reason": "sync",
+          "at": 4
+        },
+        {
+          "op": "autosave",
+          "snapshot": "c",
+          "at": 5
+        }
+      ],
+      "expected": {
+        "parents": {
+          "s0": [],
+          "a": ["s0"],
+          "b": ["s0"],
+          "c": ["b"]
+        },
+        "current": "c",
+        "stable": "b",
+        "commands": [
+          ["registerSnapshot", "b"],
+          ["publish", "b"]
+        ],
+        "conflict": false
+      }
+    },
+    {
+      "name": "open",
+      "initial": {
+        "parents": {
+          "s0": []
+        },
+        "current": "s0"
+      },
+      "steps": [
+        {
+          "op": "autosave",
+          "snapshot": "a",
+          "at": 0
+        },
+        {
+          "op": "autosave",
+          "snapshot": "b",
+          "at": 2
+        },
+        {
+          "op": "promote",
+          "reason": "open",
+          "at": 3
+        },
+        {
+          "op": "promote",
+          "reason": "open",
+          "at": 4
+        },
+        {
+          "op": "autosave",
+          "snapshot": "c",
+          "at": 5
+        }
+      ],
+      "expected": {
+        "parents": {
+          "s0": [],
+          "a": ["s0"],
+          "b": ["s0"],
+          "c": ["b"]
+        },
+        "current": "c",
+        "stable": "b",
+        "commands": [
+          ["registerSnapshot", "b"],
+          ["publish", "b"]
+        ],
+        "conflict": false
+      }
+    },
+    {
+      "name": "launch",
+      "initial": {
+        "parents": {
+          "s0": []
+        },
+        "current": "s0"
+      },
+      "steps": [
+        {
+          "op": "autosave",
+          "snapshot": "a",
+          "at": 0
+        },
+        {
+          "op": "autosave",
+          "snapshot": "b",
+          "at": 2
+        },
+        {
+          "op": "promote",
+          "reason": "launch",
+          "at": 3
+        },
+        {
+          "op": "promote",
+          "reason": "launch",
+          "at": 4
+        },
+        {
+          "op": "autosave",
+          "snapshot": "c",
+          "at": 5
+        }
+      ],
+      "expected": {
+        "parents": {
+          "s0": [],
+          "a": ["s0"],
+          "b": ["s0"],
+          "c": ["b"]
+        },
+        "current": "c",
+        "stable": "b",
+        "commands": [
+          ["registerSnapshot", "b"],
+          ["publish", "b"]
+        ],
+        "conflict": false
+      }
+    },
+    {
+      "name": "zero-remote-autosaves",
+      "initial": {
+        "parents": {
+          "s0": []
+        },
+        "current": "s0"
+      },
+      "steps": [
+        {
+          "op": "autosave",
+          "snapshot": "a",
+          "at": 0
+        },
+        {
+          "op": "autosave",
+          "snapshot": "b",
+          "at": 2
+        },
+        {
+          "op": "autosave",
+          "snapshot": "c",
+          "at": 4
+        }
+      ],
+      "expected": {
+        "parents": {
+          "s0": [],
+          "a": ["s0"],
+          "b": ["s0"],
+          "c": ["s0"]
+        },
+        "current": "c",
+        "stable": "s0",
+        "commands": [],
+        "conflict": false
+      }
+    },
+    {
+      "name": "idle-reset",
+      "initial": {
+        "parents": {
+          "s0": []
+        },
+        "current": "s0"
+      },
+      "steps": [
+        {
+          "op": "autosave",
+          "snapshot": "a",
+          "at": 0
+        },
+        {
+          "op": "autosave",
+          "snapshot": "b",
+          "at": 50
+        },
+        {
+          "op": "advance",
+          "at": 109
+        },
+        {
+          "op": "assertCommands",
+          "count": 0,
+          "at": 109
+        },
+        {
+          "op": "advance",
+          "at": 110
+        }
+      ],
+      "expected": {
+        "parents": {
+          "s0": [],
+          "a": ["s0"],
+          "b": ["s0"]
+        },
+        "current": "b",
+        "stable": "b",
+        "commands": [
+          ["registerSnapshot", "b"],
+          ["publish", "b"]
+        ],
+        "conflict": false
+      }
+    },
+    {
+      "name": "maximum-continuous",
+      "initial": {
+        "parents": {
+          "s0": []
+        },
+        "current": "s0"
+      },
+      "steps": [
+        {
+          "op": "autosave",
+          "snapshot": "l0",
+          "at": 0
+        },
+        {
+          "op": "autosave",
+          "snapshot": "l1",
+          "at": 50
+        },
+        {
+          "op": "autosave",
+          "snapshot": "l2",
+          "at": 100
+        },
+        {
+          "op": "autosave",
+          "snapshot": "l3",
+          "at": 150
+        },
+        {
+          "op": "autosave",
+          "snapshot": "l4",
+          "at": 200
+        },
+        {
+          "op": "autosave",
+          "snapshot": "l5",
+          "at": 250
+        },
+        {
+          "op": "advance",
+          "at": 299
+        },
+        {
+          "op": "assertCommands",
+          "count": 0,
+          "at": 299
+        },
+        {
+          "op": "advance",
+          "at": 300
+        }
+      ],
+      "expected": {
+        "parents": {
+          "s0": [],
+          "l0": ["s0"],
+          "l1": ["s0"],
+          "l2": ["s0"],
+          "l3": ["s0"],
+          "l4": ["s0"],
+          "l5": ["s0"]
+        },
+        "current": "l5",
+        "stable": "l5",
+        "commands": [
+          ["registerSnapshot", "l5"],
+          ["publish", "l5"]
+        ],
+        "conflict": false
+      }
+    },
+    {
+      "name": "remote-divergence",
+      "initial": {
+        "parents": {
+          "s0": []
+        },
+        "current": "s0"
+      },
+      "steps": [
+        {
+          "op": "autosave",
+          "snapshot": "a",
+          "at": 0
+        },
+        {
+          "op": "remoteAdvance",
+          "snapshot": "remote",
+          "at": 2
+        },
+        {
+          "op": "promote",
+          "reason": "remoteHeadChanged",
+          "at": 3
+        }
+      ],
+      "expected": {
+        "parents": {
+          "s0": [],
+          "a": ["s0"],
+          "remote": ["s0"]
+        },
+        "current": "a",
+        "stable": "a",
+        "commands": [
+          ["registerSnapshot", "a"],
+          ["publish", "a"]
+        ],
+        "conflict": true
+      }
+    },
+    {
+      "name": "park",
+      "initial": {
+        "parents": {
+          "s0": []
+        },
+        "current": "s0"
+      },
+      "steps": [
+        {
+          "op": "autosave",
+          "snapshot": "a",
+          "at": 0
+        },
+        {
+          "op": "park",
+          "at": 2
+        },
+        {
+          "op": "promote",
+          "reason": "launch",
+          "at": 3
+        },
+        {
+          "op": "advance",
+          "at": 400
+        }
+      ],
+      "expected": {
+        "parents": {
+          "s0": [],
+          "a": ["s0"]
+        },
+        "current": "a",
+        "stable": "s0",
+        "commands": [],
+        "conflict": false
+      }
+    },
+    {
+      "name": "delete",
+      "initial": {
+        "parents": {
+          "s0": []
+        },
+        "current": "s0"
+      },
+      "steps": [
+        {
+          "op": "autosave",
+          "snapshot": "a",
+          "at": 0
+        },
+        {
+          "op": "delete",
+          "at": 2
+        },
+        {
+          "op": "promote",
+          "reason": "launch",
+          "at": 3
+        },
+        {
+          "op": "advance",
+          "at": 400
+        }
+      ],
+      "expected": {
+        "parents": {
+          "s0": [],
+          "a": ["s0"]
+        },
+        "current": "a",
+        "stable": "s0",
+        "commands": [],
+        "conflict": false
+      }
+    },
+    {
+      "name": "upgrade-keeps-linear-chain",
+      "initial": {
+        "parents": {
+          "old0": [],
+          "old1": ["old0"],
+          "old2": ["old1"]
+        },
+        "current": "old2"
+      },
+      "steps": [
+        {
+          "op": "autosave",
+          "snapshot": "a",
+          "at": 0
+        },
+        {
+          "op": "autosave",
+          "snapshot": "b",
+          "at": 2
+        }
+      ],
+      "expected": {
+        "parents": {
+          "old0": [],
+          "old1": ["old0"],
+          "old2": ["old1"],
+          "a": ["old2"],
+          "b": ["old2"]
+        },
+        "current": "b",
+        "stable": "old2",
+        "commands": [],
+        "conflict": false
+      }
+    }
+  ]
+}

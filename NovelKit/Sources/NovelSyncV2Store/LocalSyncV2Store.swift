@@ -6,6 +6,18 @@ import NovelSyncV2
 public actor LocalSyncV2Store {
     public let databaseURL: URL
     var db: OpaquePointer?
+    var statements: [String: OpaquePointer] = [:]
+    struct RegisteredAncestorCache {
+        let work: WorkID
+        let binding: V2AccountBinding
+        let head: SnapshotID
+        let ids: Set<SnapshotID>
+    }
+
+    // One immutable head closure, bounded to the last work/binding requested.
+    var lastBackfillWriteDuration: Duration?
+    var registeredAncestorCache: RegisteredAncestorCache?
+    var transactionObjects: Set<ObjectID>?
 
     public init(root: URL, policy: V2StoreOpenPolicy) throws {
         try Self.validateRoot(root)
@@ -45,6 +57,10 @@ public actor LocalSyncV2Store {
 
     public func close() {
         if let db {
+            for statement in statements.values {
+                sqlite3_finalize(statement)
+            }
+            statements.removeAll()
             sqlite3_close(db)
             self.db = nil
         }
@@ -192,6 +208,7 @@ public extension LocalSyncV2Store {
         }
         let anchor = try Self.iso8601(request.documentCreatedAt)
         var parents: [SnapshotID] = []
+        var currentSnapshot: SnapshotID?
         if let existing {
             guard existing[1].text == DocumentID(request.document.id).description,
                   existing[2].int64 == request.expectedGeneration,
@@ -199,7 +216,9 @@ public extension LocalSyncV2Store {
                 throw SyncV2StoreError.generationMismatch
             }
             if let bytes = existing[3].blob {
-                parents = try [SnapshotID(rawValue: bytes.hexString)]
+                let current = try SnapshotID(rawValue: bytes.hexString)
+                currentSnapshot = current
+                parents = try checkpointParents(workID: request.workID, current: current)
             }
         }
         let encoded = try SnapshotCodec.encode(
@@ -216,7 +235,7 @@ public extension LocalSyncV2Store {
         } else {
             true
         }
-        if let current = parents.first,
+        if let current = currentSnapshot,
            try checkpointContentMatches(
                workID: request.workID,
                current: current,
@@ -477,18 +496,7 @@ public extension LocalSyncV2Store {
         guard try scopedWorkRow(workID: workID, scope: scope) != nil else {
             throw SyncV2StoreError.workNotFound
         }
-        return try query(
-            """
-            SELECT parent_snapshot_id FROM snapshot_parents
-            WHERE work_id=? AND snapshot_id=? ORDER BY parent_snapshot_id
-            """,
-            [.text(workID.description), .blob(snapshotID.bytes)]
-        ).map { row in
-            guard let bytes = row[0].blob else {
-                throw SyncV2StoreError.invalidSnapshot
-            }
-            return try SnapshotID(rawValue: bytes.hexString)
-        }
+        return try loadEncoded(workID: workID, snapshotID: snapshotID).manifest.parentSnapshotIds
     }
 }
 
@@ -580,6 +588,14 @@ private extension LocalSyncV2Store {
                   current[5].text == anchor else {
                 throw SyncV2StoreError.generationMismatch
             }
+            if let bytes = current[3].blob {
+                let currentID = try SnapshotID(rawValue: bytes.hexString)
+                // Another connection may promote without changing generation.
+                // Never commit an encoding against the superseded stable parent.
+                guard try encoded.manifest.parentSnapshotIds == checkpointParents(
+                    workID: request.workID, current: currentID
+                ) else { throw SyncV2StoreError.generationMismatch }
+            }
             try insertEncoded(encoded, workID: request.workID)
             if let resources = request.resources {
                 try replacePortableResources(workID: request.workID, resources: resources)
@@ -601,7 +617,7 @@ private extension LocalSyncV2Store {
             try insertHistory(
                 workID: request.workID,
                 snapshotID: encoded.snapshotId,
-                reason: request.reason.rawValue,
+                reason: request.reason == .autosave ? "autosaveLeaf" : request.reason.rawValue,
                 pinned: request.reason.protectsOccurrence,
                 generation: next
             )
@@ -616,7 +632,7 @@ private extension LocalSyncV2Store {
             case .parked:
                 nil
             case .unbound, .bound:
-                if lane == .normal {
+                if lane == .normal, request.reason != .autosave {
                     try upsertCheckpointIntent(
                         workID: request.workID,
                         snapshotID: encoded.snapshotId,

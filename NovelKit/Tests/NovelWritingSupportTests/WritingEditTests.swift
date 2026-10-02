@@ -22,7 +22,7 @@ struct WritingEditTests {
                                    changes: [WritingChange(path: path, before: files[1].value, after: nil)])
             .prepared(for: doc, attachments: files)
         let removed = try edit.applying(to: doc, attachments: files, grant: WritingGrant(paths: [["attachments"]]))
-        #expect(removed.attachments.map(\.fileName) == ["A.txt", "C.txt"])
+        #expect(removed.attachments.map { $0.fileName } == ["A.txt", "C.txt"])
         #expect(try edit.inverse.applying(to: doc, attachments: removed.attachments, grant: .wholeWork).attachments == files)
         var changed = files; changed[1].bytes = Data("手で編集".utf8)
         #expect(throws: WritingError.changedTarget) { try edit.applying(to: doc, attachments: changed, grant: .wholeWork) }
@@ -97,7 +97,7 @@ struct WritingEditTests {
         let deletion = try WritingEdit(workId: work, documentId: doc.id, changes: [WritingChange(path: path, before: before, after: nil)])
             .prepared(for: doc)
         let deleted = try deletion.applying(to: doc, grant: WritingGrant(paths: [["characters"]]))
-        #expect(deleted.characters.map(\.name) == ["A", "C"])
+        #expect(deleted.characters.map { $0.name } == ["A", "C"])
         #expect(try deletion.inverse.applying(to: deleted, grant: .wholeWork) == doc)
         let addOptional = WritingEdit(
             workId: work,

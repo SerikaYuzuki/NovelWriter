@@ -2,11 +2,13 @@ import Foundation
 import NovelSyncV2
 
 public struct SyncV2AutomaticSyncCandidate: Sendable {
+    public let acknowledgedSnapshotID: SnapshotID?
     public let generation: Int64
     public let head: SyncV2RemoteHead
     public let binding: SyncV2AccountScopeBinding
 
-    public init(generation: Int64, head: SyncV2RemoteHead, binding: SyncV2AccountScopeBinding) {
+    public init(generation: Int64, head: SyncV2RemoteHead, binding: SyncV2AccountScopeBinding, acknowledgedSnapshotID: SnapshotID? = nil) {
+        self.acknowledgedSnapshotID = acknowledgedSnapshotID
         self.generation = generation
         self.head = head
         self.binding = binding
@@ -14,9 +16,8 @@ public struct SyncV2AutomaticSyncCandidate: Sendable {
 }
 
 public extension SyncV2Application {
-    /// The foreground view owns cancellation. No network request is awaited by
-    /// an editor gate. The callback only reprojects local state / verified Inbox.
-    func runAutomaticSynchronization(
+    /// Application-owned cadence: 10 seconds normally, 60 after a read failure.
+    internal func pollForeground(
         workID: WorkID,
         refresh: @Sendable () async -> Void
     ) async {
@@ -33,27 +34,27 @@ public extension SyncV2Application {
             guard !Task.isCancelled else { return }
             await refresh()
             do {
-                try await Task.sleep(nanoseconds: delay)
+                try await automaticSyncSleep(delay)
             } catch { return }
         }
     }
 
-    /// A cheap read detects a changed head. Only then does the normal publish
-    /// receipt/verified-Inbox path reconcile it, retaining concurrent-edit and
-    /// account protections instead of directly installing downloaded values.
+    /// A cheap read detects a changed head. Already received content follows
+    /// the verified graph read path; unreceived content keeps its publish lane.
+    /// Both retain concurrent-edit/account checks and the document gate.
     @discardableResult
     func checkForRemoteUpdates(workID: WorkID) async throws -> Bool {
         guard runtimeIdentity != .preview,
               remoteSchedulingSuspensions.isEmpty,
-              !deletingWorkIDs.contains(workID),
-              automaticChecks.insert(workID).inserted else { return false }
-        defer { automaticChecks.remove(workID) }
+              !lanes[workID, default: WorkLane()].deletionPending,
+              setLaneFlag(\.automaticCheckInProgress, workID: workID, value: true) else { return false }
+        defer { setLaneFlag(\.automaticCheckInProgress, workID: workID, value: false) }
         let scopeGeneration = historyScopeGeneration
         guard let candidate = try await planner.automaticSyncCandidate(workID: workID),
-              workerTasks[workID] == nil else { return false }
-        let state = states[workID]
+              lanes[workID, default: WorkLane()].workerTask == nil else { return false }
+        let state = lanes[workID, default: WorkLane()].state
         switch state?.remoteProgress ?? .idle {
-        case .idle, .noChanges, .offline, .retryable:
+        case .idle, .noChanges, .offline, .retryable, .pending:
             break
         default:
             return false
@@ -65,17 +66,22 @@ public extension SyncV2Application {
         try Task.checkCancellation()
         guard scopeGeneration == historyScopeGeneration,
               remoteSchedulingSuspensions.isEmpty,
-              !deletingWorkIDs.contains(workID),
-              workerTasks[workID] == nil,
+              !lanes[workID, default: WorkLane()].deletionPending,
+              lanes[workID, default: WorkLane()].workerTask == nil,
               let head else { return false }
         if head == candidate.head {
-            if states[workID] == state, let state, state.remoteProgress != .noChanges {
+            if try await !kernel.hasUnpromotedLeaf(workID: workID),
+               lanes[workID, default: WorkLane()].state == state, let state, state.remoteProgress != .noChanges {
                 setState(workID: workID, localDurability: state.localDurability,
                          remoteProgress: .noChanges, result: .noChanges)
             }
             return false
         }
         guard head.generation > candidate.head.generation else { return false }
+        if let snapshotID = candidate.acknowledgedSnapshotID {
+            return try await stageAcknowledgedRemoteUpdate(workID: workID, candidate: candidate,
+                                                           snapshotID: snapshotID, scopeGeneration: scopeGeneration)
+        }
         guard try await planner.requestAutomaticSynchronization(
             workID: workID, candidate: candidate
         ) else { return false }
@@ -91,14 +97,14 @@ public extension SyncV2Application {
 
 private extension SyncV2Application {
     func readAutomaticHead(
-        workID: WorkID, scopeGeneration: UInt64, state: SyncUIState?
+        workID: WorkID, scopeGeneration: UInt64, state: WorkLane.State?
     ) async throws -> SyncV2RemoteHead? {
         do {
-            return try await libraryProvider.remoteHead(workID: workID)
+            return try await remoteReads.remoteHead(workID: workID)
         } catch {
             if !Task.isCancelled, scopeGeneration == historyScopeGeneration,
-               remoteSchedulingSuspensions.isEmpty, workerTasks[workID] == nil,
-               states[workID] == state {
+               remoteSchedulingSuspensions.isEmpty, lanes[workID, default: WorkLane()].workerTask == nil,
+               lanes[workID, default: WorkLane()].state == state {
                 // Project the small status indicator; no command is retried,
                 // quarantined, or reported through the Debug modal channel.
                 record(failure: error as? SyncV2Failure ?? .offline, workID: workID)

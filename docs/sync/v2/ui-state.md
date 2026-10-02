@@ -66,3 +66,48 @@ instead of copying labels into their own state machines.
 These source mappings do not establish that every app route renders them
 correctly. Current implementation gaps and device acceptance remain
 in [CODE_HEALTH](../../CODE_HEALTH.md).
+
+## History availability (D-106)
+
+`SyncV2HistoryItem.snapshotAvailability` is per snapshot: `local`, `unfetched`
+or `unknown`. Page-level network availability does not prove that a version is
+on this device. Both platforms use `SyncV2HistoryFetchState` and
+`HistoryFetchControls`, with NovelUI theme tokens and accessibility labels.
+
+| State | Label | Action |
+| --- | --- | --- |
+| Running | 古い履歴を取得中… | 復元 opens the waiting sheet |
+| Paused / offline / constrained / expensive | オンラインで取得 | Priority fetch; costly paths require confirmation |
+| Interrupted | 古い履歴を取得できませんでした・通信が途切れました | 再試行 |
+| Validation failed | サーバーの履歴を確認できませんでした | 詳細 / explicit 再試行; no automatic retry |
+| Suspended account/deletion | アカウントの状態を確認してください | Keep local history; no automatic restart |
+
+The restore sheet says `この版はまだ端末にありません。取得後に復元できます。`
+and offers `今すぐ取得`. Committed pages refresh the selected version's local
+availability without rereading remote history. Arrival changes the sheet to the
+normal restore confirmation; it never replaces the editor by itself. Actual
+restore uses the existing IME/checkpoint/document operation gate and current
+WorkID/session/account checks. Cancelling the sheet drops only the UI selection.
+
+`retryable(historyIncomplete)` is a waiting state, preserving the sealed command,
+Inbox, manuscript and unsent intents. Closed-group commits wake the existing
+worker to retry its normal validation/CAS path. Sync/conflict status reads:
+`サーバーの変更を確認するため古い履歴を取得しています。原稿は端末に保存済みです。`
+Editing and local checkpoints remain available while waiting.
+
+Only one backfill runs globally. Priority requests preempt the current work and
+retain its queue entry and committed cursor. Validation failures are excluded
+from automatic resume and priority-operation retries; an explicit retry is
+required. Offline pauses all fetches. Low Data Mode, constrained and expensive
+paths pause automatic fetches; a manual confirmation permits only the requested
+work. A manual start on an unconstrained path does not authorize a later costly
+path. Offline/account transitions revoke costly-path consent. HTTP page and
+large-object requests carry the same network policy.
+
+The shelf's secondary `historyBackfillNote` is separate from sync/publication
+status and shown as progress only while running. It uses committed history MB
+unless a snapshot count is known: wire `totals.items` counts manifests and
+objects and must not populate `total_snapshots`. Page commits and terminal state
+changes notify observers. Validation details are a fixed user-facing explanation,
+never a raw error, URL, database path, or ID. Status transitions and readiness to
+restore are announced without moving focus or blocking editing.

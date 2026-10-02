@@ -69,6 +69,17 @@ NovelStorageはpackageの詳細を所有する。Importは外部原本を変え�
 
 manifestが参照する本文・世界観payloadは必須valid UTF-8。メモは欠損のみ省略可能で、存在するファイルの読込失敗を空文字にしない。未知resourceの保持、symlink、上限、ID / 参照整合を含む互換・検証条件は[CROSS_PLATFORM](CROSS_PLATFORM.md)に集約する。個別validationの存在はPackage Validator全体の受入を意味しない。
 
+
+#### 同期の実行状態とplatform session
+
+`NovelSyncV2Application.WorkLane`が作品別のworker・retry・promotion所有権、session、取込・backfill状態を持つ。UI stateはlaneの投影であり、retryや自動確認の入力には使わない。安全境界の期待generation/current snapshotはkernelから永続値を取得し、install時のSQLite CASで再確認する。
+
+Applicationは`SyncV2RemoteReads`を通してremoteのcatalog/head/history/conflict/downloadを読み、local kernelを中継しない。`SyncV2LibraryProvider`はローカル棚の投影だけを担当する。RuntimeのHTTP clientには読取専用`SnapshotCache`を注入し、backfillの書込能力は別の`HistoryBackfillPersistence`へ分ける。pageとresume cursorの単一transaction確定はStoreが引き続き所有する。
+
+Mac/iOSで共有する`NovelApp/DocumentLifecycle/SyncSessionController.swift`は、WorkID/session/account/editGenerationを持つ`OperationContext`の照合、remote-only open・prefetch・reprojectionのtask所有権、認証のremote suspension leaseを担当する。platform側はIME確定→ローカル保存→installとdocument operation gateを維持する。Macの即時取消とiOSの終了待ち取消は明示policyで区別する。両safe-adoption gateはarm解除・token消費の意味が異なるため別実装を維持する（[R-05](SYNC_REVIEW.md)）。
+
+ApplicationはWorkID付きUI stateとadoption可能イベントを通知する。作品別streamは最新state/adoption通知をcoalesceし、他作品の通知でその作品のwakeを失わない。両アプリのadoption待ちは30秒の明示deadlineで終了し、通知を受けてもsession/account・編集世代とIMEの確認を省略しない。iOS rootとmacOS Workbenchが継続購読を所有する。
+
 ### 4.3 EditorKit
 
 編集中の本文はネイティブtext viewが所有する。SwiftUIから素朴な`Binding<String>`で往復させない。通常のモデル→本文installは話・作品の切替境界に限定し、remote結果や古いselectionを編集中の本文へ注入しない。
@@ -208,3 +219,7 @@ AIのHTTP・Keychainは共有WritingAssistant内に置き、本文保存やEdito
 - 外部原本のopen-in-place、SQLite DB自体のonline共有、旧CloudKit/v1へのfallback。
 - ログイン後の既存unbound作品の自動adopt、別AccountIDへのWorkIDの付け替え。
 - 明示送信なしのAI送信、依頼で許可した範囲外の書換え。
+
+## macOSの作品一覧と画面遷移
+
+`workbench`の単一Window sceneで、Loading／作品選択時は全幅の`LibraryView`、Ready時はWorkbench、Recovery時は復旧表示を使う。作品一覧へ戻る操作は`returnToSnapshotLibrary()`のIME確定・local checkpoint境界を通り、windowを閉じたり作り直したりしない。起動設定、外部package open、終了処理は既存のAppState／ApplicationDelegateが所有する。

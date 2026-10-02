@@ -6,12 +6,22 @@ struct LineageHTTPReply: Sendable {
     let status: Int
     let headers: [String: String]
     let body: Data
+    var delay: TimeInterval = 0
+    var transportError: URLError.Code?
 }
 
 final class LineageHTTPState: @unchecked Sendable {
     private let lock = NSLock()
     private let replies: [String: LineageHTTPReply]
     private var paths: [String] = []
+    private var queries: [String: [String?]] = [:]
+    private var failures: [String: [LineageHTTPReply]] = [:]
+
+    func failNext(path: String, replies: [LineageHTTPReply]) {
+        lock.lock()
+        defer { lock.unlock() }
+        failures[path] = replies
+    }
 
     init(replies: [String: LineageHTTPReply]) {
         self.replies = replies
@@ -117,9 +127,26 @@ final class LineageHTTPState: @unchecked Sendable {
         let method = request.httpMethod ?? "GET"
         let path = request.url?.path ?? ""
         lock.lock()
+        defer { lock.unlock() }
+        if request.url?.query?.contains("mode=") == true, failures[path + "?mode"] == nil {
+            return LineageHTTPReply(status: 422, headers: ["Content-Type": "application/vnd.fuminiwa.sync.v2+jcs", "Cache-Control": "no-store", "Pragma": "no-cache"], body: Data())
+        }
+        let queueKey = request.url?.query?.contains("mode=") == true ? path + "?mode" : path
         paths.append(path)
-        lock.unlock()
-        return replies["\(method) \(path)"]
+        queries[path, default: []].append(request.url?.query)
+        if var queued = failures[queueKey], !queued.isEmpty {
+            let reply = queued.removeFirst()
+            failures[queueKey] = queued
+            return reply
+        }
+        return replies["\(method) \(path)"] ?? ((path.hasSuffix("/download") || path.hasPrefix("/v2/protection/"))
+            ? LineageHTTPReply(status: 404, headers: [:], body: Data()) : nil)
+    }
+
+    func requestedQueries(path: String) -> [String?] {
+        lock.lock()
+        defer { lock.unlock() }
+        return queries[path, default: []]
     }
 
     func count(path: String) -> Int {
@@ -140,15 +167,38 @@ class LineageURLProtocol: URLProtocol, @unchecked Sendable {
         request
     }
 
+    private let deliveryLock = NSLock()
+    private var stopped = false
+
     override func startLoading() {
-        guard let reply = Self.state?.reply(for: request),
-              let url = request.url,
-              let response = HTTPURLResponse(
-                  url: url,
-                  statusCode: reply.status,
-                  httpVersion: nil,
-                  headerFields: reply.headers
-              ) else {
+        guard let reply = Self.state?.reply(for: request) else {
+            client?.urlProtocol(self, didFailWithError: URLError(.fileDoesNotExist))
+            return
+        }
+        if reply.delay > 0 {
+            DispatchQueue.global().asyncAfter(deadline: .now() + reply.delay) { [self] in deliver(reply) }
+        } else {
+            deliver(reply)
+        }
+    }
+
+    private func deliver(_ reply: LineageHTTPReply) {
+        deliveryLock.lock()
+        let shouldDeliver = !stopped
+        deliveryLock.unlock()
+        guard shouldDeliver else { return }
+        if let error = reply.transportError {
+            client?.urlProtocol(self, didFailWithError: URLError(error))
+            return
+        }
+        guard
+            let url = request.url,
+            let response = HTTPURLResponse(
+                url: url,
+                statusCode: reply.status,
+                httpVersion: nil,
+                headerFields: reply.headers
+            ) else {
             client?.urlProtocol(self, didFailWithError: URLError(.fileDoesNotExist))
             return
         }
@@ -157,7 +207,11 @@ class LineageURLProtocol: URLProtocol, @unchecked Sendable {
         client?.urlProtocolDidFinishLoading(self)
     }
 
-    override func stopLoading() {}
+    override func stopLoading() {
+        deliveryLock.lock()
+        stopped = true
+        deliveryLock.unlock()
+    }
 }
 
 private extension Data {

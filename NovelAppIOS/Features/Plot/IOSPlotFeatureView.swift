@@ -1,4 +1,5 @@
 import NovelCore
+import NovelUI
 import SwiftUI
 
 enum IOSPlotSelection: Hashable {
@@ -33,47 +34,86 @@ struct IOSPlotOutlineView: View {
     let expectedSession: IOSDocumentSessionToken?
     let usesNavigationLinks: Bool
 
+    @State private var editMode: EditMode = .inactive
+    private var usesGrid: Bool {
+        sizeClass == .regular && !dynamicTypeSize.isAccessibilitySize && !editMode.isEditing
+    }
+
+    @Environment(\.horizontalSizeClass) private var sizeClass
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var deletionRequest: IOSPlotDeletionRequest?
 
     var body: some View {
         List {
             Section("プロットカード") {
-                ForEach(store.document.plotCards) { card in
-                    plotCardRow(card)
-                }
-                .onDelete(perform: requestPlotCardDeletion)
-                .onMove { offsets, destination in
-                    guard let expectedSession else { return }
-                    _ = store.movePlotCards(
-                        fromOffsets: offsets,
-                        toOffset: destination,
-                        expectedSession: expectedSession
-                    )
+                if usesGrid {
+                    cardGrid
+                } else {
+                    ForEach(store.document.plotCards) { card in
+                        plotCardRow(card)
+                    }
+                    .onDelete(perform: requestPlotCardDeletion)
+                    .onMove { offsets, destination in
+                        guard let expectedSession else { return }
+                        _ = store.movePlotCards(
+                            fromOffsets: offsets,
+                            toOffset: destination,
+                            expectedSession: expectedSession
+                        )
+                    }
                 }
             }
 
             Section("伏線") {
-                ForEach(store.document.flags) { flag in
-                    flagRow(flag)
-                }
-                .onDelete(perform: requestFlagDeletion)
-                .onMove { offsets, destination in
-                    guard let expectedSession else { return }
-                    _ = store.moveFlags(
-                        fromOffsets: offsets,
-                        toOffset: destination,
-                        expectedSession: expectedSession
-                    )
+                if usesGrid {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), alignment: .top)], spacing: Spacing.medium) {
+                        ForEach(store.document.flags) { flag in
+                            flagRow(flag).surfaceCard(selected: selection == .flag(flag.id))
+                                .contextMenu {
+                                    Button("削除…", role: .destructive) { requestDeletion(flag) }
+                                }
+                        }
+                    }
+                } else {
+                    ForEach(store.document.flags) { flag in
+                        flagRow(flag)
+                    }
+                    .onDelete(perform: requestFlagDeletion)
+                    .onMove { offsets, destination in
+                        guard let expectedSession else { return }
+                        _ = store.moveFlags(
+                            fromOffsets: offsets,
+                            toOffset: destination,
+                            expectedSession: expectedSession
+                        )
+                    }
                 }
             }
         }
+        .scrollContentBackground(.hidden)
+        .background(FuminiwaColor.paper.color)
         .overlay {
             if store.document.plotCards.isEmpty, store.document.flags.isEmpty {
                 ContentUnavailableView {
                     Label("プロットがありません", systemImage: "rectangle.stack")
-                } description: {
-                    Text("右上の追加メニューから、カードまたは伏線を追加できます。")
+                } actions: {
+                    Button("プロットカードを追加") {
+                        guard let expectedSession else { return }
+                        if let id = store.addPlotCard(expectedSession: expectedSession) {
+                            selection = .card(id)
+                        }
+                    }
+                    .disabled(expectedSession == nil)
+                    Button("伏線を追加") {
+                        guard let expectedSession else { return }
+                        if let id = store.addFlag(expectedSession: expectedSession) {
+                            selection = .flag(id)
+                        }
+                    }
+                    .disabled(expectedSession == nil)
                 }
+                .overlay(RoundedRectangle(cornerRadius: Radius.card).strokeBorder(FuminiwaColor.separator.color, style: StrokeStyle(lineWidth: 1, dash: [5, 4])))
+                .padding(Spacing.outer)
             }
         }
         .navigationTitle("プロット")
@@ -120,6 +160,31 @@ struct IOSPlotOutlineView: View {
             Button("キャンセル", role: .cancel) {}
         } message: { request in
             Text(request.message)
+        }
+        .environment(\.editMode, $editMode)
+    }
+
+    private func requestDeletion(_ flag: Flag) {
+        guard let index = store.document.flags.firstIndex(where: { $0.id == flag.id }) else { return }
+        requestFlagDeletion(at: IndexSet(integer: index))
+    }
+
+    private func requestDeletion(_ card: PlotCard) {
+        guard let index = store.document.plotCards.firstIndex(where: { $0.id == card.id }) else { return }
+        requestPlotCardDeletion(at: IndexSet(integer: index))
+    }
+
+    private var cardGrid: some View {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), alignment: .top)], spacing: Spacing.medium) {
+            ForEach(store.document.plotCards) { card in
+                plotCardRow(card)
+                    .surfaceCard(selected: selection == .card(card.id))
+                    .contextMenu {
+                        Button("削除…", role: .destructive) {
+                            requestDeletion(card)
+                        }
+                    }
+            }
         }
     }
 
@@ -241,9 +306,12 @@ private struct IOSPlotCardRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(NovelDocument.normalizedPlotCardTitle(card.title))
+            Label(NovelDocument.normalizedPlotCardTitle(card.title), systemImage: "rectangle.stack")
                 .foregroundStyle(.primary)
                 .lineLimit(1)
+            if !card.memo.isEmpty {
+                Text(card.memo).font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
+            }
             Text(chapterTitle)
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -261,10 +329,17 @@ private struct IOSFlagRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(NovelDocument.normalizedFlagTitle(flag.title))
-                .foregroundStyle(.primary)
-                .lineLimit(1)
-            Text("\(flag.isResolved ? "回収済み" : "未回収")・\(chapterTitle)")
+            Label {
+                Text(NovelDocument.normalizedFlagTitle(flag.title)).foregroundStyle(.primary)
+            } icon: {
+                Image(systemName: flag.isResolved ? "checkmark.circle.fill" : "flag")
+                    .foregroundStyle(flag.isResolved ? FuminiwaColor.leaf.color : FuminiwaColor.warning.color)
+            }
+            .lineLimit(1)
+            if !flag.note.isEmpty {
+                Text(flag.note).font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
+            }
+            StatusLabel("\(flag.isResolved ? "回収済み" : "未回収")・\(chapterTitle)", systemImage: flag.isResolved ? "checkmark.circle.fill" : "flag", tone: flag.isResolved ? .success : .warning)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)

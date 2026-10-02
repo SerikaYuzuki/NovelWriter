@@ -64,49 +64,52 @@ private struct FlagListView: View {
         VStack(spacing: 0) {
             flagContent
 
-            Divider()
+            if !appState.document.flags.isEmpty {
+                Divider()
 
-            HStack {
-                Button {
-                    appState.addFlag()
-                } label: {
-                    Label("伏線を追加", systemImage: "plus")
-                }
-
-                Button(role: .destructive) {
-                    flagPendingDeletion = appState.selectedFlag.map {
-                        SessionBoundValue(value: $0, session: appState.documentSessionToken)
+                HStack {
+                    Button {
+                        appState.addFlag()
+                    } label: {
+                        Label("伏線を追加", systemImage: "plus")
                     }
-                } label: {
-                    Label("削除", systemImage: "trash")
-                }
-                .disabled(appState.selectedFlag == nil)
 
-                Spacer()
+                    Button(role: .destructive) {
+                        flagPendingDeletion = appState.selectedFlag.map {
+                            SessionBoundValue(value: $0, session: appState.documentSessionToken)
+                        }
+                    } label: {
+                        Label("削除", systemImage: "trash")
+                    }
+                    .disabled(appState.selectedFlag == nil)
+
+                    Spacer()
+                }
+                .padding(8)
             }
-            .padding(8)
         }
     }
 
     @ViewBuilder
     private var flagContent: some View {
         if appState.document.flags.isEmpty {
-            ContentUnavailableView(
-                "伏線がありません",
-                systemImage: "checklist",
-                description: Text("伏線を追加ボタンから伏線を追加できます。")
-            )
+            ContentUnavailableView {
+                Label("伏線がありません", systemImage: "flag")
+            } actions: {
+                Button("伏線を追加") { appState.addFlag() }
+                    .disabled(!appState.permitsDocumentInteraction)
+            }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .padding(16)
         } else {
             List(selection: flagSelectionBinding) {
                 Section {
                     ForEach(sessionBoundUnresolvedFlags) { item in
-                        FlagRow(flag: item.value, plantedTitle: chapterTitle(for: item.value.plantedChapterID))
-                            .tag(item.value.id)
+                        FlagRow(flag: item.value, plantedTitle: chapterTitle(for: item.value.plantedChapterID), selected: appState.selectedFlagID == item.value.id)
                             .contextMenu {
                                 deleteButton(for: item)
                             }
+                            .tag(item.value.id)
                     }
                 } header: {
                     Text("未回収 \(unresolvedFlags.count)件")
@@ -115,11 +118,11 @@ private struct FlagListView: View {
 
                 DisclosureGroup(isExpanded: $showsResolvedFlags) {
                     ForEach(sessionBoundResolvedFlags) { item in
-                        FlagRow(flag: item.value, plantedTitle: chapterTitle(for: item.value.plantedChapterID))
-                            .tag(item.value.id)
+                        FlagRow(flag: item.value, plantedTitle: chapterTitle(for: item.value.plantedChapterID), selected: appState.selectedFlagID == item.value.id)
                             .contextMenu {
                                 deleteButton(for: item)
                             }
+                            .tag(item.value.id)
                     }
                 } label: {
                     Text("回収済み \(resolvedFlags.count)件")
@@ -178,11 +181,13 @@ private struct FlagDetailView: View {
 
     var body: some View {
         if appState.selectedFlag == nil {
-            ContentUnavailableView(
-                "伏線が選択されていません",
-                systemImage: "checklist",
-                description: Text("左の一覧から編集する伏線を選択してください。")
-            )
+            ContentUnavailableView {
+                Label("伏線が選択されていません", systemImage: "flag")
+            } description: {
+                if !appState.document.flags.isEmpty {
+                    Text("左の一覧から伏線を選択してください。")
+                }
+            }
         } else {
             FlagEditor(
                 title: selectedFlagTitleBinding,

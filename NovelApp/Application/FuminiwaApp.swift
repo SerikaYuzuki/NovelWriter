@@ -33,6 +33,12 @@ struct FuminiwaApp: App {
         guard let defaults = UserDefaults(suiteName: configuration.defaults.suiteName) else {
             preconditionFailure("Unable to create the isolated macOS test defaults")
         }
+        if let argument = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("--test-appearance=") }) {
+            let appearance = String(argument.dropFirst("--test-appearance=".count))
+            if ["light", "dark"].contains(appearance) {
+                defaults.set(appearance, forKey: AppPreferenceKey.appearance)
+            }
+        }
         let dependencies = Self.makeTestDependencies(
             userDefaults: defaults,
             configuration: configuration,
@@ -159,16 +165,9 @@ struct FuminiwaApp: App {
     #endif
 
     var body: some Scene {
-        Window("作品一覧", id: "library") {
-            LibraryWindowView()
-                .environment(appState)
-                .environment(documentPanelPresenter)
-                .task { await bootstrapIfNeeded() }
-        }
-        .defaultSize(width: 760, height: 520)
-        .windowToolbarStyle(.unified)
         Window("ふみにわ", id: "workbench") {
             ContentView()
+                .defaultAppStorage(appState.userDefaults)
                 .environment(appState)
                 .environment(editorSettings)
                 .environment(documentPanelPresenter)
@@ -176,13 +175,15 @@ struct FuminiwaApp: App {
                 .environment(exportPresenter)
                 .environment(editorSearchSession)
                 .environment(editorCommandSession)
+                .background(WorkbenchReopenBridge(delegate: applicationDelegate))
                 .task { await bootstrapIfNeeded() }
         }
+        .defaultSize(width: 1100, height: 760)
         // Native unified chrome keeps split-view tracking separators in the toolbar row.
         .windowToolbarStyle(.unified)
         .commands {
             CommandGroup(replacing: .newItem) {
-                LibraryWindowCommand().environment(appState)
+                LibraryCommand().environment(appState)
                 Divider()
                 Button("新しい作品") {
                     documentPanelPresenter.presentNewDocument()
@@ -193,7 +194,7 @@ struct FuminiwaApp: App {
                     documentPanelPresenter.presentOpenPanel()
                 }
                 .keyboardShortcut("o", modifiers: .command)
-                .disabled(!appState.permitsDocumentTransitionOperation)
+                .disabled(!appState.permitsDocumentImport)
             }
             CommandGroup(replacing: .saveItem) {
                 Button("保存して同期") {
@@ -318,11 +319,17 @@ struct FuminiwaApp: App {
             }
             CommandGroup(after: .textEditing) {
                 Divider()
-                WorkbenchFindCommands(
-                    appState: appState,
-                    editorSearchSession: editorSearchSession
-                )
-                .disabled(!appState.permitsDocumentInteraction)
+                if !appState.startupState.isReady {
+                    Button("作品を検索…") {
+                        NotificationCenter.default.post(name: .focusLibrarySearch, object: nil)
+                    }.keyboardShortcut("f", modifiers: .command)
+                } else {
+                    WorkbenchFindCommands(
+                        appState: appState,
+                        editorSearchSession: editorSearchSession
+                    )
+                    .disabled(!appState.permitsDocumentInteraction)
+                }
             }
             CommandMenu("表示") {
                 ForEach(ProjectSection.allCases) { section in
@@ -358,6 +365,11 @@ private extension FuminiwaApp {
     func bootstrapIfNeeded() async {
         guard !didBootstrap else { return }
         didBootstrap = true
+        #if FUMINIWA_TEST_COMPOSITION
+        if appState.installLibraryPreviewIfRequested() {
+            return
+        }
+        #endif
         applicationDelegate.attach(appState: appState)
         let opening = applicationDelegate.takeStartupOpenURL()
         guard await appState.configureSnapshotSyncV2(using: appState.snapshotSyncV2Factory) else {
@@ -372,11 +384,13 @@ private extension FuminiwaApp {
             await appState.refreshSnapshotLibrary()
             await appState.refreshSnapshotRemoteCatalog()
         }
-        connectivityRecovery.start {
-            await appState.resumeSnapshotSyncV2()
-        }
+        connectivityRecovery.start(constrained: { online, limited in
+            await appState.snapshotSyncV2Application?.setHistoryBackfillNetwork(online: online, constrained: limited)
+        }, recovered: {
+            await appState.resumeSnapshotSyncV2(reason: .networkRecovery)
+        })
         await appState.bootstrap(opening: opening)
-        await appState.resumeSnapshotSyncV2()
+        await appState.resumeSnapshotSyncV2(reason: .launch)
         applicationDelegate.finishBootstrap()
     }
 }
@@ -391,7 +405,7 @@ private struct SnapshotRestoreCommands: View {
                 Text("スナップショットはありません")
             } else {
                 ForEach(presenter.snapshots) { item in
-                    Button(item.entry.reason) {
+                    Button(HistoryPresentation().label(item.entry)) {
                         Task { await presenter.restore(item) }
                     }
                 }
@@ -433,5 +447,17 @@ private struct WorkbenchFindCommands: View {
             editorSearchSession.jump(direction: .backward, in: appState.selectedEpisode)
         }
         .keyboardShortcut("g", modifiers: [.command, .shift])
+    }
+}
+
+/// Keep the scene action available after the last window closes (Dock / Finder).
+private struct WorkbenchReopenBridge: View {
+    @Environment(\.openWindow) private var openWindow
+    let delegate: ApplicationDelegate
+
+    var body: some View {
+        Color.clear.onAppear {
+            delegate.reopenWorkbench = { openWindow(id: "workbench") }
+        }
     }
 }

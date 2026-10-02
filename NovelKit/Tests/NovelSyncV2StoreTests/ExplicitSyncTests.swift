@@ -10,7 +10,7 @@ import Testing
     let workID = WorkID(UUID())
     let document = makeDocument(title: "unchanged")
     let saved = try await store.checkpoint(V2CheckpointRequest(
-        workID: workID, document: document, documentCreatedAt: testDate, expectedGeneration: 0
+        workID: workID, document: document, documentCreatedAt: testDate, expectedGeneration: 0, reason: .explicit
     ), scope: scopeA)
     // Model a previously acknowledged checkpoint without leaving a pending lane.
     #expect(try sqliteExecutionSucceeded(databaseURL: root.appendingPathComponent("snapshot-sync-v2.sqlite"), sql: "UPDATE sync_intents SET status='acknowledged'"))
@@ -37,7 +37,7 @@ import Testing
     let store = try LocalSyncV2Store(root: root, policy: .createNew)
     let workID = WorkID(UUID())
     _ = try await store.checkpoint(V2CheckpointRequest(
-        workID: workID, document: makeDocument(title: "local"), documentCreatedAt: testDate, expectedGeneration: 0
+        workID: workID, document: makeDocument(title: "local"), documentCreatedAt: testDate, expectedGeneration: 0, reason: .explicit
     ), scope: .unbound)
     await #expect(throws: SyncV2StoreError.accountMismatch) {
         try await store.requestSynchronization(workID: workID, scope: .unbound)
@@ -52,7 +52,7 @@ import Testing
     let workID = WorkID(UUID())
     let document = makeDocument(title: "recovery")
     let saved = try await store.checkpoint(V2CheckpointRequest(
-        workID: workID, document: document, documentCreatedAt: testDate, expectedGeneration: 0
+        workID: workID, document: document, documentCreatedAt: testDate, expectedGeneration: 0, reason: .explicit
     ), scope: scopeA)
     let first = try createWorkCommand(workID: workID, documentID: document.id, checkpoint: saved)
     let duplicate = try createWorkCommand(workID: workID, documentID: document.id, checkpoint: saved)
@@ -83,7 +83,7 @@ import Testing
     let workID = WorkID(UUID())
     let document = makeDocument(title: "publish recovery")
     let saved = try await store.checkpoint(V2CheckpointRequest(
-        workID: workID, document: document, documentCreatedAt: testDate, expectedGeneration: 0
+        workID: workID, document: document, documentCreatedAt: testDate, expectedGeneration: 0, reason: .explicit
     ), scope: scopeA)
     let command = try publishCommand(workID: workID, checkpoint: saved)
     try await store.seal(command, intentID: saved.intentID, scope: scopeA)

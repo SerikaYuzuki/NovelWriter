@@ -18,41 +18,33 @@ extension LocalSyncV2Store {
         _ acknowledgement: V2CommandAcknowledgement,
         record: V2SealedCommandRecord
     ) throws -> DecodedCommandAcknowledgement {
-        try CanonicalJSON.validate(acknowledgement.canonicalReceiptEnvelope)
-        let envelope = try strictJSONObject(acknowledgement.canonicalReceiptEnvelope)
-        try requireKeys(
-            envelope,
-            exactly: [
-                "canonicalResponseBase64URL", "commandId", "commandKind",
-                "originalResponseStatus", "originalResult", "readBack",
-                "requestDigest", "result", "workId"
-            ]
+        let envelope: SyncV2ValidatedReceiptEnvelope
+        do {
+            envelope = try validateSyncV2ReceiptEnvelope(
+                acknowledgement.canonicalReceiptEnvelope,
+                commandID: record.commandID, commandKind: record.commandKind,
+                requestDigest: record.requestDigest, workID: record.workID, expectation: .durable
+            )
+        } catch SyncV2ReceiptValidationError.mismatch {
+            throw SyncV2StoreError.invalidAcknowledgement
+        }
+        let envelopePredicates = V2ReadBackPredicates(
+            accountMatched: true, commandDigestMatched: true, resourceMatched: true,
+            headMatched: true, stateMatched: true
         )
-        guard try uuid(envelope, "commandId") == record.commandID,
-              try string(envelope, "commandKind") == record.commandKind,
-              try string(envelope, "requestDigest") == record.requestDigest.rawValue,
-              try uuid(envelope, "workId").uuidString.lowercased() == record.workID.description,
-              try string(envelope, "result") == "noChanges" else {
-            throw SyncV2StoreError.invalidAcknowledgement
-        }
-        let envelopePredicates = try readBack(envelope["readBack"])
-        guard envelopePredicates.allVerified,
-              let encodedResponse = envelope["canonicalResponseBase64URL"] as? String,
-              let responseBytes = Data(strictBase64URL: encodedResponse) else {
-            throw SyncV2StoreError.invalidAcknowledgement
-        }
+        let responseBytes = envelope.canonicalResponse
         try CanonicalJSON.validate(responseBytes)
         let response = try strictJSONObject(responseBytes)
         guard let result = try V2CommandTerminalResult(
             rawValue: string(response, "result")
         ),
-            try result.rawValue == string(envelope, "originalResult"),
+            result.rawValue == envelope.result,
             result != .retryable,
             result != .parked else {
             throw SyncV2StoreError.invalidAcknowledgement
         }
-        let status = try integer(envelope, "originalResponseStatus")
-        try validateStatus(Int(status), commandKind: record.commandKind, result: result)
+        let status = envelope.responseStatus
+        try validateStatus(Int(status), commandKind: record.kind, result: result)
 
         let receipt = try dictionary(response["receipt"])
         try requireKeys(
@@ -69,7 +61,7 @@ extension LocalSyncV2Store {
         }
 
         let command = try SealedCommand.decodeCanonical(record.canonicalRequest)
-        let payload = try command.payloadDictionary()
+        let payload = command.payload
         let responseHead = try validateCommandResponse(
             response,
             record: record,
@@ -77,7 +69,7 @@ extension LocalSyncV2Store {
             result: result
         )
         let heads = try acknowledgementHeads(
-            commandKind: record.commandKind,
+            commandKind: record.kind,
             payload: payload,
             responseHead: responseHead
         )
@@ -93,11 +85,11 @@ extension LocalSyncV2Store {
     }
 
     private func acknowledgementHeads(
-        commandKind: String,
-        payload: [String: Any],
+        commandKind: SyncV2CommandKind?,
+        payload: SyncV2CommandPayload,
         responseHead: V2RemoteHead?
     ) throws -> (remote: V2RemoteHead?, clone: V2RemoteHead?) {
-        if commandKind == "cloneWork" {
+        if commandKind == .cloneWork {
             guard let clone = responseHead,
                   let original = try payload.remoteHead("expectedOriginalHead") else {
                 throw SyncV2StoreError.invalidAcknowledgement
@@ -109,22 +101,22 @@ extension LocalSyncV2Store {
 
     private func validateStatus(
         _ status: Int,
-        commandKind: String,
+        commandKind: SyncV2CommandKind?,
         result: V2CommandTerminalResult
     ) throws {
         let expectedStatus: Int? = switch (commandKind, result) {
-        case ("createWork", .applied), ("prepareObject", .applied): 201
-        case ("prepareObject", .noChanges),
-             ("finalizeObject", .applied),
-             ("registerSnapshot", .applied),
-             ("registerSnapshot", .noChanges),
-             ("publish", .applied),
-             ("publish", .noChanges),
-             ("resolveDevice", .applied),
-             ("resolveServer", .applied),
-             ("cloneWork", .applied),
-             ("restore", .applied): 200
-        case ("publish", .conflictPending): 409
+        case (.createWork, .applied), (.prepareObject, .applied): 201
+        case (.prepareObject, .noChanges),
+             (.finalizeObject, .applied),
+             (.registerSnapshot, .applied),
+             (.registerSnapshot, .noChanges),
+             (.publish, .applied),
+             (.publish, .noChanges),
+             (.resolveDevice, .applied),
+             (.resolveServer, .applied),
+             (.cloneWork, .applied),
+             (.restore, .applied): 200
+        case (.publish, .conflictPending): 409
         default: nil
         }
         guard status == expectedStatus else {
@@ -135,41 +127,41 @@ extension LocalSyncV2Store {
     private func validateCommandResponse(
         _ response: [String: Any],
         record: V2SealedCommandRecord,
-        payload: [String: Any],
+        payload: SyncV2CommandPayload,
         result: V2CommandTerminalResult
     ) throws -> V2RemoteHead? {
         let base: Set = ["commandId", "commandKind", "receipt", "result"]
         let extras: Set<String>
-        switch (record.commandKind, result) {
-        case ("createWork", _):
+        switch (record.kind, result) {
+        case (.createWork, _):
             extras = ["documentId", "head", "workId"]
-        case ("prepareObject", .noChanges):
+        case (.prepareObject, .noChanges):
             extras = []
-        case ("prepareObject", .applied):
+        case (.prepareObject, .applied):
             extras = ["expiresAt", "objectId", "uploadCapability", "uploadId"]
-        case ("finalizeObject", _):
+        case (.finalizeObject, _):
             extras = ["byteCount", "head", "objectId"]
-        case ("registerSnapshot", _):
+        case (.registerSnapshot, _):
             extras = ["head", "snapshotId"]
-        case ("publish", .conflictPending):
+        case (.publish, .conflictPending):
             extras = ["conflictId", "conflictRevision", "head", "sourceGeneration"]
-        case ("publish", .noChanges):
+        case (.publish, .noChanges):
             extras = ["generation", "head", "snapshotId"]
-        case ("publish", .applied):
+        case (.publish, .applied):
             extras = ["generation", "head", "snapshotId"]
-        case ("resolveDevice", _):
+        case (.resolveDevice, _):
             extras = ["conflictId", "conflictRevision", "generation", "head", "snapshotId"]
-        case ("resolveServer", _):
+        case (.resolveServer, _):
             extras = [
                 "conflictId", "conflictRevision", "head", "remoteGeneration",
                 "remoteSnapshotId"
             ]
-        case ("cloneWork", _):
+        case (.cloneWork, _):
             extras = [
                 "conflictId", "conflictRevision", "head", "newRootSnapshotId",
                 "newWorkId"
             ]
-        case ("restore", _):
+        case (.restore, _):
             extras = [
                 "generation", "head", "protectedRestoreBeforeSnapshotId", "snapshotId"
             ]
@@ -195,18 +187,18 @@ extension LocalSyncV2Store {
     private func validateCommandResponseFields(
         _ response: [String: Any],
         record: V2SealedCommandRecord,
-        payload: [String: Any],
+        payload: SyncV2CommandPayload,
         result: V2CommandTerminalResult,
         head: V2RemoteHead?
     ) throws {
-        switch record.commandKind {
-        case "createWork":
+        switch record.kind {
+        case .createWork:
             guard head == nil,
                   try uuid(response, "workId").uuidString.lowercased() == record.workID.description,
                   try uuid(response, "documentId").uuidString.lowercased() == payload.uuid("documentId") else {
                 throw SyncV2StoreError.invalidAcknowledgement
             }
-        case "prepareObject":
+        case .prepareObject:
             if result == .applied {
                 guard try string(response, "objectId") == payload.object("objectId").rawValue,
                       try (32 ... 2048).contains(string(response, "uploadCapability").count),
@@ -215,18 +207,18 @@ extension LocalSyncV2Store {
                     throw SyncV2StoreError.invalidAcknowledgement
                 }
             }
-        case "finalizeObject":
+        case .finalizeObject:
             guard head == nil,
                   try string(response, "objectId") == payload.object("objectId").rawValue,
-                  try integer(response, "byteCount") == (payload["byteCount"] as? NSNumber)?.int64Value else {
+                  try integer(response, "byteCount") == payload.integer("byteCount") else {
                 throw SyncV2StoreError.invalidAcknowledgement
             }
-        case "registerSnapshot":
+        case .registerSnapshot:
             guard head == nil else {
                 throw SyncV2StoreError.invalidAcknowledgement
             }
             try requireSnapshot(response, key: "snapshotId", equals: payload.snapshot("snapshotId"))
-        case "publish":
+        case .publish:
             if result == .conflictPending {
                 guard head != nil,
                       try integer(response, "sourceGeneration") == record.sourceGeneration,
@@ -247,14 +239,14 @@ extension LocalSyncV2Store {
                     expectedSnapshot: payload.snapshot("candidateSnapshotId")
                 )
             }
-        case "resolveDevice":
+        case .resolveDevice:
             try requireConflictFields(response, payload: payload)
             try requireHeadFields(
                 response,
                 head: head,
                 expectedSnapshot: payload.snapshot("decisionSnapshotId")
             )
-        case "resolveServer":
+        case .resolveServer:
             try requireConflictFields(response, payload: payload)
             guard let head,
                   try string(response, "remoteSnapshotId") == payload.snapshot("remoteSnapshotId").rawValue,
@@ -262,7 +254,7 @@ extension LocalSyncV2Store {
                   try head.snapshotID == (payload.snapshot("remoteSnapshotId")) else {
                 throw SyncV2StoreError.invalidAcknowledgement
             }
-        case "cloneWork":
+        case .cloneWork:
             try requireConflictFields(response, payload: payload)
             guard let head,
                   try string(response, "newWorkId") == payload.uuid("newWorkId"),
@@ -271,7 +263,7 @@ extension LocalSyncV2Store {
                   head.generation == 1 else {
                 throw SyncV2StoreError.invalidAcknowledgement
             }
-        case "restore":
+        case .restore:
             try requireHeadFields(
                 response,
                 head: head,
@@ -302,11 +294,11 @@ extension LocalSyncV2Store {
 
     private func requireConflictFields(
         _ response: [String: Any],
-        payload: [String: Any]
+        payload: SyncV2CommandPayload
     ) throws {
         guard try string(response, "conflictId") == payload.uuid("conflictId"),
               try integer(response, "conflictRevision") ==
-              (payload["conflictRevision"] as? NSNumber)?.int64Value else {
+              payload.integer("conflictRevision") else {
             throw SyncV2StoreError.invalidAcknowledgement
         }
     }
@@ -409,29 +401,5 @@ extension LocalSyncV2Store {
             throw SyncV2StoreError.invalidAcknowledgement
         }
         return value.boolValue
-    }
-}
-
-private extension Data {
-    init?(strictBase64URL value: String) {
-        guard !value.isEmpty,
-              !value.contains("="),
-              value.unicodeScalars.allSatisfy({
-                  CharacterSet.alphanumerics.contains($0) || $0 == "_" || $0 == "-"
-              }) else { return nil }
-        let standard = value
-            .replacingOccurrences(of: "-", with: "+")
-            .replacingOccurrences(of: "_", with: "/")
-        let padded = standard + String(repeating: "=", count: (4 - standard.count % 4) % 4)
-        guard let decoded = Data(base64Encoded: padded),
-              decoded.base64URLEncodedString == value else { return nil }
-        self = decoded
-    }
-
-    var base64URLEncodedString: String {
-        base64EncodedString()
-            .replacingOccurrences(of: "+", with: "-")
-            .replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: "=", with: "")
     }
 }

@@ -1,5 +1,6 @@
 import AppKit
 import NovelCore
+import NovelThumbnail
 import NovelUI
 import SwiftUI
 
@@ -11,8 +12,7 @@ struct CharacterListView: View {
     var body: some View {
         List(selection: characterSelectionBinding) {
             ForEach(sessionBoundCharacters) { item in
-                CharacterRow(character: item.value)
-                    .tag(item.value.id)
+                CharacterRow(character: item.value, thumbnailData: appState.thumbnailData(ThumbnailOwner(.character, item.value.id.rawValue)))
                     .contextMenu {
                         Button(role: .destructive) {
                             characterPendingDeletion = item
@@ -20,6 +20,7 @@ struct CharacterListView: View {
                             Label("削除", systemImage: "trash")
                         }
                     }
+                    .tag(item.value.id)
             }
             .onMove { offsets, destination in
                 appState.moveCharacters(fromOffsets: offsets, toOffset: destination)
@@ -27,11 +28,12 @@ struct CharacterListView: View {
         }
         .overlay {
             if appState.document.characters.isEmpty {
-                ContentUnavailableView(
-                    "キャラクターがありません",
-                    systemImage: "person.2",
-                    description: Text("ツールバーまたは登場人物メニューから追加できます。")
-                )
+                ContentUnavailableView {
+                    Label("登場人物がありません", systemImage: "person.2")
+                } actions: {
+                    Button("登場人物を追加") { appState.addCharacter() }
+                        .disabled(!appState.permitsDocumentInteraction)
+                }
             }
         }
         .workbenchGlassOutlineStyle()
@@ -43,7 +45,7 @@ struct CharacterListView: View {
             )
         }
         .confirmationDialog(
-            "キャラクターを削除しますか？",
+            "登場人物を削除しますか？",
             isPresented: characterDeletionDialogIsPresented,
             presenting: characterPendingDeletion
         ) { request in
@@ -89,11 +91,13 @@ struct CharacterDetailView: View {
 
     var body: some View {
         if appState.selectedCharacter == nil {
-            ContentUnavailableView(
-                "キャラクターが選択されていません",
-                systemImage: "person",
-                description: Text("左の一覧から編集するキャラクターを選択してください。")
-            )
+            ContentUnavailableView {
+                Label("登場人物が選択されていません", systemImage: "person")
+            } description: {
+                if !appState.document.characters.isEmpty {
+                    Text("左の一覧から登場人物を選択してください。")
+                }
+            }
         } else {
             CharacterSheetView(onAppearanceJump: onAppearanceJump)
         }
@@ -115,6 +119,7 @@ private struct CharacterSheetView: View {
 
     let onAppearanceJump: (CharacterAppearance) -> Void
 
+    @State private var selectedCharacterAppearances: [CharacterAppearance] = []
     private let roleChoices = ["主人公", "ヒロイン", "ライバル", "敵役", "脇役", "モブ"]
 
     var body: some View {
@@ -178,41 +183,59 @@ private struct CharacterSheetView: View {
             .padding(24)
             .frame(maxWidth: 920, alignment: .leading)
         }
-        .workbenchGlassChromeStyle()
+        .background(FuminiwaColor.paper.color)
+        .onChange(of: appState.document.chapters, initial: true) { _, _ in refreshAppearances() }
+        .onChange(of: appState.selectedCharacter) { _, _ in refreshAppearances() }
         .onDisappear {
             appState.commitCharacterEditing()
         }
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            TextField("名前", text: selectedCharacterNameBinding)
-                .font(.title2)
-                .textFieldStyle(.plain)
-                .onSubmit {
-                    appState.commitCharacterEditing()
+        VStack(alignment: .leading, spacing: Spacing.group) {
+            HStack(alignment: .top, spacing: Spacing.group) {
+                if let character = appState.selectedCharacter {
+                    MacThumbnailEditor(owner: ThumbnailOwner(.character, character.id.rawValue), title: character.name,
+                                       color: character.colorHex.flatMap { Color(hex: $0) })
                 }
-
-            HStack(alignment: .top, spacing: 12) {
-                WorkbenchLabeledField("ふりがな") {
-                    TextField("ふりがな", text: selectedCharacterKanaBinding)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(maxWidth: 220)
-                        .onSubmit {
-                            appState.commitCharacterEditing()
-                        }
+                VStack(alignment: .leading, spacing: Spacing.small) {
+                    TextField("名前", text: selectedCharacterNameBinding)
+                        .font(.title2.weight(.semibold)).textFieldStyle(.plain)
+                        .foregroundStyle(FuminiwaColor.textPrimary.color)
+                        .onSubmit { appState.commitCharacterEditing() }
+                    WorkbenchLabeledField("ふりがな") {
+                        TextField("ふりがな", text: selectedCharacterKanaBinding)
+                            .textFieldStyle(.roundedBorder).frame(maxWidth: 220)
+                            .onSubmit { appState.commitCharacterEditing() }
+                    }
+                    if let role = appState.selectedCharacter?.role, !role.isEmpty {
+                        Text(role).font(.caption).padding(Spacing.extraSmall)
+                            .background(FuminiwaColor.accentMuted.color, in: RoundedRectangle(cornerRadius: Radius.chip))
+                    }
                 }
-
-                colorControls
             }
+            colorControls
         }
     }
 
+    @State private var showsCustomColor = false
+
     private var colorControls: some View {
         HStack(spacing: 12) {
-            ColorPicker("カラー", selection: selectedCharacterColorBinding, supportsOpacity: false)
-                .labelsHidden()
-                .frame(width: 32)
+            Button { showsCustomColor = true } label: {
+                Image(systemName: "paintpalette").font(.caption2)
+                    .frame(width: 16, height: 16)
+                    .background(FuminiwaColor.surface.color, in: Circle())
+                    .overlay(Circle().strokeBorder(FuminiwaColor.separator.color))
+                    .frame(width: 24, height: 24)
+            }
+            .buttonStyle(.plain)
+            .help("カスタムカラー")
+            .accessibilityLabel("カスタムカラー")
+            .popover(isPresented: $showsCustomColor) {
+                ColorPicker("カスタムカラー", selection: selectedCharacterColorBinding, supportsOpacity: false)
+                    .padding(Spacing.medium)
+            }
 
             CharacterColorPresetPicker(
                 selectedHex: appState.selectedCharacter?.colorHex,
@@ -230,6 +253,9 @@ private struct CharacterSheetView: View {
             content()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(Spacing.group)
+        .background(FuminiwaColor.surface.color, in: RoundedRectangle(cornerRadius: Radius.card))
+        .overlay(RoundedRectangle(cornerRadius: Radius.card).strokeBorder(FuminiwaColor.separator.color, lineWidth: 0.5))
     }
 
     private func labeledEditor(_ title: String, text: Binding<String>, minHeight: CGFloat) -> some View {
@@ -306,18 +332,34 @@ private struct CharacterSheetView: View {
         )
     }
 
-    private var selectedCharacterAppearances: [CharacterAppearance] {
-        guard let character = appState.selectedCharacter else { return [] }
-        return CharacterAppearanceDetector.appearances(for: character, in: appState.document)
+    private func refreshAppearances() {
+        guard let character = appState.selectedCharacter else { selectedCharacterAppearances = []; return }
+        selectedCharacterAppearances = CharacterAppearanceDetector.appearances(for: character, in: appState.document)
     }
 }
 
 private struct CharacterColorPresetPicker: View {
     let selectedHex: String?
-    let onSelect: (String) -> Void
+    let onSelect: (String?) -> Void
 
     var body: some View {
         HStack(spacing: 8) {
+            Button { onSelect(nil) } label: {
+                Circle().strokeBorder(FuminiwaColor.textSecondary.color, lineWidth: 1)
+                    .overlay(Image(systemName: "line.diagonal").font(.caption))
+                    .frame(width: 16, height: 16)
+                    .overlay {
+                        if selectedHex == nil {
+                            Circle().stroke(FuminiwaColor.accent.color, lineWidth: 2).padding(-3)
+                            Image(systemName: "checkmark").font(.caption2.bold())
+                        }
+                    }
+                    .frame(width: 24, height: 24)
+            }
+            .buttonStyle(.plain)
+            .help("色なし")
+            .accessibilityLabel("色なし")
+            .accessibilityAddTraits(selectedHex == nil ? .isSelected : [])
             ForEach(CharacterColorPreset.hexValues, id: \.self) { hex in
                 let fillColor = Color(hex: hex) ?? Color.accentColor
                 let strokeColor = selectedHex == hex ? Color.accentColor : Color(nsColor: .separatorColor)
@@ -330,12 +372,19 @@ private struct CharacterColorPresetPicker: View {
                         .frame(width: 16, height: 16)
                         .overlay {
                             Circle()
-                                .stroke(strokeColor, lineWidth: 1)
+                                .stroke(strokeColor, lineWidth: selectedHex == hex ? 2 : 0.5)
+                        }
+                        .overlay {
+                            if selectedHex == hex {
+                                Image(systemName: "checkmark").font(.caption2.bold()).foregroundStyle(.white)
+                            }
                         }
                         .frame(width: 24, height: 24)
                 }
-                .buttonStyle(.borderless)
-                .help(hex)
+                .buttonStyle(.plain)
+                .help(CharacterColorPreset.name(for: hex))
+                .accessibilityLabel(CharacterColorPreset.name(for: hex))
+                .accessibilityAddTraits(selectedHex == hex ? .isSelected : [])
             }
         }
     }

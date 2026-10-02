@@ -70,7 +70,7 @@ struct IOSSnapshotSyncV2ConflictSelection: Equatable, Sendable {
     let conflict: SyncV2ConflictProjection
 }
 
-struct IOSSnapshotSyncV2AccountScope: Equatable, Sendable {
+struct IOSSnapshotSyncV2AccountScope: Hashable, Sendable {
     let accountID: String?
     let accountFence: String?
     let serverInstanceID: String?
@@ -225,6 +225,7 @@ private enum IOSDocumentStoreComposition {
 @MainActor
 @Observable
 final class IOSDocumentStore {
+    let syncSessionController = SyncSessionController<IOSDocumentSessionToken?, IOSSnapshotSyncV2AccountScope, Void>()
     static let lastDocumentNameKey = "FUMINIWAIOS.lastDocumentName"
     /// v2 reopens by WorkID.  The legacy package-recent key remains available
     /// for explicit import/export compatibility, but is never the v2 identity.
@@ -269,18 +270,25 @@ final class IOSDocumentStore {
     var attachments: [Attachment] = []
     var libraryItems: [IOSDocumentLibraryItem] = []
     var deviceSyncStartupFailedSafely = false
-    var snapshotSyncOutcome: IOSSnapshotSyncOutcome = .notStarted
+    var snapshotSyncOutcome: SyncV2TypedResult?
     var snapshotSyncConflict: SyncV2ConflictProjection?
     /// Set only after a remote-only document has passed the install boundary.
     /// The shelf uses it to navigate after the asynchronous fetch completes.
-    var snapshotSyncV2RemoteOnlyReadyWorkID: WorkID?
+    var libraryImportPhases: [WorkID: ImportPhase] = [:]
+    var libraryImportFailures: [WorkID: SyncV2Failure] = [:]
+    var snapshotSyncV2RemoteOnlyOpenFailure: SyncV2Failure?
+    var libraryNotice: String?
+    var libraryIsLoading = false
+    var libraryFailure: SyncV2Failure?
     var isSnapshotSyncInFlight = false
     var snapshotSyncState: SyncUIState?
+    var pendingDeletionWorkIDs: Set<WorkID> = []
+    var deletedLibraryWorkIDs: Set<WorkID> = []
     var syncV2LibraryItems: [SyncV2LibraryItem] = []
     var syncV2RemoteCatalogItems: [SyncV2RemoteCatalogEntry] = []
     var syncV2RemoteCatalogCursor: String?
     var syncV2RemoteCatalogIsLoading = false
-    var syncV2RemoteCatalogError: String?
+    var syncV2RemoteCatalogError: SyncV2Failure?
     /// Local SQLite and remote occurrences share one history projection.  A
     /// SnapshotID is not a deduplication key: the same snapshot can have a
     /// different local/remote restore authority.
@@ -365,27 +373,18 @@ final class IOSDocumentStore {
     /// A remote-only download is deliberately outside the document gate. The
     /// token is checked by the installer so an old request can never clear or
     /// replace a newer one after a work switch.
-    @ObservationIgnored var snapshotSyncV2RemoteOnlyOpenTask: Task<Void, Never>?
-    @ObservationIgnored var snapshotSyncV2RemoteOnlyOpenToken: UUID?
     /// Resume/conflict/open adoption projection is also single-owner. Account
     /// changes cancel the task and invalidate its token before a stale result
     /// can update the editor or account-scoped shelf.
-    @ObservationIgnored var snapshotSyncV2ReprojectionTask: Task<Void, Never>?
-    @ObservationIgnored var snapshotSyncV2ReprojectionToken: UUID?
     /// Prevents a new account-scoped operation from starting in the interval
     /// after sign-in/out invalidates existing tokens but before authSession
     /// publishes the replacement account/fence.
-    @ObservationIgnored var syncV2AccountTransitionInProgress = false
     /// Reserves the auth action while the current editor is still allowed to
     /// commit IME text and flush its local checkpoint. The mutation freeze is
     /// raised only after that document boundary succeeds.
-    @ObservationIgnored var syncV2AccountTransitionRequested = false
     /// The request owner remains stable across the Apple exchange and the
     /// durable scope transition. A late/nested auth action must not release a
     /// newer request's remote-scheduling lease.
-    @ObservationIgnored var syncV2AccountTransitionRequestOwner: UUID?
-    @ObservationIgnored var syncV2RemoteSuspensionToken:
-        SyncV2AccountTransitionRemoteSuspensionToken?
     /// Revoke is deliberately not part of the local account transition.  It
     /// may remain suspended on an offline device, while the local shelf and
     /// editor continue to work.  The task is resumed from the vault on the

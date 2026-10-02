@@ -28,7 +28,7 @@ struct AutomaticSyncRaceTests {
         try await store.adoptInbox(inboxID: seed.inboxID, scope: productionScope)
         let application = try await SnapshotSyncV2Runtime.makeApplication(mode: .test(configuration))
         _ = try await application.openLocal(workID: workID)
-        try await eventually { await application.workerTasks[workID] == nil }
+        try await eventually { await application.lanes[workID]?.workerTask == nil }
         let barrier = AutomaticHeadBarrier()
         await configuration.remote.setHeadHandler { _ in
             await barrier.wait()
@@ -47,7 +47,7 @@ struct AutomaticSyncRaceTests {
             changed.title = "newer local edit"
             _ = try await store.checkpoint(V2CheckpointRequest(
                 workID: workID, document: changed, documentCreatedAt: applicationTestCreatedAt,
-                expectedGeneration: 1
+                expectedGeneration: 1, reason: .explicit
             ), scope: productionScope)
         case .account:
             try await application.parkAccountScope(workID: workID, binding: SyncV2AccountScopeBinding(

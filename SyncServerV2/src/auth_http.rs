@@ -580,21 +580,6 @@ fn lowercase_uuid(value: &str) -> bool {
     Uuid::parse_str(value).is_ok_and(|parsed| parsed.to_string() == value)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn semantic_version_is_closed() {
-        assert!(parse_semantic_version("0.1.0").is_some());
-        assert!(parse_semantic_version("12.3.4").is_some());
-        assert!(parse_semantic_version("scenario-client").is_none());
-        assert!(parse_semantic_version("01.0.0").is_none());
-        assert!(parse_semantic_version("1.0").is_none());
-        assert_eq!(parse_semantic_version("0.1.0"), Some((0, 1, 0)));
-    }
-}
-
 async fn deletion_status(headers: HeaderMap, State(state): State<AuthHttpState>) -> Response {
     if let Err(response) = require_client_version(&headers) {
         return response;
@@ -650,4 +635,19 @@ async fn deletion_change(
             .await,
         ErrorScope::Access,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn semantic_version_is_closed() {
+        assert!(parse_semantic_version("0.1.0").is_some());
+        assert!(parse_semantic_version("12.3.4").is_some());
+        assert!(parse_semantic_version("scenario-client").is_none());
+        assert!(parse_semantic_version("01.0.0").is_none());
+        assert!(parse_semantic_version("1.0").is_none());
+        assert_eq!(parse_semantic_version("0.1.0"), Some((0, 1, 0)));
+    }
 }

@@ -93,6 +93,7 @@ typealias DocumentSessionToken = AppDocumentSessionToken
 @MainActor
 @Observable
 final class AppState {
+    let syncSessionController = SyncSessionController<AppDocumentSessionToken, SnapshotSyncV2AccountScopeToken, Bool>()
     var document: NovelDocument
     var selectedChapterID: ChapterID?
     var selectedEpisodeID: EpisodeID?
@@ -112,9 +113,9 @@ final class AppState {
     var snapshotSyncConflict: SyncV2ConflictProjection?
     var snapshotSyncHistory: [SyncV2HistoryItem] = []
     var snapshotSyncLibraryWorks: [StartupLibraryWork] = []
+    var snapshotSyncRemoteCatalogNextCursor: String?
     var snapshotSyncRemoteCatalogItems: [SyncV2RemoteCatalogEntry] = []
     var snapshotSyncCurrentWorkAccountState: SyncV2LibraryAccountState?
-    @ObservationIgnored var snapshotSyncAutoAdoptionTask: Task<Void, Never>?
     @ObservationIgnored var writingMCPControllerStorage: WritingMCPController?
     var manuscriptCopyNotice: ManuscriptCopyNotice?
     var isSnapshotSyncInFlight = false
@@ -163,14 +164,15 @@ final class AppState {
     @ObservationIgnored var snapshotSyncV2DocumentCreatedAt: Date?
     @ObservationIgnored var snapshotSyncV2PortableCreatedAt: Date?
     @ObservationIgnored var snapshotSyncV2Resources: [PortableResource]
-    @ObservationIgnored var snapshotSyncV2RemoteOnlyOpenTask: Task<Void, Never>?
-    @ObservationIgnored var snapshotSyncV2RemoteOnlyOpenToken: UUID?
-    @ObservationIgnored var snapshotSyncV2AutoAdoptionToken: UUID?
+    var libraryImportPhases: [WorkID: ImportPhase] = [:]
+    var libraryImportFailures: [WorkID: SyncV2Failure] = [:]
+    var snapshotSyncLibraryFailure: SyncV2Failure?
+    var snapshotSyncLibraryLocalFailure: SyncV2Failure?
+    var snapshotSyncLibraryOpenFailure: SyncV2Failure?
+    var snapshotSyncLibraryIsLoading = false
     @ObservationIgnored var snapshotSyncV2CatalogRefreshToken: UUID?
-    @ObservationIgnored var snapshotSyncV2AccountScopeGeneration: UInt64 = 0
     @ObservationIgnored let documentOperationGate = DocumentOperationGate()
     @ObservationIgnored let authOperationGate = AuthOperationGate()
-    @ObservationIgnored var authOperationOwner: UUID?
     /// Counts interactive auth requests from invocation until the serialized
     /// operation fully commits. This is separate from the presentation-only
     /// `authUIState` so queued requests close replacement boundaries early.
@@ -331,7 +333,7 @@ final class AppState {
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor [weak self] in
-                await self?.resumeSnapshotSyncV2()
+                await self?.resumeSnapshotSyncV2(reason: .systemWake)
             }
         }
     }

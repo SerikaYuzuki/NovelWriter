@@ -4,14 +4,22 @@ import NovelSyncV2Application
 import NovelSyncV2Store
 
 actor ProductionSyncV2Kernel: SyncV2LocalKernel, SyncV2LibraryProvider {
-    private let store: LocalSyncV2Store
-    private let scope: any SyncV2ScopeResolver
-    private let remote: (any SyncV2RemoteClient)?
+    let store: LocalSyncV2Store
+    let scope: any SyncV2ScopeResolver
 
-    init(store: LocalSyncV2Store, scope: any SyncV2ScopeResolver, remote: (any SyncV2RemoteClient)? = nil) {
+    init(store: LocalSyncV2Store, scope: any SyncV2ScopeResolver) {
         self.store = store
         self.scope = scope
-        self.remote = remote
+    }
+
+    func snapshotAvailability(workID: WorkID, snapshotID: SnapshotID) async throws -> SyncV2SnapshotAvailability {
+        let localScope = try await scope.existingScope(workID: workID)
+        let availability = try await store.snapshotAvailability(workID: workID, snapshotID: snapshotID, scope: localScope)
+        return switch availability {
+        case .local: .local
+        case .unfetched: .unfetched
+        case .unknown: .unknown
+        }
     }
 
     func writingContext(workID: WorkID) async throws -> SyncV2WritingContext {
@@ -85,6 +93,16 @@ actor ProductionSyncV2Kernel: SyncV2LocalKernel, SyncV2LibraryProvider {
         try await store.completeWorkDeletion(record)
     }
 
+    func hasUnpromotedLeaf(workID: WorkID) async throws -> Bool {
+        let localScope = try await scope.existingScope(workID: workID)
+        return try await store.hasUnpromotedLeaf(workID: workID, scope: localScope)
+    }
+
+    func promoteCurrentLeaf(workID: WorkID) async throws -> Bool {
+        let localScope = try await scope.existingScope(workID: workID)
+        return try await store.promoteCurrentLeaf(workID: workID, scope: localScope)
+    }
+
     func checkpoint(
         _ capture: SyncV2CheckpointCapture
     ) async throws -> SyncV2LocalCheckpoint {
@@ -106,7 +124,8 @@ actor ProductionSyncV2Kernel: SyncV2LocalKernel, SyncV2LibraryProvider {
                 snapshotID: result.snapshotID,
                 generation: result.generation,
                 intentID: result.intentID,
-                noChanges: result.noChanges
+                noChanges: result.noChanges,
+                promotedLeaf: result.promotedLeaf
             )
         } catch {
             throw mapStoreError(error)
@@ -120,6 +139,18 @@ actor ProductionSyncV2Kernel: SyncV2LocalKernel, SyncV2LibraryProvider {
             guard try await store.workDeletion(workID: workID) == nil else { throw SyncV2ApplicationError.workDeletionPending }
             let localScope = try await scope.existingScope(workID: workID)
             return try await store.workSummary(workID: workID, scope: localScope).localGeneration
+        } catch {
+            throw mapStoreError(error)
+        }
+    }
+
+    func currentVersion(workID: WorkID) async throws -> SyncV2LocalVersion {
+        do {
+            guard try await store.workDeletion(workID: workID) == nil else { throw SyncV2ApplicationError.workDeletionPending }
+            let localScope = try await scope.existingScope(workID: workID)
+            let summary = try await store.workSummary(workID: workID, scope: localScope)
+            guard let snapshotID = summary.currentSnapshotID else { throw SyncV2ApplicationError.safeBoundaryRejected }
+            return SyncV2LocalVersion(generation: summary.localGeneration, snapshotID: snapshotID)
         } catch {
             throw mapStoreError(error)
         }
@@ -323,6 +354,12 @@ extension ProductionSyncV2Kernel {
     func stageRemote(_ inbox: SyncV2RemoteInbox) async throws {
         do {
             let localScope = try await scope.existingScope(workID: inbox.workID)
+            if let downloaded = inbox.binding {
+                guard case let .bound(binding) = localScope,
+                      downloaded.accountId == binding.accountID, downloaded.accountFence == binding.accountFence,
+                      downloaded.serverInstanceId == binding.serverInstanceID,
+                      downloaded.protocolEpoch == binding.protocolEpoch else { throw SyncV2Failure.accountFenceChanged }
+            }
             try await store.stageRemoteGraph(inbox.storeGraph, scope: localScope)
         } catch {
             throw mapStoreError(error)
@@ -409,14 +446,33 @@ extension ProductionSyncV2Kernel {
     func installRemoteOnly(
         _ inbox: SyncV2RemoteInbox
     ) async throws -> SyncV2OpenedWork {
-        guard let binding = try await scope.activeBinding() else {
-            throw SyncV2Failure.authenticationRequired
+        func checkedBinding() async throws -> V2AccountBinding {
+            try Task.checkCancellation()
+            guard let binding = try await scope.activeBinding() else {
+                throw SyncV2Failure.authenticationRequired
+            }
+            guard let downloaded = inbox.binding,
+                  downloaded.accountId == binding.accountID,
+                  downloaded.accountFence == binding.accountFence,
+                  downloaded.serverInstanceId == binding.serverInstanceID,
+                  downloaded.protocolEpoch == binding.protocolEpoch else {
+                throw SyncV2Failure.accountFenceChanged
+            }
+            try Task.checkCancellation()
+            return binding
         }
         do {
-            let localScope = V2LocalWorkScope.bound(binding)
-            try await store.stageRemoteGraph(inbox.storeGraph, scope: localScope)
-            try await store.verifyInbox(inboxID: inbox.inboxID, scope: localScope)
-            try await store.adoptInbox(inboxID: inbox.inboxID, scope: localScope)
+            ImportProgress.current?.advance(to: .checking)
+            let localScope = try await V2LocalWorkScope.bound(checkedBinding())
+            let prepared = try await LocalSyncV2Store.prepareInitialGraph(inbox.storeGraph)
+            ImportProgress.current?.advance(to: .saving)
+            _ = try await checkedBinding()
+            if inbox.shallow {
+                try await store.installShallowHead(prepared, scope: localScope)
+            } else {
+                try await store.installInitialGraph(prepared, scope: localScope)
+            }
+            _ = try await checkedBinding()
             let opened = try await store.open(workID: inbox.workID, scope: localScope)
             return SyncV2OpenedWork(
                 workID: inbox.workID,
@@ -448,31 +504,6 @@ extension ProductionSyncV2Kernel {
         projectionItems = projectionItems.filter { !parkedIDs.contains($0.workID) }
         projectionItems += parked
         return SyncV2LibraryProjection(items: projectionItems)
-    }
-
-    func downloadRemoteOnly(workID: WorkID) async throws -> SyncV2RemoteInbox {
-        guard let remote else { throw SyncV2ApplicationError.workNotFound }
-        return try await remote.downloadRemoteOnly(workID: workID)
-    }
-
-    func catalogPage(cursor: String?, pageSize: Int) async throws -> SyncV2RemoteCatalogPage {
-        guard let remote else { throw SyncV2Failure.authenticationRequired }
-        return try await remote.catalogPage(cursor: cursor, pageSize: pageSize)
-    }
-
-    func remoteHead(workID: WorkID) async throws -> SyncV2RemoteHead? {
-        guard let remote else { throw SyncV2Failure.authenticationRequired }
-        return try await remote.remoteHead(workID: workID)
-    }
-
-    func historyPage(workID: WorkID, cursor: String?, pageSize: Int) async throws -> SyncV2RemoteHistoryPage {
-        guard let remote else { throw SyncV2Failure.authenticationRequired }
-        return try await remote.historyPage(workID: workID, cursor: cursor, pageSize: pageSize)
-    }
-
-    func remoteConflict(workID: WorkID) async throws -> SyncV2ConflictProjection? {
-        guard let remote else { throw SyncV2Failure.authenticationRequired }
-        return try await remote.remoteConflict(workID: workID)
     }
 }
 
@@ -575,6 +606,7 @@ private extension ProductionSyncV2Kernel {
     func parkedItems() async throws -> [SyncV2LibraryItem] {
         try await withThrowingTaskGroup(of: SyncV2LibraryItem.self) { group in
             for summary in try await store.listParkedWorks() {
+                guard summary.currentSnapshotID != nil || summary.localGeneration != 0 else { continue }
                 guard try await store.workDeletion(workID: summary.workID) == nil else { continue }
                 group.addTask { [store] in
                     let opened = try await store.open(
@@ -610,6 +642,11 @@ private extension ProductionSyncV2Kernel {
             for summary in summaries {
                 guard try await store.workDeletion(workID: summary.workID) == nil else { continue }
                 group.addTask { [store] in
+                    if summary.currentSnapshotID == nil, summary.localGeneration == 0 {
+                        return SyncV2LibraryItem(workID: summary.workID, title: "名称未設定の作品",
+                                                 availability: .remoteOnly, accountState: accountState,
+                                                 localGeneration: 0, remoteProgress: .idle)
+                    }
                     let opened = try await store.open(
                         workID: summary.workID,
                         scope: localScope
@@ -632,6 +669,7 @@ private extension ProductionSyncV2Kernel {
                     case .unbound, .parked:
                         []
                     }
+                    let hasLeaf = try await store.hasUnpromotedLeaf(workID: summary.workID, scope: localScope)
                     let progress: SyncV2RemoteProgress = if accountState == .parkedDifferentAccount {
                         .parkedDifferentAccount
                     } else if let adoption {
@@ -640,7 +678,7 @@ private extension ProductionSyncV2Kernel {
                         .needsChoice
                     } else if localScope == .unbound || localScope == .parked, !pending.isEmpty {
                         .authenticationRequired
-                    } else if !pending.isEmpty || !sealed.isEmpty {
+                    } else if !pending.isEmpty || !sealed.isEmpty || hasLeaf {
                         .pending
                     } else {
                         .idle
@@ -651,9 +689,11 @@ private extension ProductionSyncV2Kernel {
                         availability: .localOnly,
                         accountState: accountState,
                         localGeneration: summary.localGeneration,
+                        remoteHeadConfirmed: accountState == .active && summary.acknowledgedHeadGeneration != nil,
                         conflict: adoption == nil ? conflict : nil,
                         remoteProgress: progress,
-                        oldestUnreceivedAt: store.oldestUnreceivedChange(workID: summary.workID, scope: localScope)
+                        oldestUnreceivedAt: store.oldestUnreceivedChange(workID: summary.workID, scope: localScope),
+                        historyBackfillNote: store.backfillProgressNote(workID: summary.workID)
                     )
                 }
             }
@@ -668,6 +708,7 @@ private extension ProductionSyncV2Kernel {
     func mapStoreError(_ error: Error) -> any Error {
         guard let storeError = error as? SyncV2StoreError else { return error }
         return switch storeError {
+        case .historyIncomplete: SyncV2Failure.retryable(.historyIncomplete)
         case .workNotFound: SyncV2ApplicationError.workNotFound
         case .accountMismatch: SyncV2Failure.quarantined(.differentAccount)
         case .staleCAS, .generationMismatch:

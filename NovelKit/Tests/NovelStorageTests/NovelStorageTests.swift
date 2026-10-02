@@ -54,10 +54,10 @@ func manifestJSON(at packageURL: URL) throws -> [String: Any] {
     #expect(manifest["formatVersion"] as? String == "3")
     #expect(loaded.id == doc.id)
     #expect(loaded.title == doc.title)
-    #expect(loaded.chapters.map(\.id) == doc.chapters.map(\.id))
-    #expect(loaded.chapters.map(\.title) == doc.chapters.map(\.title))
-    #expect(loaded.chapters.map(\.episodes) == doc.chapters.map(\.episodes))
-    #expect(loaded.chapters.map { $0.episodes.map(\.title) } == doc.chapters.map { $0.episodes.map(\.title) })
+    #expect(loaded.chapters.map { $0.id } == doc.chapters.map { $0.id })
+    #expect(loaded.chapters.map { $0.title } == doc.chapters.map { $0.title })
+    #expect(loaded.chapters.map { $0.episodes } == doc.chapters.map { $0.episodes })
+    #expect(loaded.chapters.map { $0.episodes.map { $0.title } } == doc.chapters.map { $0.episodes.map { $0.title } })
     #expect(loaded.characters == doc.characters)
     #expect(loaded.plotCards == doc.plotCards)
     #expect(loaded.flags == doc.flags)
@@ -155,7 +155,7 @@ func manifestJSON(at packageURL: URL) throws -> [String: Any] {
     try await repository.save(doc, to: packageURL)
 
     let loaded = try await repository.load(from: packageURL)
-    #expect(loaded.chapters.map(\.title) == ["第3章", "第2章", "第1章"])
+    #expect(loaded.chapters.map { $0.title } == ["第3章", "第2章", "第1章"])
     #expect(loaded.chapters.compactMap { $0.episodes.first?.content } == ["C", "B", "A"])
 }
 
@@ -181,7 +181,7 @@ func manifestJSON(at packageURL: URL) throws -> [String: Any] {
     try await repository.save(doc, to: packageURL)
 
     let loaded = try await repository.load(from: packageURL)
-    #expect(loaded.characters.map(\.name) == ["C", "B", "A"])
+    #expect(loaded.characters.map { $0.name } == ["C", "B", "A"])
 }
 
 @Test func overwriteSavePreservesAttachments() async throws {

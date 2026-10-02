@@ -161,10 +161,10 @@ extension LocalSyncV2Store {
         remoteHead: V2RemoteHead
     ) throws {
         let command = try SealedCommand.decodeCanonical(record.canonicalRequest)
-        let payload = try command.payloadDictionary()
+        let payload = command.payload
         guard let conflictID = try UUID(uuidString: payload.uuid("conflictId")),
-              let revision = (payload["conflictRevision"] as? NSNumber)?.int64Value,
-              let generation = (payload["expectedLocalGeneration"] as? NSNumber)?.int64Value else {
+              let revision = payload.integer("conflictRevision"),
+              let generation = payload.integer("expectedLocalGeneration") else {
             throw SyncV2StoreError.invalidCommand
         }
         let local = try payload.snapshot("preAdoptionSnapshotId")
@@ -213,11 +213,11 @@ extension LocalSyncV2Store {
         remoteHead: V2RemoteHead
     ) throws {
         let command = try SealedCommand.decodeCanonical(record.canonicalRequest)
-        let payload = try command.payloadDictionary()
+        let payload = command.payload
         let localCandidate = try payload.snapshot("localCandidateSnapshotId")
         let decision = try payload.snapshot("decisionSnapshotId")
         guard let conflictID = try UUID(uuidString: payload.uuid("conflictId")),
-              let revision = (payload["conflictRevision"] as? NSNumber)?.int64Value,
+              let revision = payload.integer("conflictRevision"),
               localCandidate == record.sourceSnapshotID,
               let row = try activeConflictRow(
                   workID: record.workID,

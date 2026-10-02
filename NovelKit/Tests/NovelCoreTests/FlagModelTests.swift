@@ -63,7 +63,7 @@ import Testing
 
     doc.moveFlags(fromOffsets: IndexSet(integer: 0), toOffset: 3)
 
-    #expect(doc.flags.map(\.id) == [second.id, third.id, first.id])
+    #expect(doc.flags.map { $0.id } == [second.id, third.id, first.id])
 }
 
 @Test func removingChapterClearsFlagChapterLinks() {

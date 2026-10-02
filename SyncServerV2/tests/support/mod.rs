@@ -535,6 +535,102 @@ async fn upload_object(
     Ok(object_id)
 }
 
+/// Synthetic cross-account upload paused before finalize; the owner has a
+/// reference which the deletion tests will remove. No real identities/data.
+#[allow(dead_code)]
+pub async fn pending_gc_upload(
+    repo: &Repository,
+    owner: &AuthenticatedPrincipal,
+    owner_work: Uuid,
+    waiting: &AuthenticatedPrincipal,
+    waiting_work: Uuid,
+    state: &str,
+) -> ScenarioResult<([u8; 32], SealedCommand)> {
+    let bytes = format!("gc-{state}-{}", Uuid::new_v4()).into_bytes();
+    let id = upload_object(repo, owner, owner_work, &bytes, [0x44; 32], 1).await?;
+    let prepare = command(
+        waiting,
+        Uuid::new_v4(),
+        CommandKind::PrepareObject,
+        waiting_work,
+        [0x44; 32],
+        1,
+        json!({"byteCount":bytes.len(),"objectId":hex::encode(id),"workId":waiting_work}),
+    )?;
+    let (status, response) = repo.command(waiting, &prepare).await?;
+    ensure(
+        status == 201,
+        "waiting account must not already own the blob",
+    )?;
+    let value = response_value(&response)?;
+    let upload_id = Uuid::parse_str(value["uploadId"].as_str().unwrap())?;
+    if state != "prepared" {
+        repo.upload(
+            waiting,
+            upload_id,
+            value["uploadCapability"].as_str().unwrap(),
+            &bytes,
+        )
+        .await?;
+    }
+    let finalize = command(
+        waiting,
+        Uuid::new_v4(),
+        CommandKind::FinalizeObject,
+        waiting_work,
+        [0x44; 32],
+        1,
+        json!({"byteCount":bytes.len(),"objectId":hex::encode(id),"uploadId":upload_id,"workId":waiting_work}),
+    )?;
+    if state == "finalized" {
+        repo.command(waiting, &finalize).await?;
+    }
+    Ok((id, finalize))
+}
+
+async fn exercise_gc_upload_references(
+    repo: &Repository,
+    owner: &AuthenticatedPrincipal,
+    waiting: &AuthenticatedPrincipal,
+    waiting_work: Uuid,
+) -> ScenarioResult<()> {
+    for state in ["prepared", "uploaded", "finalized"] {
+        let work = Uuid::new_v4();
+        create_work(repo, owner, work, Uuid::new_v4()).await?;
+        let (id, finalize) =
+            pending_gc_upload(repo, owner, work, waiting, waiting_work, state).await?;
+        // A minimal synthetic stored graph puts the blob in the purge candidate
+        // set after delete_work removes the owner's upload capabilities.
+        let manifest = canonical_json(&json!({"objectId":hex::encode(id)})).map_err(failure)?;
+        let snapshot = sha256(&manifest);
+        sqlx::query("INSERT INTO sync_v2.snapshots(account_id,work_id,snapshot_id,manifest_bytes,manifest_digest,created_at) VALUES($1,$2,$3,$4,$3,now())")
+            .bind(&owner.account_id).bind(work).bind(snapshot.as_slice()).bind(manifest).execute(&repo.pool).await?;
+        sqlx::query("INSERT INTO sync_v2.snapshot_entries(account_id,snapshot_id,entity_key,object_id,byte_count,content_type) SELECT $1,$2,'attachment/test/bytes',object_id,byte_count,'application/octet-stream' FROM sync_v2.global_blobs WHERE object_id=$3")
+            .bind(&owner.account_id).bind(snapshot.as_slice()).bind(id.as_slice()).execute(&repo.pool).await?;
+        repo.delete_work(owner, work).await?;
+        sqlx::query("UPDATE sync_v2.deleted_works SET deleted_at=now()-interval '2 years' WHERE account_id=$1 AND work_id=$2")
+            .bind(&owner.account_id).bind(work).execute(&repo.pool).await?;
+        ensure(
+            repo.purge_expired_works().await? >= 1,
+            "GC fixture was not purged",
+        )?;
+        let exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM sync_v2.global_blobs WHERE object_id=$1)",
+        )
+        .bind(id.as_slice())
+        .fetch_one(&repo.pool)
+        .await?;
+        ensure(exists, format!("GC removed {state} capability blob"))?;
+        if state == "uploaded" {
+            ensure(
+                repo.command(waiting, &finalize).await?.0 == 200,
+                "finalize failed after another account's purge",
+            )?;
+        }
+    }
+    Ok(())
+}
+
 async fn register_snapshot(
     repo: &Repository,
     principal: &AuthenticatedPrincipal,
@@ -699,6 +795,69 @@ async fn exercise_initial_descendant_publish(
     ensure(
         !rejected_receipt,
         "rejected null-base publish left a receipt",
+    )?;
+    // A real hashed linear history, substantially beyond the former 4,096
+    // generation cutoff. Seed immutable rows in one transaction, then exercise
+    // the production publish/receipt transaction (not a mock relation helper).
+    let mut head = child;
+    let mut seed = repo.pool.begin().await?;
+    for _ in 0..8192 {
+        let bytes = derive_manifest(
+            template,
+            work_id,
+            object,
+            document.len(),
+            title_object,
+            title_count,
+            &[head],
+        )?;
+        let id = sha256(&bytes);
+        sqlx::query("INSERT INTO sync_v2.snapshots(account_id,work_id,snapshot_id,manifest_bytes,manifest_digest,created_at) VALUES($1,$2,$3,$4,$3,now())")
+            .bind(&principal.account_id).bind(work_id).bind(id.as_slice()).bind(bytes).execute(&mut *seed).await?;
+        sqlx::query("INSERT INTO sync_v2.snapshot_parents(account_id,work_id,snapshot_id,parent_snapshot_id) VALUES($1,$2,$3,$4)")
+            .bind(&principal.account_id).bind(work_id).bind(id.as_slice()).bind(head.as_slice()).execute(&mut *seed).await?;
+        sqlx::query("INSERT INTO sync_v2.snapshot_entries(account_id,snapshot_id,entity_key,object_id,byte_count,content_type) SELECT account_id,$3,entity_key,object_id,byte_count,content_type FROM sync_v2.snapshot_entries WHERE account_id=$1 AND snapshot_id=$2")
+            .bind(&principal.account_id).bind(root.as_slice()).bind(id.as_slice()).execute(&mut *seed).await?;
+        head = id;
+    }
+    seed.commit().await?;
+    let (_, status, bytes) =
+        publish(repo, principal, work_id, head, 8194, Some((child, 1))).await?;
+    ensure(
+        status == 200 && response_value(&bytes)?["result"] == "applied",
+        "8,194 generation publish failed",
+    )?;
+    // Immediate-parent ancestry must terminate without walking old history.
+    let next = derive_manifest(
+        template,
+        work_id,
+        object,
+        document.len(),
+        title_object,
+        title_count,
+        &[head],
+    )?;
+    let (next_id, _) = register_snapshot(repo, principal, work_id, next, 8195).await?;
+    let (_, status, _) = publish(repo, principal, work_id, next_id, 8195, Some((head, 2))).await?;
+    ensure(
+        status == 200,
+        "long history immediate-parent publish failed",
+    )?;
+    // A sibling of the old head cannot claim the new head as its ancestor.
+    let sibling = derive_manifest(
+        template,
+        work_id,
+        object,
+        document.len(),
+        title_object,
+        title_count,
+        &[root],
+    )?;
+    let (sibling_id, _) = register_snapshot(repo, principal, work_id, sibling, 8196).await?;
+    ensure(
+        matches!(publish(repo, principal, work_id, sibling_id, 8196, Some((next_id, 3))).await,
+        Err(error) if matches!(error.downcast_ref::<SyncError>(), Some(SyncError::LineageViolation))),
+        "NotAncestor candidate was accepted",
     )?;
     Ok(())
 }
@@ -1707,6 +1866,13 @@ pub async fn run_repository_scenarios(url: &str) -> ScenarioResult<ScenarioConte
         marker == DDL_CONTRACT_MARKER,
         "fresh migration did not produce the current DDL contract marker",
     )?;
+    let timeout: String = sqlx::query_scalar("SHOW statement_timeout")
+        .fetch_one(&repo.pool)
+        .await?;
+    ensure(
+        timeout == "30s",
+        "runtime pool did not set statement timeout",
+    )?;
     let account_a = principal("scenario-account-a");
     let account_b = principal("scenario-account-b");
     exercise_concurrent_create(&repo, &account_a).await?;
@@ -1894,6 +2060,7 @@ pub async fn run_repository_scenarios(url: &str) -> ScenarioResult<ScenarioConte
     .await?;
     tombstone_tx.commit().await?;
 
+    exercise_gc_upload_references(&repo, &account_a, &account_b, foreign_work).await?;
     Ok(ScenarioContext {
         repo,
         account_a,
@@ -1982,6 +2149,7 @@ async fn exercise_chunked_upload(
         "partial object became readable",
     )?;
     let restarted = Repository {
+        download_cache: std::sync::Arc::default(),
         pool: repo.pool.clone(),
         object_store: repo.object_store.clone(),
         server_instance_id: repo.server_instance_id.clone(),

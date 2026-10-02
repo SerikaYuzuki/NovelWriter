@@ -42,6 +42,7 @@ struct NovelSyncV2ConformanceTests {
         }
         let encoded = EncodedSnapshot(manifest: manifest, manifestBytes: snapshotBytes, objects: objects)
         try SnapshotValidator.validateObjects(encoded)
+        try SnapshotValidator.validateGraphObjects([encoded, encoded])
         let model = try SnapshotCodec.decode(manifestBytes: snapshotBytes, objects: objects)
         let expectedBytes = try Data(
             contentsOf: canonical.appendingPathComponent("expected-model.json")
@@ -50,6 +51,14 @@ struct NovelSyncV2ConformanceTests {
             JSONSerialization.jsonObject(with: expectedBytes) as? [String: Any]
         )
         #expect(materialized(model).asNSDictionary.isEqual(to: expected))
+        #expect(try materialized(SnapshotCodec.decode(encoded)).asNSDictionary.isEqual(to: expected))
+        let mismatched = EncodedSnapshot(
+            manifest: SnapshotManifest(workId: WorkID(UUID()), entries: manifest.entries),
+            manifestBytes: snapshotBytes,
+            objects: objects
+        )
+        #expect(throws: Error.self) { try SnapshotCodec.decode(mismatched) }
+        #expect(throws: Error.self) { try SnapshotValidator.validateGraphObjects([encoded, mismatched]) }
         let reencoded = try SnapshotCodec.encode(model)
         #expect(reencoded.manifestBytes == snapshotBytes)
 
@@ -58,6 +67,13 @@ struct NovelSyncV2ConformanceTests {
         pollutedObjects[ObjectID(data: unreferenced)] = unreferenced
         let polluted = EncodedSnapshot(manifest: manifest, manifestBytes: snapshotBytes, objects: pollutedObjects)
         #expect(throws: Error.self) { try SnapshotValidator.validateObjects(polluted) }
+        #expect(throws: Error.self) { try SnapshotValidator.validateGraphObjects([encoded, polluted]) }
+        #expect(throws: Error.self) { try SnapshotCodec.decode(polluted) }
+        var corruptObjects = objects
+        let objectID = try #require(objects.keys.first)
+        corruptObjects[objectID] = try Data(repeating: 0, count: #require(objects[objectID]).count)
+        let corrupt = EncodedSnapshot(manifest: manifest, manifestBytes: snapshotBytes, objects: corruptObjects)
+        #expect(throws: Error.self) { try SnapshotValidator.validateGraphObjects([encoded, corrupt]) }
     }
 
     @Test func allSealedCommandDigestsMatchFixtures() throws {
@@ -75,6 +91,9 @@ struct NovelSyncV2ConformanceTests {
             let command = try SealedCommand.decodeCanonical(data)
             let expectedDigest = try #require(row["requestDigest"] as? String)
             let expectedByteCount = try #require(row["byteCount"] as? Int)
+            #expect(command.canonicalBytes == data)
+            #expect(command.kind.rawValue == command.commandKind)
+            #expect(try command.payload.workID == WorkID(uuidString: command.payload.uuid(command.kind == .cloneWork ? "sourceWorkId" : "workId")))
             #expect(command.requestDigest.rawValue == expectedDigest)
             #expect(data.count == expectedByteCount)
         }

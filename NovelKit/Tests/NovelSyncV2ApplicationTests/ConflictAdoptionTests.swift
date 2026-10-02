@@ -15,7 +15,7 @@ struct ConflictAdoptionTests {
         #expect(clone.workID != fixture.workID)
         #expect(try await fixture.app.openLocal(workID: clone.workID).document != nil)
         #expect(await store.attempts == 1)
-        #expect(await fixture.app.writingCopyRetries[clone.workID] == fixture.workID)
+        #expect(await fixture.app.lanes[clone.workID]?.writingCopyRetry == fixture.workID)
     }
 
     @Test(

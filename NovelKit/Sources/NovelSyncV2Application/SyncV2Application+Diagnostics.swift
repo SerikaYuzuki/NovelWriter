@@ -12,7 +12,7 @@ extension SyncV2Application {
         let errorCase = mirror.displayStyle == .enum ? mirror.children.first?.label : nil
         let simpleCase = mirror.displayStyle == .enum && mirror.children.isEmpty ? String(describing: error) : "unclassified"
         let code = "stage=\(stage); type=\(String(reflecting: type(of: error))); case=\(errorCase ?? simpleCase)"
-        syncDiagnostics[workID] = code
+        lanes[workID, default: WorkLane()].syncDiagnostic = code
         #if canImport(os)
         Logger(subsystem: "dev.serikayuzuki.fuminiwa", category: "sync-debug")
             .error("\(code, privacy: .public)")
@@ -20,13 +20,13 @@ extension SyncV2Application {
     }
 
     func recordSyncDiagnosticIfAbsent(workID: WorkID, stage: String, error: any Error) {
-        guard syncDiagnostics[workID] == nil else { return }
+        guard lanes[workID, default: WorkLane()].syncDiagnostic == nil else { return }
         recordSyncDiagnostic(workID: workID, stage: stage, error: error)
     }
 
     public func syncDebugDiagnostic(workID: WorkID) -> String? {
         #if DEBUG
-        syncDiagnostics[workID]
+        lanes[workID, default: WorkLane()].syncDiagnostic
         #else
         nil
         #endif

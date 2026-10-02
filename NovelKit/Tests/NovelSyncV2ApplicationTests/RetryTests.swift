@@ -21,7 +21,7 @@ struct RetryTests {
         } else {
             Issue.record("expected a durable command retry")
         }
-        #expect(await app.retryTasks.isEmpty)
+        #expect(await app.laneValues(\.retryTask).isEmpty)
     }
 
     @Test("account transition cancels a scheduled retry and authentication never schedules one")
@@ -33,11 +33,11 @@ struct RetryTests {
             let work = WorkID(UUID())
             _ = try await app.checkpoint(workID: work, document: applicationTestDocument(), reason: .explicit,
                                          documentCreatedAt: applicationTestCreatedAt)
-            try await eventually { await app.workerTasks.isEmpty }
-            #expect(await app.retryTasks.isEmpty == (failure != .offline))
+            try await eventually { await app.laneValues(\.workerTask).isEmpty }
+            #expect(await app.laneValues(\.retryTask).isEmpty == (failure != .offline))
             _ = await app.beginAccountTransitionRemoteSuspension()
-            #expect(await app.retryTasks.isEmpty)
-            #expect(await app.retryOwners.isEmpty)
+            #expect(await app.laneValues(\.retryTask).isEmpty)
+            #expect(await app.laneValues(\.retryOwner).isEmpty)
         }
     }
 

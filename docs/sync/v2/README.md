@@ -8,9 +8,13 @@ separate live authentication protocol; retired Sync v1 is not a fallback.
 
 Use this directory when changing the synchronization contract. For a UI-only change, start from the shared UI projection and the app entry points instead of loading every fixture. A wire/schema change needs matching fixtures and independent conformance evidence.
 
+- [Local autosave leaves and promotion](state-machine.md#local-leaves-and-promotion-d-103): D-103 local-only history, promotion clocks and unchanged schema/wire.
+
 - [AI feedback attachments](assistant-feedback.md): read-only dated Markdown using the existing attachment wire format.
 
 ## Contract files
+
+- [Initial graph download](download.md): bounded read-only pages, deduplicated objects, account-bound cursor and old-server fallback; [response schema](download-page.schema.json).
 
 - `snapshot.schema.json`: closed v2 manifest envelope.
 - `command.schema.json`: common sealed-command envelope.
@@ -71,3 +75,5 @@ The independent suite intentionally disables PostgreSQL integration. Real DB tra
 - [保管と別作品復元API](protection.md)、[復旧の操作手順](../../WORK_RECOVERY.md)。
 
 - [AI会話・プロンプト・MCP](assistant.md): 本文snapshotと独立した記録lane、scopeとUndo、保管・復元。
+
+- [サムネイル](thumbnails.md): 作品・人物・世界観の予約名attachment、縮小・所有者・AI/MCP除外（D-104）。

@@ -16,7 +16,7 @@ func restorePinsCurrentUsesTwoParentsAndAckPreservesNewerEdit() async throws {
             workID: workID,
             document: document,
             documentCreatedAt: testDate,
-            expectedGeneration: 0
+            expectedGeneration: 0, reason: .explicit
         ),
         scope: scopeA
     )
@@ -26,7 +26,7 @@ func restorePinsCurrentUsesTwoParentsAndAckPreservesNewerEdit() async throws {
             workID: workID,
             document: document,
             documentCreatedAt: testDate,
-            expectedGeneration: 1
+            expectedGeneration: 1, reason: .explicit
         ),
         scope: scopeA
     )
@@ -78,7 +78,7 @@ func restorePinsCurrentUsesTwoParentsAndAckPreservesNewerEdit() async throws {
             workID: workID,
             document: typedLater,
             documentCreatedAt: testDate,
-            expectedGeneration: 3
+            expectedGeneration: 3, reason: .explicit
         ),
         scope: scopeA
     )
@@ -112,7 +112,7 @@ func localOnlyRestoreDoesNotCreateAnUnboundRemoteLane() async throws {
             workID: workID,
             document: document,
             documentCreatedAt: testDate,
-            expectedGeneration: 0
+            expectedGeneration: 0, reason: .explicit
         ),
         scope: .unbound
     )
@@ -122,7 +122,7 @@ func localOnlyRestoreDoesNotCreateAnUnboundRemoteLane() async throws {
             workID: workID,
             document: document,
             documentCreatedAt: testDate,
-            expectedGeneration: first.generation
+            expectedGeneration: first.generation, reason: .explicit
         ),
         scope: .unbound
     )
@@ -147,7 +147,7 @@ func localOnlyRestoreDoesNotCreateAnUnboundRemoteLane() async throws {
             workID: parkedWorkID,
             document: parkedDocument,
             documentCreatedAt: testDate,
-            expectedGeneration: 0
+            expectedGeneration: 0, reason: .explicit
         ),
         scope: scopeA
     )
@@ -157,7 +157,7 @@ func localOnlyRestoreDoesNotCreateAnUnboundRemoteLane() async throws {
             workID: parkedWorkID,
             document: parkedDocument,
             documentCreatedAt: testDate,
-            expectedGeneration: parkedFirst.generation
+            expectedGeneration: parkedFirst.generation, reason: .explicit
         ),
         scope: scopeA
     )
@@ -207,7 +207,7 @@ func keepBothReservationSurvivesRestartAndFinalizesAtomically() async throws {
             workID: newWorkID,
             document: cloneEdit,
             documentCreatedAt: testDate,
-            expectedGeneration: 1
+            expectedGeneration: 1, reason: .explicit
         ),
         scope: scopeA
     )
@@ -227,7 +227,7 @@ func keepBothReservationSurvivesRestartAndFinalizesAtomically() async throws {
             workID: sourceWorkID,
             document: sourceEdit,
             documentCreatedAt: testDate,
-            expectedGeneration: fixture.conflict.sourceGeneration
+            expectedGeneration: fixture.conflict.sourceGeneration, reason: .explicit
         ),
         scope: scopeA
     )

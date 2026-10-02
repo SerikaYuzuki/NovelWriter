@@ -67,6 +67,7 @@ public enum SyncV2RetryReason: String, Equatable, Sendable {
     case lostResponse
     case uploadExpired
     case publishLineageRejected
+    case historyIncomplete
 }
 
 public enum SyncV2FatalReason: String, Equatable, Sendable {
@@ -136,17 +137,20 @@ public struct SyncV2LocalCheckpoint: Hashable, Sendable {
     public let generation: Int64
     public let intentID: UUID?
     public let noChanges: Bool
+    public let promotedLeaf: Bool
 
     public init(
         snapshotID: SnapshotID,
         generation: Int64,
         intentID: UUID?,
-        noChanges: Bool
+        noChanges: Bool,
+        promotedLeaf: Bool = false
     ) {
         self.snapshotID = snapshotID
         self.generation = generation
         self.intentID = intentID
         self.noChanges = noChanges
+        self.promotedLeaf = promotedLeaf
     }
 }
 

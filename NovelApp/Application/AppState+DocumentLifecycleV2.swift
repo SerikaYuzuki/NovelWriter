@@ -269,8 +269,14 @@ extension AppState {
         return await createNewV2Document()
     }
 
+    /// Import is available from the empty shelf as well as an open document.
+    /// Keep the same runtime, transition, termination and authentication gates as creation.
+    var permitsDocumentImport: Bool {
+        permitsNewDocument
+    }
+
     func openDocument(at url: URL, expectedSession: DocumentSessionToken? = nil) async -> Bool {
-        guard permitsDocumentTransitionOperation,
+        guard permitsDocumentImport,
               expectedSession == nil || expectedSession == documentSessionToken else { return false }
         return await openExternalDocument(at: url)
     }

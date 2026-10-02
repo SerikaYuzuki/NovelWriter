@@ -4,6 +4,7 @@ import NovelAuth
 import NovelCore
 import NovelSyncV2
 import NovelSyncV2Application
+import NovelSyncV2Store
 import Testing
 
 @MainActor
@@ -26,7 +27,7 @@ struct IOSSnapshotSyncV2Tests {
         #expect(!FileManager.default.fileExists(
             atPath: environment.root.appendingPathComponent(store.document.id.uuidString).path
         ))
-        #expect(store.snapshotSyncOutcome == .pending || store.snapshotSyncOutcome == .offline)
+        #expect(store.snapshotSyncState?.remoteProgress == .pending || store.snapshotSyncState?.remoteProgress == .offline)
     }
 
     @Test("normal new/open never creates a WorkID directory")
@@ -207,8 +208,8 @@ struct IOSSnapshotSyncV2Tests {
         #expect(await store.makeNewDocument())
         store.replaceAttachments([Attachment(fileName: "missing.pdf", byteCount: 12)])
         #expect(await store.checkpointSnapshotSyncV2(store.document, reason: .explicit) == false)
-        #expect(store.attachments.map(\.fileName) == ["missing.pdf"])
-        #expect(store.snapshotSyncOutcome == .failed)
+        #expect(store.attachments.map { $0.fileName } == ["missing.pdf"])
+        #expect(store.snapshotSyncOutcome == .failure(.fatal(.invalidLocalState)))
     }
 
     @Test("履歴UIはSQLite localとremoteを同一projectionへ載せる")
@@ -286,7 +287,7 @@ struct IOSSnapshotSyncV2Tests {
         await store.signOutFromFuminiwa()
 
         #expect(store.syncV2ActiveWorkID == workID)
-        #expect(store.syncV2LibraryItems.map(\.workID) == [workID])
+        #expect(store.syncV2LibraryItems.map { $0.workID } == [workID])
     }
 
     @Test("世代が進んだeditor callbackは現在の本文へ混入しない")
@@ -311,6 +312,31 @@ struct IOSSnapshotSyncV2Tests {
             expectedEditingToken: staleToken
         )
         #expect(store.document.episode(episodeID)?.episode.content == "新しい本文")
+    }
+
+    @Test("background promotes a durable leaf even when the save revision is clean")
+    func backgroundPromotesCleanLeaf() async throws {
+        let environment = makeEnvironment()
+        defer { environment.cleanup() }
+        let store = IOSDocumentStore(userDefaults: environment.defaults, libraryRoot: environment.root)
+        await store.bootstrap()
+        #expect(await store.makeNewDocument())
+        let workID = try #require(store.syncV2ActiveWorkID)
+        let configuration = try #require(IOSDocumentStore.testRuntimeConfigurations[environment.root.standardizedFileURL])
+        let account = try #require(await configuration.vault.currentAccount())
+        let scope = V2LocalWorkScope.bound(V2AccountBinding(
+            accountID: account.accountID, accountFence: account.accountFence, serverInstanceID: "test-server"
+        ))
+        var document = store.document
+        document.title = "latest local leaf"
+        store.document = document
+        #expect(await store.checkpointSnapshotSyncV2(document, reason: .autosave))
+        let local = try LocalSyncV2Store(root: configuration.localRoot.url, policy: .openExisting)
+        #expect(try await local.hasUnpromotedLeaf(workID: workID, scope: scope))
+        #expect(await store.flushDeviceSyncForBackground(waitForRemote: false))
+        #expect(try await !local.hasUnpromotedLeaf(workID: workID, scope: scope))
+        #expect(try await local.open(workID: workID, scope: scope).document == document)
+        await local.close()
     }
 
     private func makeEnvironment() -> TestEnvironment {
@@ -388,7 +414,7 @@ extension IOSSnapshotSyncV2Tests {
             sourceGeneration: 1
         )
         await store.signOutFromFuminiwa()
-        #expect(store.syncV2LibraryItems.map(\.workID) == [workID])
+        #expect(store.syncV2LibraryItems.map { $0.workID } == [workID])
         #expect(store.syncV2LibraryItems.first?.availability == .localOnly)
         #expect(store.syncV2LibraryItems.first?.accountState == .parkedDifferentAccount)
         #expect(store.syncV2RemoteCatalogItems.isEmpty)

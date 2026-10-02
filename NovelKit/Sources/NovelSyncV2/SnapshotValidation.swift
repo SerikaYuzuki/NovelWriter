@@ -101,35 +101,34 @@ public enum SnapshotValidator {
             manifestBytes,
             maxBytes: SnapshotSyncV2Limits.maxManifestBytes
         )
-        let manifest = try JSONDecoder().decode(
-            SnapshotManifest.self,
-            from: manifestBytes
-        )
-        try validate(manifest)
-        guard case let .object(fields) = value,
-              Set(fields.map(\.0)) == Set([
-                  "entries",
-                  "parentSnapshotIds",
-                  "schemaVersion",
-                  "workId"
-              ]) else {
+        guard let fields = value.objectDictionary,
+              Set(fields.keys) == ["entries", "parentSnapshotIds", "schemaVersion", "workId"],
+              case .number(2) = fields["schemaVersion"],
+              let work = fields["workId"]?.stringContents,
+              case let .array(parents) = fields["parentSnapshotIds"],
+              case let .array(rawEntries) = fields["entries"] else {
             throw SyncV2TypeError.invalidManifest
         }
-        guard let entries = fields.first(where: { $0.0 == "entries" })?.1,
-              case let .array(rawEntries) = entries else {
-            throw SyncV2TypeError.invalidManifest
+        let parentIDs = try parents.map { value -> SnapshotID in
+            guard let raw = value.stringContents else { throw SyncV2TypeError.invalidManifest }
+            return try SnapshotID(rawValue: raw)
         }
-        for rawEntry in rawEntries {
-            guard case let .object(entryFields) = rawEntry,
-                  Set(entryFields.map(\.0)) == Set([
-                      "byteCount",
-                      "contentType",
-                      "entityKey",
-                      "objectId"
-                  ]) else {
+        let entries = try rawEntries.map { value -> SnapshotEntry in
+            guard let entry = value.objectDictionary,
+                  Set(entry.keys) == ["byteCount", "contentType", "entityKey", "objectId"],
+                  case let .number(count) = entry["byteCount"], let count = Int(exactly: count),
+                  let rawType = entry["contentType"]?.stringContents,
+                  let type = SnapshotEntry.ContentType(rawValue: rawType),
+                  let key = entry["entityKey"]?.stringContents,
+                  let object = entry["objectId"]?.stringContents else {
                 throw SyncV2TypeError.invalidManifest
             }
+            return try SnapshotEntry(byteCount: count, contentType: type, entityKey: key,
+                                     objectId: ObjectID(rawValue: object))
         }
+        let manifest = try SnapshotManifest(workId: WorkID(uuidString: work),
+                                            parentSnapshotIds: parentIDs, entries: entries)
+        try validate(manifest)
         return manifest
     }
 

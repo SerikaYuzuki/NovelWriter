@@ -1,6 +1,7 @@
 #if os(macOS)
 import Foundation
 import NovelCore
+import NovelThumbnail
 
 extension AppState {
     var assistantFeedback: [AssistantFeedback] {
@@ -10,7 +11,7 @@ extension AppState {
 
     var referenceAttachments: [Attachment] {
         let feedbackNames = Set(assistantFeedback.map(\.fileName))
-        return attachments.filter { !feedbackNames.contains($0.fileName) }
+        return attachments.filter { !feedbackNames.contains($0.fileName) && !(ThumbnailOwner(fileName: $0.fileName)?.exists(in: document) ?? false) }
     }
 
     func saveAssistantFeedback(_ feedback: AssistantFeedback, session: DocumentSessionToken,

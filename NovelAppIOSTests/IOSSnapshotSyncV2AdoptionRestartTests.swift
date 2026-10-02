@@ -26,7 +26,7 @@ struct IOSSnapshotSyncV2AdoptionRestartTests {
                 let pending = try await application.pendingAdoption(workID: fixture.workID)
                 return store.document.title == "サーバー版" && pending == nil
                     && store.selectedEpisode?.content == "Macで更新した本文"
-                    && store.snapshotSyncOutcome == .idle
+                    && (store.snapshotSyncState?.remoteProgress == .idle || store.snapshotSyncState?.remoteProgress == .noChanges)
             }
         }
     }
@@ -67,10 +67,10 @@ struct IOSSnapshotSyncV2AdoptionRestartTests {
                 return store.document.title == "サーバー版"
                     && pending == nil
                     && store.snapshotSyncConflict == nil
-                    && store.snapshotSyncOutcome == .idle
+                    && (store.snapshotSyncState?.remoteProgress == .idle || store.snapshotSyncState?.remoteProgress == .noChanges)
             }
             #expect(store.snapshotSyncConflict == nil)
-            #expect(store.snapshotSyncOutcome == .idle)
+            #expect((store.snapshotSyncState?.remoteProgress == .idle || store.snapshotSyncState?.remoteProgress == .noChanges))
         }
     }
 
@@ -399,7 +399,7 @@ extension IOSSnapshotSyncV2AdoptionRestartTests {
             let task = Task { await store.runAutomaticSnapshotSyncV2() }
             defer { task.cancel() }
             try await eventually {
-                store.document.title == "サーバー版" && store.snapshotSyncOutcome == .idle
+                store.document.title == "サーバー版" && (store.snapshotSyncState?.remoteProgress == .idle || store.snapshotSyncState?.remoteProgress == .noChanges)
             }
             #expect(try await application.pendingAdoption(workID: fixture.workID) == nil)
             #expect(observedProtectedAdoption)

@@ -3,6 +3,7 @@ import Foundation
 struct SnapshotClosureValidator {
     private let entriesByKey: [String: SnapshotEntry]
     private let objects: [ObjectID: Data]
+    private let validatedFields: [ObjectID: [String: CanonicalJSON.Value]]
     private var expectedEntityKeys: Set<String> = [
         "work/document",
         "work/title",
@@ -15,11 +16,13 @@ struct SnapshotClosureValidator {
         "work/attachment-order"
     ]
 
-    init(manifest: SnapshotManifest, objects: [ObjectID: Data]) {
+    init(manifest: SnapshotManifest, objects: [ObjectID: Data],
+         validatedFields: [ObjectID: [String: CanonicalJSON.Value]] = [:]) {
         entriesByKey = Dictionary(
             uniqueKeysWithValues: manifest.entries.map { ($0.entityKey, $0) }
         )
         self.objects = objects
+        self.validatedFields = validatedFields
     }
 
     mutating func validate() throws {
@@ -156,6 +159,10 @@ struct SnapshotClosureValidator {
     private func objectFields(
         _ key: String
     ) throws -> [String: CanonicalJSON.Value] {
+        if let entry = entriesByKey[key], entry.contentType == .entityJSON,
+           let fields = validatedFields[entry.objectId] {
+            return fields
+        }
         guard let entry = entriesByKey[key],
               entry.contentType == .entityJSON,
               let bytes = objects[entry.objectId],

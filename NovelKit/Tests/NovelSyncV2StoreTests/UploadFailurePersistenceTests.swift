@@ -12,7 +12,7 @@ func rejectedUploadSurvivesRestartAndRequiresExplicitRetry() async throws {
     let workID = WorkID(UUID())
     let checkpoint = try await store.checkpoint(V2CheckpointRequest(
         workID: workID, document: makeDocument(title: "upload"),
-        documentCreatedAt: testDate, expectedGeneration: 0
+        documentCreatedAt: testDate, expectedGeneration: 0, reason: .explicit
     ), scope: scopeA)
     let command = try publishCommand(workID: workID, checkpoint: checkpoint)
     try await store.seal(command, intentID: checkpoint.intentID, scope: scopeA)
@@ -53,7 +53,7 @@ func unavailableRemoteCommandKeepsReasonUntilExplicitRetry() async throws {
     let workID = WorkID(UUID())
     let checkpoint = try await store.checkpoint(V2CheckpointRequest(
         workID: workID, document: makeDocument(title: "local original"),
-        documentCreatedAt: testDate, expectedGeneration: 0
+        documentCreatedAt: testDate, expectedGeneration: 0, reason: .explicit
     ), scope: scopeA)
     let command = try publishCommand(workID: workID, checkpoint: checkpoint)
     try await store.seal(command, intentID: checkpoint.intentID, scope: scopeA)

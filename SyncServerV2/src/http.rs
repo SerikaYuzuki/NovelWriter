@@ -25,6 +25,26 @@ pub struct AppState {
     pub access_authenticator: Arc<dyn AccessAuthenticator>,
 }
 pub(crate) fn error_response(error: SyncError) -> Response {
+    if let SyncError::Database(ref db) = error {
+        // PostgreSQL messages/details can contain supplied values. Log only SQLSTATE.
+        let code = db.as_database_error().and_then(|e| e.code());
+        let kind = match db {
+            sqlx::Error::Database(_) => "database",
+            sqlx::Error::PoolTimedOut => "pool_timeout",
+            sqlx::Error::PoolClosed => "pool_closed",
+            sqlx::Error::Io(_) => "io",
+            sqlx::Error::Tls(_) => "tls",
+            sqlx::Error::Protocol(_) => "protocol",
+            sqlx::Error::RowNotFound => "row_not_found",
+            sqlx::Error::Decode(_) | sqlx::Error::ColumnDecode { .. } => "decode",
+            _ => "other",
+        };
+        tracing::warn!(
+            error_kind = kind,
+            sqlstate = code.as_deref().unwrap_or("non_database"),
+            "database operation failed; returning 503"
+        );
+    }
     let status = match error {
         SyncError::Unauthorized => StatusCode::UNAUTHORIZED,
         SyncError::AccountFenceMismatch | SyncError::UploadCapabilityMismatch => {
@@ -362,6 +382,10 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/v2/works/{work_id}", delete(delete_work))
         .route("/v2/works/{work_id}/head", get(head))
+        .route(
+            "/v2/works/{work_id}/download",
+            get(crate::snapshot_download::download),
+        )
         .route("/v2/works/{work_id}/history", get(history))
         .route("/v2/snapshots/{snapshot_id}/manifest", get(manifest))
         .route("/v2/objects/{object_id}", get(object))
@@ -898,7 +922,7 @@ async fn missing_objects(
     if ids.len() > 100_000 {
         return error_response(SyncError::SizeLimitExceeded);
     }
-    let mut missing = Vec::new();
+    let mut digests = Vec::with_capacity(ids.len());
     let mut seen = std::collections::HashSet::new();
     for id in ids {
         let Some(text) = id.as_str() else {
@@ -911,19 +935,20 @@ async fn missing_objects(
         if !seen.insert(digest) {
             return error_response(SyncError::SchemaViolation("objectIds.unique".into()));
         }
-        let found = match sqlx::query("SELECT 1 FROM sync_v2.account_objects WHERE account_id=$1 AND object_id=$2 AND state='available'")
-            .bind(&p.account_id)
-            .bind(digest.as_slice())
-            .fetch_optional(&state.repo.pool)
-            .await
-        {
-            Ok(v) => v.is_some(),
-            Err(e) => return error_response(SyncError::Database(e)),
-        };
-        if !found {
-            missing.push(serde_json::Value::String(text.to_owned()));
-        }
+        digests.push(digest.to_vec());
     }
+    let available: Vec<Vec<u8>> = match sqlx::query_scalar("SELECT object_id FROM sync_v2.account_objects WHERE account_id=$1 AND object_id=ANY($2::bytea[]) AND state='available'")
+        .bind(&p.account_id).bind(&digests).fetch_all(&state.repo.pool).await {
+            Ok(rows) => rows,
+            Err(error) => return error_response(SyncError::Database(error)),
+        };
+    let available: std::collections::HashSet<_> = available.into_iter().collect();
+    let missing: Vec<_> = ids
+        .iter()
+        .zip(&digests)
+        .filter(|(_, id)| !available.contains(*id))
+        .map(|(value, _)| value.clone())
+        .collect();
     let response = serde_json::json!({
         "missingObjectIds": missing,
         "result": if missing.is_empty() { "noChanges" } else { "applied" }
@@ -1273,6 +1298,7 @@ mod upload_authentication_tests {
             .unwrap();
         let app = router(AppState {
             repo: Arc::new(Repository {
+                download_cache: Arc::default(),
                 pool: pool.clone(),
                 object_store: Arc::new(PostgresObjectStore { pool }),
                 server_instance_id: "test-instance".into(),
@@ -1304,3 +1330,7 @@ mod upload_authentication_tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "prepare_receipt_wire_tests.rs"]
+mod prepare_receipt_wire_tests;

@@ -34,7 +34,7 @@ struct AssistantChatContextTests {
         let sent = try sentDocument(in: content)
         #expect(sent.id == document.id)
         #expect(sent.characters == document.characters)
-        #expect(sent.chapters.map(\.id) == chapters.map(\.id))
+        #expect(sent.chapters.map { $0.id } == chapters.map { $0.id })
         for episode in [first, second, third] {
             let actual = try #require(sent.chapters.flatMap(\.episodes).first { $0.id == episode.id })
             if expected.contains(episode.id) {

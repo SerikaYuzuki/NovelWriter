@@ -66,7 +66,7 @@ import Testing
     let listed = try await repository.listAttachments(in: packageURL)
     #expect(first.fileName == "image.png")
     #expect(second.fileName == "image-2.png")
-    #expect(Set(listed.map(\.fileName)) == Set(["image.png", "image-2.png"]))
+    #expect(Set(listed.map { $0.fileName }) == Set(["image.png", "image-2.png"]))
 }
 
 @Test func saveCopyPreservesPackageOwnedDataAtDestination() async throws {
@@ -91,7 +91,7 @@ import Testing
     try await repository.saveCopy(copied, from: sourceURL, to: destinationURL)
 
     #expect(try await repository.load(from: destinationURL) == copied)
-    #expect(try await repository.listAttachments(in: destinationURL).map(\.fileName) == ["資料.txt"])
+    #expect(try await repository.listAttachments(in: destinationURL).map { $0.fileName } == ["資料.txt"])
     #expect(FileManager.default.fileExists(
         atPath: destinationURL
             .appendingPathComponent("snapshots", isDirectory: true)

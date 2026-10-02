@@ -28,20 +28,20 @@ struct WorkerProgressTests {
         if editDuringSync {
             updated.title = "更新した作品名"
         }
-        _ = try await app.checkpoint(workID: workID, document: updated, reason: .autosave,
+        _ = try await app.checkpoint(workID: workID, document: updated, reason: .explicit,
                                      documentCreatedAt: applicationTestCreatedAt)
         let afterSave = await app.uiState(workID: workID)
         if case .syncing = afterSave?.remoteProgress {} else {
             Issue.record("A concurrent save must retain active sync progress")
         }
         await planner.releaseFirstRead()
-        try await eventually { await app.workerTasks[workID] == nil }
+        try await eventually { await app.lanes[workID]?.workerTask == nil }
         #expect(await app.uiState(workID: workID)?.remoteProgress == .noChanges)
         #expect(await remote.recordedOperations().count == (editDuringSync ? 2 : 1))
     }
 }
 
-private actor CompletionReadPlanner: SyncV2CommandPlanner {
+actor CompletionReadPlanner: SyncV2CommandPlanner {
     private let base: InMemorySyncV2RuntimeState
     private var receiptAcknowledged = false
     private var didPause = false

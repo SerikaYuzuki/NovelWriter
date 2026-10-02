@@ -82,7 +82,7 @@ struct WorkerRaceTests {
         _ = try await app.checkpoint(
             workID: workID,
             document: applicationTestDocument(),
-            reason: .autosave,
+            reason: .explicit,
             documentCreatedAt: applicationTestCreatedAt
         )
         try await Task.sleep(for: .milliseconds(50))
@@ -144,23 +144,23 @@ struct WorkerRaceTests {
         _ = try await app.checkpoint(
             workID: workID,
             document: applicationTestDocument(),
-            reason: .autosave,
+            reason: .explicit,
             documentCreatedAt: applicationTestCreatedAt
         )
         try await eventually { await remote.recordedOperations().count == 1 }
 
-        let oldOwner = await app.workerOwners[workID]
+        let oldOwner = await app.lanes[workID]?.workerOwner
         #expect(oldOwner != nil)
         let suspension = await app.beginAccountTransitionRemoteSuspension()
-        #expect(await app.workerOwners[workID] == nil)
+        #expect(await app.lanes[workID]?.workerOwner == nil)
         #expect(await app.endAccountTransitionRemoteSuspension(suspension, resume: false))
         let pendingWorkIDs = try await (state as any SyncV2CommandPlanner).pendingWorkIDs()
         #expect(pendingWorkIDs.contains(workID))
         try await app.resumePending()
-        #expect(await app.workerOwners[workID] != nil)
+        #expect(await app.lanes[workID]?.workerOwner != nil)
         try await eventually { await remote.recordedOperations().count == 2 }
 
-        let newOwner = await app.workerOwners[workID]
+        let newOwner = await app.lanes[workID]?.workerOwner
         #expect(newOwner != nil)
         #expect(newOwner != oldOwner)
         // The first task is still awaiting the remote. Its continuation is
@@ -175,7 +175,7 @@ struct WorkerRaceTests {
         // response is otherwise a valid-looking receipt, so this assertion
         // exercises the owner boundary rather than receipt validation.
         await remote.releaseNext(result: .applied)
-        try await eventually { await app.workerOwners[workID] == nil }
+        try await eventually { await app.lanes[workID]?.workerOwner == nil }
         #expect(await remote.recordedOperations().count == 2)
         #expect(await planner.acknowledgeCount() == 1)
         #expect(await planner.failureCount() == 0)
@@ -183,7 +183,7 @@ struct WorkerRaceTests {
     }
 }
 
-private actor IdleRacePlanner: SyncV2CommandPlanner {
+actor IdleRacePlanner: SyncV2CommandPlanner {
     private let base: InMemorySyncV2RuntimeState
     private var isFirst = true
     private var firstReadSuspended = false
@@ -249,7 +249,7 @@ private actor IdleRacePlanner: SyncV2CommandPlanner {
     }
 }
 
-private actor MismatchedReceiptRemote: SyncV2RemoteClient {
+actor MismatchedReceiptRemote: SyncV2RemoteClient {
     func execute(
         _ operation: SyncV2RemoteOperation
     ) throws -> SyncV2RemoteExecution {
@@ -276,7 +276,7 @@ private actor MismatchedReceiptRemote: SyncV2RemoteClient {
     }
 }
 
-private actor NonCooperativeRemote: SyncV2RemoteClient {
+actor NonCooperativeRemote: SyncV2RemoteClient {
     private struct Pending {
         let operation: SyncV2RemoteOperation
         let continuation: CheckedContinuation<SyncV2RemoteExecution, Error>
@@ -353,7 +353,7 @@ private actor NonCooperativeRemote: SyncV2RemoteClient {
     }
 }
 
-private actor CountingPlanner: SyncV2CommandPlanner {
+actor CountingPlanner: SyncV2CommandPlanner {
     private let base: InMemorySyncV2RuntimeState
     private var acknowledgements = 0
     private var failures = 0

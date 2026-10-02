@@ -30,7 +30,7 @@ public extension SyncV2Application {
             if prepared.noChanges {
                 let state = setState(
                     workID: workID,
-                    localDurability: states[workID]?.localDurability ?? .unsaved,
+                    localDurability: lanes[workID, default: WorkLane()].state?.localDurability ?? .unsaved,
                     remoteProgress: .noChanges,
                     result: .noChanges,
                     conflict: .clear
@@ -43,7 +43,7 @@ public extension SyncV2Application {
             }
             let state = setState(
                 workID: workID,
-                localDurability: states[workID]?.localDurability ?? .unsaved,
+                localDurability: lanes[workID, default: WorkLane()].state?.localDurability ?? .unsaved,
                 remoteProgress: .pending,
                 result: .queued
             )
@@ -62,7 +62,7 @@ public extension SyncV2Application {
         } catch SyncV2ApplicationError.staleConflictAction {
             let state = setState(
                 workID: workID,
-                localDurability: states[workID]?.localDurability ?? .unsaved,
+                localDurability: lanes[workID, default: WorkLane()].state?.localDurability ?? .unsaved,
                 remoteProgress: .needsChoice,
                 result: .staleConflictAction
             )
@@ -80,22 +80,27 @@ public extension SyncV2Application {
         guard runtimeIdentity != .preview else {
             throw SyncV2ApplicationError.previewReadOnly
         }
+        if try await kernel.snapshotAvailability(workID: workID, snapshotID: snapshotID) == .unfetched {
+            prioritizeHistory(workID: workID)
+            throw SyncV2Failure.retryable(.historyIncomplete)
+        }
         let prepared = try await kernel.prepareRestore(
             SyncV2RestoreRequest(workID: workID, snapshotID: snapshotID)
         )
         guard !prepared.noChanges else {
             let state = setState(
                 workID: workID,
-                localDurability: states[workID]?.localDurability ?? .unsaved,
+                localDurability: lanes[workID, default: WorkLane()].state?.localDurability ?? .unsaved,
                 remoteProgress: .noChanges,
                 result: .noChanges
             )
             return SyncV2OperationResult(state: state, typedResult: .noChanges)
         }
+        cancelLeafPromotion(workID: workID)
         let hasPendingRemoteIntent = prepared.intentID != nil
         let state = setState(
             workID: workID,
-            localDurability: states[workID]?.localDurability ?? .unsaved,
+            localDurability: lanes[workID, default: WorkLane()].state?.localDurability ?? .unsaved,
             remoteProgress: hasPendingRemoteIntent ? .pending : .authenticationRequired,
             result: .restored
         )

@@ -10,16 +10,16 @@ enum V2StoreSchema {
     static let version = "2"
     private static let legacyRestoreStateChecksum = Data(
         hex: "745d947270838584aa854262fd794c7808316a0aa507966a22e9d33fe9cccf74"
-    )
+    )!
     private static let legacyRetiredRestoreStateChecksum = Data(
         hex: "6b089b87ef6118cbf04e89b3e46295b8b1297463e68cde8e785d44149c76c467"
-    )
+    )!
     private static let legacyCleanTransferStateChecksum = Data(
         hex: "e38615c6acc8bbe4b16d28ec9144bf75c1cbf239024ae06b8cb77a2729ec43fa"
-    )
+    )!
     private static let legacyUnconstrainedTransferStateChecksum = Data(
         hex: "9af3fd4c7a743ccce0810aea444b93fd7df060b4d48a78fc5156555afbe98280"
-    )
+    )!
     private static let legacyUploadTransferTableDDL = [
         "CREATE TABLE upload_transfers (",
         "  transfer_id TEXT PRIMARY KEY,",
@@ -137,7 +137,7 @@ enum V2StoreSchema {
     }
 
     static func checksum(_ sql: Data) -> Data {
-        Data(hex: SHA256Digest.hex(sql))
+        Data(hex: SHA256Digest.hex(sql))!
     }
 
     static func open(_ db: OpaquePointer, create: Bool) throws {
@@ -149,28 +149,39 @@ enum V2StoreSchema {
         if (try? attest(db, expectedSQL: sql, expectedChecksum: checksum(sql))) != nil {
             return
         }
-        let marker = "\n-- Work deletion journal."
         let source = String(decoding: sql, as: UTF8.self)
-        guard let boundary = source.range(of: marker) else { throw SyncV2StoreError.schemaMismatch }
-        let previous = Data(source[..<boundary.lowerBound].utf8)
-        // Attest and, if needed, migrate only an already-known previous schema.
-        // Unknown or tampered databases never acquire a deletion journal.
-        do {
-            try openBase(db, create: false, sql: previous)
-        } catch {
-            // Another store opener may have completed the additive upgrade.
-            try attest(db, expectedSQL: sql, expectedChecksum: checksum(sql))
-            return
+        let markers = [
+            "\n-- Work deletion journal.", "\n-- Shallow history (D-106).",
+            "\n-- Legacy unexpected-command recovery (D-107).", "\n-- Receipt equivalence repair (D-108)."
+        ]
+        let boundaries = try markers.map { marker in
+            guard let range = source.range(of: marker) else { throw SyncV2StoreError.schemaMismatch }
+            return range.lowerBound
+        }
+        let versions = boundaries.map { Data(source[..<$0].utf8) } + [sql]
+        // Legacy migrations apply only to the original base. Each additive
+        // version is independently attested, including its exact checksum.
+        if !(versions.contains { (try? attest(db, expectedSQL: $0, expectedChecksum: checksum($0))) != nil }) {
+            do {
+                try openBase(db, create: false, sql: versions[0])
+            } catch {
+                // Another opener may have completed both legacy and tail steps.
+                try attest(db, expectedSQL: sql, expectedChecksum: checksum(sql))
+                return
+            }
         }
         try execute(db, "BEGIN IMMEDIATE")
         do {
-            if (try? attest(db, expectedSQL: sql, expectedChecksum: checksum(sql))) != nil {
-                try execute(db, "COMMIT")
-                return
+            guard let current = versions.lastIndex(where: {
+                (try? attest(db, expectedSQL: $0, expectedChecksum: checksum($0))) != nil
+            }) else { throw SyncV2StoreError.schemaMismatch }
+            for index in current ..< boundaries.count {
+                try attest(db, expectedSQL: versions[index], expectedChecksum: checksum(versions[index]))
+                let end = index + 1 < boundaries.count ? boundaries[index + 1] : source.endIndex
+                try execute(db, String(source[boundaries[index] ..< end]))
+                try updateMetadata(db, checksum: checksum(versions[index + 1]))
+                try attest(db, expectedSQL: versions[index + 1], expectedChecksum: checksum(versions[index + 1]))
             }
-            try execute(db, String(source[boundary.lowerBound...]))
-            try updateMetadata(db, checksum: checksum(sql))
-            try attest(db, expectedSQL: sql, expectedChecksum: checksum(sql))
             try execute(db, "COMMIT")
         } catch {
             try execute(db, "ROLLBACK")
@@ -281,7 +292,7 @@ enum V2StoreSchema {
     /// version but did not allow a closed `retired` state. Keep the exact old
     /// table DDL here so a future canonical edit cannot silently broaden the
     /// accepted legacy schema.
-    private static func legacyResourceSQL(from sql: Data) -> Data {
+    static func legacyResourceSQL(from sql: Data) -> Data {
         let current = String(decoding: withoutTransferJournalSQL(from: sql), as: UTF8.self)
         guard let start = current.range(of: "CREATE TABLE restore_records ("),
               let end = current.range(
@@ -311,7 +322,7 @@ enum V2StoreSchema {
         return Data(legacy.utf8)
     }
 
-    private static func legacyTransferResourceSQL(from sql: Data) -> Data {
+    static func legacyTransferResourceSQL(from sql: Data) -> Data {
         let current = String(decoding: sql, as: UTF8.self)
         guard let start = current.range(of: "CREATE TABLE upload_transfers ("),
               let end = current.range(
@@ -321,12 +332,12 @@ enum V2StoreSchema {
             return Data()
         }
         let legacy = String(current[..<start.lowerBound]) +
-            legacyUploadTransferTableDDL +
+            legacyUploadTransferTableDDL + "\n" +
             String(current[end.lowerBound...])
         return Data(legacy.utf8)
     }
 
-    private static func withoutTransferJournalSQL(from sql: Data) -> Data {
+    static func withoutTransferJournalSQL(from sql: Data) -> Data {
         let current = String(decoding: sql, as: UTF8.self)
         guard let start = current.range(of: "CREATE TABLE upload_transfers ("),
               let end = current.range(
@@ -378,7 +389,7 @@ enum V2StoreSchema {
                 """
             )
             try execute(db, "DROP TABLE restore_records_legacy")
-            try ensureTransferJournal(db)
+            try ensureTransferJournal(db, expectedSQL: expectedSQL)
             try updateMetadata(db, checksum: expectedChecksum)
             try attest(db, expectedSQL: expectedSQL, expectedChecksum: expectedChecksum)
             guard sqlite3_exec(db, "COMMIT", nil, nil, nil) == SQLITE_OK else {
@@ -450,7 +461,7 @@ enum V2StoreSchema {
             throw SyncV2StoreError.sqlite(String(cString: sqlite3_errmsg(db)))
         }
         do {
-            try ensureTransferJournal(db)
+            try ensureTransferJournal(db, expectedSQL: expectedSQL)
             try updateMetadata(db, checksum: expectedChecksum)
             try attest(db, expectedSQL: expectedSQL, expectedChecksum: expectedChecksum)
             guard sqlite3_exec(db, "COMMIT", nil, nil, nil) == SQLITE_OK else {
@@ -523,50 +534,17 @@ enum V2StoreSchema {
     /// Kept as an idempotent migration helper for databases created before
     /// upload_transfers became part of the canonical schema. It is called
     /// only after the old metadata and schema signature have been attested.
-    private static func ensureTransferJournal(_ db: OpaquePointer) throws {
-        let sql = """
-        CREATE TABLE IF NOT EXISTS upload_transfers (
-          transfer_id TEXT PRIMARY KEY,
-          command_id TEXT NOT NULL UNIQUE,
-          work_id TEXT NOT NULL,
-          object_id BLOB NOT NULL CHECK (length(object_id) = 32),
-          source_snapshot_id BLOB NOT NULL CHECK (length(source_snapshot_id) = 32),
-          source_generation INTEGER NOT NULL CHECK (source_generation > 0),
-          upload_id TEXT NOT NULL,
-          capability TEXT NOT NULL,
-          exact_bytes BLOB NOT NULL,
-          bytes_digest BLOB NOT NULL CHECK (length(bytes_digest) = 32),
-          acknowledged_offset INTEGER NOT NULL CHECK (
-            acknowledged_offset >= 0 AND acknowledged_offset <= length(exact_bytes)
-          ),
-          expires_at TEXT NOT NULL,
-          lifecycle TEXT NOT NULL CHECK (lifecycle IN (
-            'prepared', 'sending', 'acknowledged', 'quarantined', 'parked'
-          )),
-          server_instance_id TEXT NOT NULL,
-          protocol_epoch INTEGER NOT NULL,
-          account_id TEXT NOT NULL,
-          account_fence TEXT NOT NULL,
-          FOREIGN KEY (work_id, source_snapshot_id) REFERENCES snapshots(work_id, snapshot_id),
-          FOREIGN KEY (
-            work_id, server_instance_id, protocol_epoch, account_id, account_fence
-          ) REFERENCES account_bindings(
-            work_id, server_instance_id, protocol_epoch, account_id, account_fence
-          ),
-          FOREIGN KEY (
-            server_instance_id, protocol_epoch, account_id, account_fence,
-            work_id, command_id, source_snapshot_id, source_generation
-          ) REFERENCES sealed_commands(
-            server_instance_id, protocol_epoch, account_id, account_fence,
-            work_id, command_id, source_snapshot_id, source_generation
-          )
-        );
+    private static func ensureTransferJournal(_ db: OpaquePointer, expectedSQL: Data) throws {
+        // Use the attested canonical DDL, including whitespace: schema signatures
+        // compare sqlite_schema SQL exactly, not merely equivalent constraints.
+        let table = try uploadTransferTableDDL(from: expectedSQL).replacingOccurrences(
+            of: "CREATE TABLE upload_transfers", with: "CREATE TABLE IF NOT EXISTS upload_transfers"
+        )
+        try execute(db, table)
+        try execute(db, """
         CREATE INDEX IF NOT EXISTS upload_transfers_scope
-          ON upload_transfers(server_instance_id, protocol_epoch, account_id, account_fence, work_id);
-        """
-        guard sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK else {
-            throw SyncV2StoreError.sqlite(String(cString: sqlite3_errmsg(db)))
-        }
+          ON upload_transfers(server_instance_id, protocol_epoch, account_id, account_fence, work_id)
+        """)
     }
 
     private static func insertMetadata(_ db: OpaquePointer, checksum: Data) throws {
@@ -656,7 +634,7 @@ enum V2StoreSchema {
                 bytes.append(0)
             }
         }
-        return Data(hex: SHA256Digest.hex(bytes))
+        return Data(hex: SHA256Digest.hex(bytes))!
     }
 
     private static func schemaObjects(

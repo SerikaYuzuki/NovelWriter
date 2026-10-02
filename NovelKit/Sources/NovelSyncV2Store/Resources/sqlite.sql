@@ -719,3 +719,80 @@ CREATE TABLE work_deletions (
     (server_instance_id IS NOT NULL AND protocol_epoch IS NOT NULL AND protocol_epoch > 0 AND account_id IS NOT NULL AND account_fence IS NOT NULL)
   )
 );
+
+-- Shallow history (D-106).
+CREATE TABLE shallow_boundaries (
+  work_id TEXT NOT NULL, snapshot_id BLOB NOT NULL,
+  parent_snapshot_id BLOB NOT NULL CHECK (length(parent_snapshot_id)=32),
+  PRIMARY KEY (snapshot_id, parent_snapshot_id),
+  CHECK (snapshot_id <> parent_snapshot_id),
+  FOREIGN KEY (work_id, snapshot_id) REFERENCES snapshots(work_id, snapshot_id)
+);
+CREATE INDEX shallow_boundaries_parent ON shallow_boundaries(work_id, parent_snapshot_id);
+CREATE TRIGGER shallow_boundaries_immutable_update BEFORE UPDATE ON shallow_boundaries
+BEGIN SELECT RAISE(ABORT, 'immutable boundary'); END;
+CREATE TRIGGER shallow_boundaries_guard_delete BEFORE DELETE ON shallow_boundaries
+WHEN NOT EXISTS (SELECT 1 FROM snapshot_parents p WHERE p.work_id=OLD.work_id
+  AND p.snapshot_id=OLD.snapshot_id AND p.parent_snapshot_id=OLD.parent_snapshot_id)
+BEGIN SELECT RAISE(ABORT, 'boundary parent unavailable'); END;
+CREATE TABLE history_backfills (
+  work_id TEXT PRIMARY KEY REFERENCES works(work_id),
+  root_snapshot_id BLOB NOT NULL,
+  server_instance_id TEXT NOT NULL, protocol_epoch INTEGER NOT NULL,
+  account_id TEXT NOT NULL, account_fence TEXT NOT NULL,
+  resume_cursor TEXT,
+  state TEXT NOT NULL CHECK (state IN ('running','paused','failed','suspended','complete')),
+  failure_code TEXT,
+  received_snapshots INTEGER NOT NULL DEFAULT 0 CHECK (received_snapshots >= 0),
+  total_snapshots INTEGER CHECK (total_snapshots >= 0),
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (work_id, root_snapshot_id) REFERENCES snapshots(work_id, snapshot_id),
+  FOREIGN KEY (work_id, server_instance_id, protocol_epoch, account_id, account_fence)
+    REFERENCES account_bindings(work_id, server_instance_id, protocol_epoch, account_id, account_fence)
+);
+
+-- Legacy unexpected-command recovery (D-107).
+-- Seed only during the additive upgrade. New databases have no candidates.
+CREATE TABLE legacy_command_recovery (
+  command_id TEXT PRIMARY KEY REFERENCES sealed_commands(command_id) ON DELETE CASCADE,
+  consumed INTEGER NOT NULL DEFAULT 0 CHECK (consumed IN (0, 1))
+);
+INSERT INTO legacy_command_recovery(command_id)
+SELECT c.command_id FROM sealed_commands c
+JOIN quarantine_records q ON q.quarantine_id=c.command_id
+WHERE c.status='quarantined' AND q.reason='command:unexpected'
+  AND length(q.evidence_bytes)=0
+  AND c.canonical_response IS NULL AND c.response_status IS NULL AND c.receipt_verified=0
+  AND NOT EXISTS (SELECT 1 FROM remote_receipts r WHERE r.command_id=c.command_id)
+  AND NOT EXISTS (SELECT 1 FROM upload_transfers u WHERE u.command_id=c.command_id);
+
+-- Receipt equivalence repair (D-108).
+-- Only completed, verified, content-equal receipts can restore a mapping.
+-- The temporary evidence is discarded; command/receipt history is immutable.
+CREATE TEMP TABLE equivalence_repair_evidence AS
+SELECT c.work_id, COALESCE(i.source_snapshot_id,c.source_snapshot_id) AS local_id,
+       json_extract(CAST(c.canonical_response AS TEXT),'$.head.snapshotId') AS head_id,
+       json_extract(CAST(c.canonical_response AS TEXT),'$.head.generation') AS generation,
+       json_extract(CAST(c.canonical_response AS TEXT),'$.result') AS result
+FROM sealed_commands c LEFT JOIN sync_intents i ON i.intent_id=c.intent_id
+WHERE c.status='completed' AND c.receipt_verified=1
+  AND c.command_kind IN ('publish','resolveDevice','restore')
+  AND json_valid(CAST(c.canonical_response AS TEXT))
+  AND json_extract(CAST(c.canonical_response AS TEXT),'$.snapshotId') =
+      lower(hex(COALESCE(i.source_snapshot_id,c.source_snapshot_id)))
+  AND json_extract(CAST(c.canonical_response AS TEXT),'$.result') IN ('applied','noChanges');
+UPDATE snapshot_remote_equivalents AS e
+SET remote_snapshot_id=local_snapshot_id,
+    remote_generation=(SELECT MAX(r.generation) FROM equivalence_repair_evidence r
+      WHERE r.work_id=e.work_id AND r.local_id=e.local_snapshot_id AND r.head_id=lower(hex(r.local_id)))
+WHERE e.remote_snapshot_id<>e.local_snapshot_id
+  AND EXISTS (SELECT 1 FROM equivalence_repair_evidence r
+  WHERE r.work_id=e.work_id AND r.local_id=e.local_snapshot_id AND r.head_id=lower(hex(r.local_id)));
+DELETE FROM snapshot_remote_equivalents AS e
+WHERE e.remote_snapshot_id<>e.local_snapshot_id
+  AND EXISTS (SELECT 1 FROM equivalence_repair_evidence r
+  WHERE r.work_id=e.work_id AND r.local_id=e.local_snapshot_id
+    AND r.result='noChanges' AND r.head_id<>lower(hex(r.local_id)))
+  AND NOT EXISTS (SELECT 1 FROM equivalence_repair_evidence r
+    WHERE r.work_id=e.work_id AND r.local_id=e.local_snapshot_id AND r.head_id=lower(hex(r.local_id)));
+DROP TABLE equivalence_repair_evidence;

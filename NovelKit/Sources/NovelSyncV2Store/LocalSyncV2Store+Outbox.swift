@@ -30,8 +30,8 @@ public extension LocalSyncV2Store {
               SealedCommand.isCanonical(command.canonicalBytes) else {
             throw SyncV2StoreError.invalidCommand
         }
-        let payload = try command.payloadDictionary()
-        let workID = try commandWorkID(command.commandKind, payload: payload)
+        let payload = command.payload
+        let workID = try payload.workID
         guard try scopedWorkRow(workID: workID, scope: scope) != nil else {
             throw SyncV2StoreError.accountMismatch
         }
@@ -48,11 +48,11 @@ public extension LocalSyncV2Store {
             return
         }
 
-        let intentRequired = Set(["publish", "resolveDevice", "restore"])
-        let intentCapable = intentRequired.union(["resolveServer", "cloneWork"])
-        guard (intentRequired.contains(command.commandKind) && intentID != nil) ||
-            (!intentRequired.contains(command.commandKind) &&
-                (intentID == nil || intentCapable.contains(command.commandKind))) else {
+        let intentRequired: Set<SyncV2CommandKind> = [.publish, .resolveDevice, .restore]
+        let intentCapable = intentRequired.union([.resolveServer, .cloneWork])
+        guard (intentRequired.contains(command.kind) && intentID != nil) ||
+            (!intentRequired.contains(command.kind) &&
+                (intentID == nil || intentCapable.contains(command.kind))) else {
             throw SyncV2StoreError.invalidCommand
         }
         try persistSealedCommand(
@@ -228,7 +228,7 @@ public extension LocalSyncV2Store {
             throw SyncV2StoreError.invalidAcknowledgement
         }
         try inTransaction {
-            if decoded.result == .noChanges, record.commandKind == "publish" {
+            if decoded.result == .noChanges, record.kind == .publish {
                 guard let verifiedPublishInboxID else {
                     throw SyncV2StoreError.invalidAcknowledgement
                 }
@@ -268,7 +268,7 @@ private extension LocalSyncV2Store {
             throw SyncV2StoreError.invalidAcknowledgement
         }
         let command = try SealedCommand.decodeCanonical(record.canonicalRequest)
-        let payload = try command.payloadDictionary()
+        let payload = command.payload
         let candidate = try payload.snapshot("candidateSnapshotId")
         guard candidate == record.sourceSnapshotID,
               try graphHead(graph, containsAncestor: candidate) else {

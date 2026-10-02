@@ -328,7 +328,18 @@ struct SnapshotSyncV2MacTransitionTests {
     @Test("restore中のaccount切替は旧accountの版をeditorへinstallしない")
     @MainActor
     func restoreRejectsAccountSwitchDuringAwait() async throws {
-        let fixture = try await makeMacConflictFixture(remoteBehavior: .failure(.offline))
+        let checkpointGate = MacRestoreRaceGate()
+        let fixture = try await makeMacConflictFixture(
+            remoteBehavior: .failure(.offline),
+            checkpointOverride: { application, workID, document, reason, createdAt, attachments, resources in
+                let result = try await application.checkpoint(
+                    workID: workID, document: document, reason: reason, documentCreatedAt: createdAt,
+                    attachments: attachments, resources: resources
+                )
+                await checkpointGate.arriveAndWait()
+                return result
+            }
+        )
         let originalDocument = fixture.state.document
         let originalWorkID = try #require(fixture.state.currentSnapshotSyncV2WorkID)
         let originalSession = fixture.state.documentSessionToken
@@ -341,28 +352,36 @@ struct SnapshotSyncV2MacTransitionTests {
         let history = try await fixture.application.historyPage(workID: originalWorkID)
         let restoreID = try #require(history.items.last?.snapshotID)
 
-        let accountSwitch = Task { @MainActor () -> Bool in
-            for _ in 0 ..< 100 {
-                if fixture.state.isDocumentTransitionInProgress {
-                    fixture.state.authSession = nil
-                    await fixture.configuration.vault.replaceAccount(
-                        TestAccount(accountID: "account-b", accountFence: "fence-b")
-                    )
-                    _ = await fixture.state.transitionFuminiwaSession(
-                        to: makeMacV2Session(accountID: "account-b", fence: "fence-b"),
-                        authState: .signedIn(accountID: "account-b")
-                    )
-                    return true
-                }
-                await Task.yield()
-            }
-            return false
+        // Force the restore's real local checkpoint through the injected gate.
+        // No manuscript change is needed to exercise the save boundary.
+        fixture.state.saveCoordinator.markDirty()
+        let restore = Task { await fixture.state.restoreSnapshotV2(snapshotID: restoreID) }
+        await checkpointGate.waitForArrival()
+        #expect(fixture.state.isDocumentTransitionInProgress)
+        let (queued, continuation) = AsyncStream<Void>.makeStream()
+        fixture.state.documentOperationGate.didEnqueueOperation = { continuation.yield(()) }
+        defer {
+            fixture.state.documentOperationGate.didEnqueueOperation = nil
+            continuation.finish()
         }
-        let restored = await fixture.state.restoreSnapshotV2(snapshotID: restoreID)
-
+        let accountSwitch = Task { @MainActor in
+            fixture.state.authSession = nil
+            await fixture.configuration.vault.replaceAccount(
+                TestAccount(accountID: "account-b", accountFence: "fence-b")
+            )
+            return await fixture.state.transitionFuminiwaSession(
+                to: makeMacV2Session(accountID: "account-b", fence: "fence-b"),
+                authState: .signedIn(accountID: "account-b")
+            )
+        }
+        var queuedOperations = queued.makeAsyncIterator()
+        _ = await queuedOperations.next()
+        // The account transition has invalidated the old proof and is now
+        // queued behind restore. Release only after that boundary is reached.
+        await checkpointGate.release()
+        #expect(await restore.value == false)
         #expect(await accountSwitch.value)
-        #expect(restored == false)
-        try await eventuallyMac { fixture.state.authSession?.accountID == "account-b" }
+        #expect(fixture.state.authSession?.accountID == "account-b")
         #expect(fixture.state.snapshotSyncV2ActiveWorkID == originalWorkID)
         #expect(fixture.state.documentSessionToken != originalSession)
         #expect(fixture.state.document == originalDocument)
@@ -471,4 +490,28 @@ private func makeAppliedResolveServerExecution(
         remoteHead: inbox.expectedRemoteHead
     )
     return .command(receipt: receipt, remoteInbox: inbox)
+}
+
+private actor MacRestoreRaceGate {
+    private var arrived = false
+    private var arrival: CheckedContinuation<Void, Never>?
+    private var releaseContinuation: CheckedContinuation<Void, Never>?
+
+    func arriveAndWait() async {
+        arrived = true
+        arrival?.resume()
+        arrival = nil
+        await withCheckedContinuation { releaseContinuation = $0 }
+    }
+
+    func waitForArrival() async {
+        if !arrived {
+            await withCheckedContinuation { arrival = $0 }
+        }
+    }
+
+    func release() {
+        releaseContinuation?.resume()
+        releaseContinuation = nil
+    }
 }

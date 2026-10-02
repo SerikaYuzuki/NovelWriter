@@ -3,7 +3,7 @@ import NovelSyncV2
 
 private struct CommandValidationContext {
     let command: SealedCommand
-    let payload: [String: Any]
+    let payload: SyncV2CommandPayload
     let workID: WorkID
     let intentID: UUID?
     let work: [SQLiteValue]
@@ -86,11 +86,17 @@ extension LocalSyncV2Store {
                 binding.values + from.map(SQLiteValue.text)
         )
         guard try changes() == 1 else { throw SyncV2StoreError.invalidLifecycle }
+        if from.contains("quarantined"), to == "sealed" {
+            // Explicit and automatic release both consume the upgrade candidate.
+            // These releases run inside their caller's transaction.
+            try exec("UPDATE legacy_command_recovery SET consumed=1 WHERE command_id=?",
+                     [.text(commandID.uuidString.lowercased())])
+        }
     }
 
     func validateCommandSource(
         _ command: SealedCommand,
-        payload: [String: Any],
+        payload: SyncV2CommandPayload,
         workID: WorkID,
         scope: V2LocalWorkScope,
         intentID: UUID?
@@ -114,28 +120,26 @@ extension LocalSyncV2Store {
             work: work
         )
         if intentID != nil,
-           !["publish", "resolveDevice", "resolveServer", "cloneWork", "restore"].contains(command.commandKind) {
+           ![.publish, .resolveDevice, .resolveServer, .cloneWork, .restore].contains(command.kind) {
             throw SyncV2StoreError.invalidCommand
         }
-        switch command.commandKind {
-        case "createWork":
+        switch command.kind {
+        case .createWork:
             try validateCreateWork(context)
-        case "prepareObject", "finalizeObject":
+        case .prepareObject, .finalizeObject:
             try validateObjectCommand(context)
-        case "registerSnapshot":
+        case .registerSnapshot:
             try validateRegisterSnapshot(context)
-        case "publish":
+        case .publish:
             try validatePublish(context)
-        case "resolveDevice":
+        case .resolveDevice:
             try validateResolveDevice(context)
-        case "resolveServer":
+        case .resolveServer:
             try validateResolveServer(context)
-        case "cloneWork":
+        case .cloneWork:
             try validateCloneWork(context)
-        case "restore":
+        case .restore:
             try validateRestore(context)
-        default:
-            throw SyncV2StoreError.invalidCommand
         }
     }
 
@@ -215,7 +219,7 @@ extension LocalSyncV2Store {
             """,
             [.blob(context.command.sourceSnapshotId.bytes), .blob(object.bytes)]
         ).first,
-            row[0].int64 == (context.payload["byteCount"] as? NSNumber)?.int64Value else {
+            row[0].int64 == context.payload.integer("byteCount") else {
             throw SyncV2StoreError.invalidCommand
         }
     }
@@ -229,7 +233,7 @@ extension LocalSyncV2Store {
         let digest = try context.payload.snapshot("manifestBytesDigest")
         guard snapshot == context.command.sourceSnapshotId,
               digest == snapshot,
-              let base64 = context.payload["manifestBase64URL"] as? String,
+              let base64 = context.payload.string("manifestBase64URL"),
               let manifest = Data(base64URLEncoded: base64),
               SnapshotID(data: manifest) == snapshot,
               try loadEncoded(
@@ -251,8 +255,9 @@ extension LocalSyncV2Store {
         if conflictRow != nil {
             throw SyncV2StoreError.staleConflictAction
         }
-        let currentMatches = context.work[2].int64 == context.command.sourceGeneration &&
-            context.work[3].blob == context.command.sourceSnapshotId.bytes
+        let currentMatches = try publishSourceIsCurrentOrStableParent(
+            command: context.command, workID: context.workID, work: context.work
+        )
         let candidateMatches = try context.payload.snapshot("candidateSnapshotId") ==
             context.command.sourceSnapshotId
         let headMatches = try context.payload.remoteHead("expectedRemoteHead") ==
@@ -314,7 +319,7 @@ extension LocalSyncV2Store {
             context.command.sourceSnapshotId,
             try context.payload.snapshot("expectedCurrentSnapshotId") ==
             context.command.sourceSnapshotId,
-            (context.payload["expectedLocalGeneration"] as? NSNumber)?.int64Value ==
+            context.payload.integer("expectedLocalGeneration") ==
             context.command.sourceGeneration else {
             throw SyncV2StoreError.invalidCommand
         }
@@ -375,7 +380,7 @@ extension LocalSyncV2Store {
         )
         guard try context.payload.snapshot("expectedCurrentSnapshotId") ==
             context.command.sourceSnapshotId,
-            (context.payload["expectedLocalGeneration"] as? NSNumber)?.int64Value ==
+            context.payload.integer("expectedLocalGeneration") ==
             context.command.sourceGeneration,
             let intentID = context.intentID,
             let restore = try query(
@@ -401,9 +406,9 @@ extension LocalSyncV2Store {
         }
     }
 
-    func validateConflictPayload(_ payload: [String: Any], workID: WorkID) throws {
+    func validateConflictPayload(_ payload: SyncV2CommandPayload, workID: WorkID) throws {
         let conflictID = try payload.uuid("conflictId")
-        let revision = (payload["conflictRevision"] as? NSNumber)?.int64Value
+        let revision = payload.integer("conflictRevision")
         guard let active = try activeConflict(workID: workID, scope: .bound(
             activeBinding(workID: workID)
         )),
@@ -429,7 +434,7 @@ extension LocalSyncV2Store {
     }
 
     func validateConflictExpectedHead(
-        _ payload: [String: Any],
+        _ payload: SyncV2CommandPayload,
         workID: WorkID
     ) throws {
         guard let expected = try payload.remoteHead("expectedRemoteHead"),
@@ -447,7 +452,7 @@ extension LocalSyncV2Store {
     }
 
     func expectedHeadMatchesWork(
-        payload: [String: Any],
+        payload: SyncV2CommandPayload,
         key: String,
         workID: WorkID
     ) throws -> Bool {
@@ -644,60 +649,11 @@ extension LocalSyncV2Store {
             generation: generation
         )
     }
-
-    func commandWorkID(_ kind: String, payload: [String: Any]) throws -> WorkID {
-        let key = kind == "cloneWork" ? "sourceWorkId" : "workId"
-        return try WorkID(uuidString: payload.uuid(key))
-    }
 }
 
-extension SealedCommand {
-    func payloadDictionary() throws -> [String: Any] {
-        guard let dictionary = try JSONSerialization.jsonObject(with: payloadBytes) as? [String: Any] else {
-            throw SyncV2StoreError.invalidCommand
-        }
-        return dictionary
-    }
-}
-
-extension [String: Any] {
-    func uuid(_ key: String) throws -> String {
-        guard let value = self[key] as? String,
-              let parsed = UUID(uuidString: value),
-              parsed.uuidString.lowercased() == value else {
-            throw SyncV2StoreError.invalidCommand
-        }
-        return value
-    }
-
-    func snapshot(_ key: String) throws -> SnapshotID {
-        guard let value = self[key] as? String else {
-            throw SyncV2StoreError.invalidCommand
-        }
-        return try SnapshotID(rawValue: value)
-    }
-
-    func object(_ key: String) throws -> ObjectID {
-        guard let value = self[key] as? String else {
-            throw SyncV2StoreError.invalidCommand
-        }
-        return try ObjectID(rawValue: value)
-    }
-
+extension SyncV2CommandPayload {
     func remoteHead(_ key: String) throws -> V2RemoteHead? {
-        guard let value = self[key] else { throw SyncV2StoreError.invalidCommand }
-        if value is NSNull {
-            return nil
-        }
-        guard let object = value as? [String: Any],
-              let generation = (object["generation"] as? NSNumber)?.int64Value,
-              let snapshot = object["snapshotId"] as? String else {
-            throw SyncV2StoreError.invalidCommand
-        }
-        return try V2RemoteHead(
-            snapshotID: SnapshotID(rawValue: snapshot),
-            generation: generation
-        )
+        try head(key).map { try V2RemoteHead(snapshotID: $0.snapshotID, generation: $0.generation) }
     }
 }
 

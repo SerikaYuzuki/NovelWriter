@@ -1,14 +1,29 @@
 import Foundation
+import NovelAuth
 import NovelSyncV2
 import NovelSyncV2Application
 
 #if canImport(FoundationNetworking)
-import FoundationNetworking
+import Foundation
+import NovelAuthNetworking
 #endif
 
 extension ProductionSyncV2RemoteClient {
     func downloadRemoteOnly(workID: WorkID) async throws -> SyncV2RemoteInbox {
         let session = try await loadSession()
+        return try await SnapshotDownloadContext.$current.withValue(SnapshotDownloadContext(session: session)) {
+            try await downloadRemoteOnly(workID: workID, session: session)
+        }
+    }
+
+    func downloadUpdate(workID: WorkID) async throws -> SyncV2RemoteInbox {
+        let session = try await loadSession()
+        return try await SnapshotDownloadContext.$current.withValue(SnapshotDownloadContext(session: session)) {
+            try await downloadRemoteOnly(workID: workID, session: session, fullGraph: true)
+        }
+    }
+
+    private func downloadRemoteOnly(workID: WorkID, session: FuminiwaSession, fullGraph: Bool = false) async throws -> SyncV2RemoteInbox {
         let binding = SealedCommand.Binding(
             accountFence: session.accountFence,
             accountId: session.accountID,
@@ -22,7 +37,7 @@ extension ProductionSyncV2RemoteClient {
         )
         request.httpMethod = "GET"
         addHeaders(&request, session: session, binding: binding)
-        let (data, response) = try await requestData(request, session: session)
+        let (data, response) = try await requestSnapshotData(request, session: session)
         let contentType = httpContentType(response)
         guard let http = response as? HTTPURLResponse,
               http.statusCode == 200,
@@ -39,12 +54,19 @@ extension ProductionSyncV2RemoteClient {
             snapshotID: SnapshotID(rawValue: raw),
             generation: generation
         )
-        let snapshots = try await fetchSnapshot(
-            workID: workID,
-            id: head.snapshotID,
-            session: session,
-            traversal: SnapshotFetchTraversal()
-        )
+        let shallow = try await fullGraph ? nil : downloadHead(workID: workID, id: head.snapshotID, session: session)
+        let snapshots: [EncodedSnapshot] = if fullGraph {
+            try await fetchSnapshot(workID: workID, id: head.snapshotID,
+                                    session: session, traversal: SnapshotFetchTraversal())
+        } else if let shallow {
+            [shallow]
+        } else {
+            try await fetchRemoteOnlyGraph(
+                workID: workID,
+                id: head.snapshotID,
+                session: session
+            )
+        }
         return SyncV2RemoteInbox(
             inboxID: UUID(),
             workID: workID,
@@ -52,7 +74,8 @@ extension ProductionSyncV2RemoteClient {
             snapshots: snapshots,
             expectedCurrentSnapshotID: nil,
             expectedLocalGeneration: 0,
-            expectedRemoteHead: head
+            expectedRemoteHead: head,
+            binding: binding, shallow: shallow != nil
         )
     }
 

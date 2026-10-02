@@ -21,11 +21,6 @@ struct ExplicitSyncIntegrationTests {
         let remote = try SnapshotCodec.encode(SnapshotModel(
             workId: workID, document: updated, documentCreatedAt: applicationTestCreatedAt
         ), parents: [local.snapshotId])
-        let remoteHead = try V2RemoteHead(snapshotID: remote.snapshotId, generation: 2)
-        let fixture = ProductionConflictFixture(
-            workID: workID, baseSnapshotID: local.snapshotId, localSnapshotID: local.snapshotId,
-            sourceGeneration: 1, remote: remote, remoteHead: remoteHead
-        )
         let store = try LocalSyncV2Store(root: configuration.localRoot.url, policy: .createNew)
         let seed = try V2RemoteSnapshot(
             workID: workID, encoded: local, expectedCurrentSnapshotID: nil, expectedLocalGeneration: 0,
@@ -35,16 +30,18 @@ struct ExplicitSyncIntegrationTests {
         try await store.verifyInbox(inboxID: seed.inboxID, scope: productionScope)
         try await store.adoptInbox(inboxID: seed.inboxID, scope: productionScope)
         #expect(try await store.pendingIntents(scope: productionScope).isEmpty)
-        await configuration.remote.setCommandHandler { command in
-            if command.kind != .publish {
-                return try productionExecution(command, fixture: fixture)
-            }
-            return try Self.unchangedReceipt(command, workID: workID, remote: remote, local: local)
+        await configuration.remote.setHeadHandler { _ in
+            try SyncV2RemoteHead(snapshotID: remote.snapshotId, generation: 2)
+        }
+        await configuration.remote.setUpdateHandler { _ in
+            try SyncV2RemoteInbox(inboxID: UUID(), workID: workID, headSnapshotID: remote.snapshotId,
+                                  snapshots: [local, remote], expectedCurrentSnapshotID: nil, expectedLocalGeneration: 0,
+                                  expectedRemoteHead: SyncV2RemoteHead(snapshotID: remote.snapshotId, generation: 2))
         }
         let app = try await SnapshotSyncV2Runtime.makeApplication(mode: .test(configuration))
         _ = try await app.openLocal(workID: workID)
         if automatic {
-            try await eventually { await app.workerTasks[workID] == nil }
+            try await eventually { await app.lanes[workID]?.workerTask == nil }
             await configuration.remote.setHeadHandler { _ in throw SyncV2Failure.offline }
             await #expect(throws: SyncV2Failure.offline) {
                 try await app.checkForRemoteUpdates(workID: workID)
@@ -68,6 +65,10 @@ struct ExplicitSyncIntegrationTests {
         }
         try await eventually { try await app.pendingAdoption(workID: workID) != nil }
         #expect(try await store.open(workID: workID, scope: productionScope).document == document)
+        #expect(await configuration.remote.recordedHeadReads().contains(workID))
+        #expect(await configuration.remote.recordedUpdateReads() == [workID])
+        #expect(try await store.pendingIntents(scope: productionScope).isEmpty)
+        #expect(try await store.allSealedCommands(scope: productionScope, workID: workID).isEmpty)
         let pending = try #require(try await app.pendingAdoption(workID: workID))
         #expect(pending.conflictID == nil)
         let session = await app.beginSession(workID: workID)
@@ -76,35 +77,15 @@ struct ExplicitSyncIntegrationTests {
             workID: workID, inboxID: pending.inboxID, session: session, gate: gate
         ))
         #expect(adopted.document == updated)
+        #expect(await configuration.remote.recordedOperations().isEmpty)
         #expect(try await app.pendingAdoption(workID: workID) == nil)
         if automatic {
-            try await eventually { await app.workerTasks[workID] == nil }
+            try await eventually { await app.lanes[workID]?.workerTask == nil }
             let count = await configuration.remote.recordedOperations().count
             #expect(try await !app.checkForRemoteUpdates(workID: workID))
             #expect(await app.uiState(workID: workID)?.remoteProgress == .noChanges)
             #expect(await configuration.remote.recordedOperations().count == count)
         }
         await store.close()
-    }
-
-    private static func unchangedReceipt(
-        _ sealed: SyncV2SealedRemoteCommand, workID: WorkID,
-        remote: EncodedSnapshot, local: EncodedSnapshot
-    ) throws -> SyncV2RemoteExecution {
-        let command = sealed.command
-        let head = try V2RemoteHead(snapshotID: remote.snapshotId, generation: 2)
-        let response = try productionResponse(command: command, result: .noChanges, head: head, cloneHead: nil, status: 200)
-        let envelope = try productionEnvelope(command: command, response: response, result: .noChanges, status: 200)
-        let remoteHead = try SyncV2RemoteHead(snapshotID: remote.snapshotId, generation: 2)
-        return .command(receipt: SyncV2ReceiptReadback(
-            commandID: command.commandId, requestDigest: command.requestDigest, responseStatus: 200,
-            canonicalResponse: envelope,
-            predicates: SyncV2ReadBackPredicates(accountMatched: true, commandDigestMatched: true, resourceMatched: true, headMatched: true, stateMatched: true),
-            result: .noChanges, remoteHead: remoteHead
-        ), remoteInbox: SyncV2RemoteInbox(
-            inboxID: UUID(), workID: workID, headSnapshotID: remote.snapshotId, snapshots: [local, remote],
-            expectedCurrentSnapshotID: command.sourceSnapshotId, expectedLocalGeneration: command.sourceGeneration,
-            expectedRemoteHead: remoteHead
-        ))
     }
 }

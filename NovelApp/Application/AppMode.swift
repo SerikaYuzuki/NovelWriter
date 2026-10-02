@@ -1,4 +1,5 @@
 import NovelCore
+import NovelUI
 import SwiftUI
 
 enum ProjectSection: String, CaseIterable, Codable, Identifiable {
@@ -15,46 +16,16 @@ enum ProjectSection: String, CaseIterable, Codable, Identifiable {
         rawValue
     }
 
+    var style: ProjectSectionStyle {
+        self == .structure ? .writing : ProjectSectionStyle(rawValue: rawValue)!
+    }
+
     var title: String {
-        switch self {
-        case .projectInfo:
-            "作品情報"
-        case .structure:
-            "執筆"
-        case .plot:
-            "プロット"
-        case .characters:
-            "登場人物"
-        case .worldbuilding:
-            "世界観"
-        case .references:
-            "資料"
-        case .feedback:
-            "感想・アドバイス"
-        case .settings:
-            "設定"
-        }
+        style.title
     }
 
     var systemImage: String {
-        switch self {
-        case .projectInfo:
-            "book.closed"
-        case .structure:
-            "list.bullet.indent"
-        case .plot:
-            "rectangle.stack"
-        case .characters:
-            "person.2"
-        case .worldbuilding:
-            "globe.asia.australia"
-        case .references:
-            "paperclip"
-        case .feedback:
-            "text.bubble"
-        case .settings:
-            "gearshape"
-        }
+        style.systemImage
     }
 
     var keyboardShortcut: KeyEquivalent {

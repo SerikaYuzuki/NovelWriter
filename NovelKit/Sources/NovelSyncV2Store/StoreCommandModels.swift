@@ -17,6 +17,10 @@ public struct V2SealedCommandRecord: Hashable, Sendable {
     public let intentID: UUID?
     public let binding: V2AccountBinding
     public let commandKind: String
+    public var kind: SyncV2CommandKind? {
+        SyncV2CommandKind(rawValue: commandKind)
+    }
+
     public let canonicalRequest: Data
     public let requestDigest: ObjectID
     public let sourceSnapshotID: SnapshotID

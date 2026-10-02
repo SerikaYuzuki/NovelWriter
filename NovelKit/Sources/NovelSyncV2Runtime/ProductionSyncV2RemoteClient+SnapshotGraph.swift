@@ -9,6 +9,49 @@ import FoundationNetworking
 #endif
 
 extension ProductionSyncV2RemoteClient {
+    func fetchRemoteOnlyGraph(
+        workID: WorkID, id: SnapshotID, session: FuminiwaSession
+    ) async throws -> [EncodedSnapshot] {
+        let traversal = SnapshotFetchTraversal()
+        let batch = try await downloadSnapshotPages(workID: workID, id: id, session: session)
+        if let batch {
+            traversal.objects = batch.objects
+            let ordered = batch.manifests.sorted { $0.key.rawValue < $1.key.rawValue }
+            for (_, value) in ordered {
+                try traversal.include(value.manifest)
+            }
+            // Collect the whole page graph first: attachments belonging to
+            // different historical snapshots share the same four-request bound.
+            _ = try await fetchObjects(entries: ordered.flatMap(\.value.manifest.entries),
+                                       session: session, traversal: traversal)
+            for (snapshotID, value) in ordered {
+                try Task.checkCancellation()
+                let objects = try Dictionary(value.manifest.entries.map { entry in
+                    guard let bytes = traversal.objects[entry.objectId] else {
+                        try Task.checkCancellation()
+                        throw SyncV2Failure.retryable(.lostResponse)
+                    }
+                    return (entry.objectId, bytes)
+                },
+                uniquingKeysWith: { first, _ in first })
+                traversal.memo[snapshotID] = EncodedSnapshot(
+                    manifest: value.manifest, manifestBytes: value.bytes, objects: objects
+                )
+            }
+        }
+        let snapshots: [EncodedSnapshot]
+        do {
+            snapshots = try await fetchSnapshot(workID: workID, id: id, session: session, traversal: traversal)
+        } catch SyncV2Failure.fatal(.remoteDataUnavailable) {
+            try await rejectKnownRemoteDeletion(workID: workID)
+            throw SyncV2Failure.fatal(.remoteDataUnavailable)
+        }
+        if let batch, snapshots.count != batch.manifests.count {
+            throw SyncV2Failure.quarantined(.invalidRemoteData)
+        }
+        return snapshots
+    }
+
     func inbox(
         command: SealedCommand,
         receipt: SyncV2ReceiptReadback,
@@ -34,7 +77,8 @@ extension ProductionSyncV2RemoteClient {
             expectedRemoteHead: SyncV2RemoteHead(
                 snapshotID: head.snapshotID,
                 generation: head.generation
-            )
+            ),
+            binding: binding(for: session)
         )
     }
 
@@ -70,14 +114,24 @@ extension ProductionSyncV2RemoteClient {
                 accountID: session.accountID, accountFence: session.accountFence,
                 serverInstanceID: session.serverInstanceID.uuidString.lowercased()
             ))
-            if let snapshot = try await localStore?.committedSnapshot(
-                workID: workID, snapshotID: next.id, scope: scope
-            ) {
+            if traversal.memo[next.id] == nil,
+               let snapshot = try await snapshotCache?.committedSnapshot(
+                   workID: workID, snapshotID: next.id, scope: scope
+               ) {
                 // Committed parents remain a verified lineage anchor in SQLite.
                 try traversal.include(snapshot.manifest)
                 traversal.memo[next.id] = snapshot
                 pending.append((next.id, true))
                 continue
+            }
+            if try await snapshotCache?.isBoundary(workID: workID, snapshotID: next.id, scope: scope) == true {
+                traversal.active.remove(next.id)
+                traversal.completed.insert(next.id)
+                continue
+            }
+            if next.id != id, traversal.memo[next.id] == nil,
+               try await snapshotCache?.historyIsIncomplete(workID: workID, scope: scope) == true {
+                throw SyncV2Failure.retryable(.historyIncomplete)
             }
             let snapshot = try await loadUncommittedSnapshot(
                 workID: workID, id: next.id, scope: scope,
@@ -96,7 +150,10 @@ extension ProductionSyncV2RemoteClient {
         workID: WorkID, id: SnapshotID, scope: V2LocalWorkScope,
         session: FuminiwaSession, traversal: SnapshotFetchTraversal
     ) async throws -> EncodedSnapshot {
-        if let cached = try await localStore?.verifiedInboxSnapshot(
+        if let prefetched = traversal.memo[id] {
+            return prefetched
+        }
+        if let cached = try await snapshotCache?.verifiedInboxSnapshot(
             workID: workID, snapshotID: id, scope: scope
         ) {
             try traversal.include(cached.manifest)
@@ -106,8 +163,9 @@ extension ProductionSyncV2RemoteClient {
         guard manifest.workId == workID else {
             throw SyncV2Failure.quarantined(.invalidRemoteData)
         }
+        ImportProgress.current?.advance(bytes: Int64(bytes.count))
         try traversal.include(manifest)
-        let objects = try await fetchObjects(manifest: manifest, session: session, traversal: traversal)
+        let objects = try await fetchObjects(entries: manifest.entries, session: session, traversal: traversal)
         return EncodedSnapshot(manifest: manifest, manifestBytes: bytes, objects: objects)
     }
 
@@ -122,7 +180,11 @@ extension ProductionSyncV2RemoteClient {
         )
         request.httpMethod = "GET"
         addHeaders(&request, session: session, binding: binding(for: session))
-        let (data, response) = try await requestData(request, session: session)
+        let (data, response) = try await requestSnapshotData(request, session: session)
+        return try await Self.decodeManifest(data, response: response, id: id)
+    }
+
+    private nonisolated static func decodeManifest(_ data: Data, response: URLResponse, id: SnapshotID) async throws -> (SnapshotManifest, Data) {
         let contentType = httpContentType(response)
         let cacheControl = (response as? HTTPURLResponse)?
             .value(forHTTPHeaderField: "Cache-Control")?.lowercased()
@@ -132,13 +194,13 @@ extension ProductionSyncV2RemoteClient {
               http.statusCode == 200,
               cacheControl == "no-store",
               pragma == "no-cache",
-              contentType == mediaType,
+              contentType == "application/vnd.fuminiwa.sync.v2+jcs",
               let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let raw = object["manifestBase64URL"] as? String,
               let digestRaw = object["manifestBytesDigest"] as? String,
               let bytes = Data(base64URL: raw),
-              SnapshotID(data: bytes) == id,
-              ObjectID(data: bytes).rawValue == digestRaw,
+              ObjectID(data: bytes).rawValue == id.rawValue,
+              id.rawValue == digestRaw,
               object["snapshotId"] as? String == id.rawValue,
               object["result"] as? String == "noChanges" else {
             throw SyncV2Failure.quarantined(.invalidRemoteData)
@@ -146,29 +208,70 @@ extension ProductionSyncV2RemoteClient {
         return try (SnapshotValidator.validate(manifestBytes: bytes), bytes)
     }
 
-    private func fetchObjects(
-        manifest: SnapshotManifest,
+    func fetchObjects(
+        entries: [SnapshotEntry],
         session: FuminiwaSession,
         traversal: SnapshotFetchTraversal
     ) async throws -> [ObjectID: Data] {
         var objects: [ObjectID: Data] = [:]
-        for entry in manifest.entries {
-            try Task.checkCancellation()
+        var missing: [SnapshotEntry] = []
+        var seen = Set<ObjectID>()
+        for entry in entries {
             if let bytes = traversal.objects[entry.objectId] {
-                guard bytes.count == entry.byteCount else {
-                    throw SyncV2Failure.quarantined(.invalidRemoteData)
-                }
+                guard bytes.count == entry.byteCount else { throw SyncV2Failure.quarantined(.invalidRemoteData) }
                 objects[entry.objectId] = bytes
-                continue
+            } else if seen.insert(entry.objectId).inserted {
+                missing.append(entry)
             }
-            let bytes = try await fetchObject(
-                entry: entry,
-                session: session
-            )
-            traversal.objects[entry.objectId] = bytes
-            objects[entry.objectId] = bytes
+        }
+        // Fixed windows bound network + validation memory. Await results in
+        // manifest order, so simultaneous failures have deterministic priority.
+        for offset in stride(from: 0, to: missing.count, by: 4) {
+            try Task.checkCancellation()
+            let windowEntries = Array(missing[offset ..< min(offset + 4, missing.count)])
+            let results = await fetchObjectWindow(windowEntries, session: session)
+            try Task.checkCancellation()
+            for (index, entry) in windowEntries.enumerated() {
+                guard let result = results[index] else {
+                    try Task.checkCancellation()
+                    throw SyncV2Failure.retryable(.lostResponse)
+                }
+                let bytes = try result.get()
+                ImportProgress.current?.receivedObject(entry.objectId, bytes: Int64(bytes.count))
+                traversal.objects[entry.objectId] = bytes
+                objects[entry.objectId] = bytes
+            }
+        }
+        for entry in entries {
+            guard objects[entry.objectId]?.count == entry.byteCount else {
+                throw SyncV2Failure.quarantined(.invalidRemoteData)
+            }
         }
         return objects
+    }
+
+    private func fetchObjectWindow(
+        _ windowEntries: [SnapshotEntry], session: FuminiwaSession
+    ) async -> [Result<Data, Error>?] {
+        await withTaskGroup(of: (Int, Result<Data, Error>).self) { group in
+            for (index, entry) in windowEntries.enumerated() {
+                group.addTask {
+                    do {
+                        // Swift 6.4 -O corrupts the index when the await is
+                        // inside the returned tuple. Finish the suspension
+                        // before constructing the indexed result.
+                        let bytes = try await self.fetchObject(entry: entry, session: session)
+                        return (index, .success(bytes))
+                    } catch { return (index, .failure(error)) }
+                }
+            }
+            var results = [Result<Data, Error>?](repeating: nil, count: windowEntries.count)
+            for await (index, result) in group {
+                guard results.indices.contains(index) else { continue }
+                results[index] = result
+            }
+            return results
+        }
     }
 
     private func fetchObject(
@@ -182,29 +285,26 @@ extension ProductionSyncV2RemoteClient {
         )
         request.httpMethod = "GET"
         addHeaders(&request, session: session, binding: binding(for: session))
-        let (rawObject, response) = try await requestData(request, session: session)
-        let contentType = httpContentType(response)
-        let cacheControl = (response as? HTTPURLResponse)?
-            .value(forHTTPHeaderField: "Cache-Control")?.lowercased()
-        let pragma = (response as? HTTPURLResponse)?
-            .value(forHTTPHeaderField: "Pragma")?.lowercased()
-        guard let http = response as? HTTPURLResponse,
-              http.statusCode == 200,
-              cacheControl == "no-store",
-              pragma == "no-cache",
-              contentType == "application/octet-stream",
-              http.value(forHTTPHeaderField: "X-Fuminiwa-Object-Digest") ==
-              entry.objectId.rawValue,
-              Int(http.value(forHTTPHeaderField: "X-Fuminiwa-Byte-Count") ?? "") ==
-              rawObject.count,
-              rawObject.count == entry.byteCount,
-              ObjectID(data: rawObject) == entry.objectId else {
-            throw SyncV2Failure.quarantined(.invalidRemoteData)
+        if SnapshotDownloadContext.current?.backgroundBackfill == true {
+            request.allowsConstrainedNetworkAccess = false
+            request.allowsExpensiveNetworkAccess = false
         }
-        return rawObject
+        if entry.byteCount > 256 * 1024 {
+            return try await downloadObjectFile(request, entry: entry, session: session)
+        }
+        let (bytes, response) = try await requestSnapshotData(request, session: session)
+        return try await Self.validateObjectBytes(bytes, response: response, entry: entry)
     }
 
-    private func binding(for session: FuminiwaSession) -> SealedCommand.Binding {
+    private nonisolated static func validateObjectBytes(_ bytes: Data, response: URLResponse, entry: SnapshotEntry) async throws -> Data {
+        try validateObjectHeaders(response, entry: entry)
+        guard bytes.count == entry.byteCount, ObjectID(data: bytes) == entry.objectId else {
+            throw SyncV2Failure.quarantined(.invalidRemoteData)
+        }
+        return bytes
+    }
+
+    func binding(for session: FuminiwaSession) -> SealedCommand.Binding {
         SealedCommand.Binding(
             accountFence: session.accountFence,
             accountId: session.accountID,
@@ -240,23 +340,5 @@ final class SnapshotFetchTraversal: @unchecked Sendable {
 }
 
 func remoteClientWorkID(for command: SealedCommand) throws -> WorkID {
-    guard let object = try JSONSerialization.jsonObject(with: command.payloadBytes)
-        as? [String: Any] else {
-        throw SyncV2Failure.receiptMismatch
-    }
-    guard let raw = (object["workId"] as? String) ??
-        (object["sourceWorkId"] as? String) else {
-        throw SyncV2Failure.receiptMismatch
-    }
-    return try WorkID(uuidString: raw)
-}
-
-private extension Data {
-    init?(base64URL value: String) {
-        var text = value
-            .replacingOccurrences(of: "-", with: "+")
-            .replacingOccurrences(of: "_", with: "/")
-        text += String(repeating: "=", count: (4 - text.count % 4) % 4)
-        self.init(base64Encoded: text)
-    }
+    try command.payload.workID
 }

@@ -78,7 +78,15 @@ public extension SyncV2Application {
             throw SyncV2ApplicationError.invalidHistoryCursor
         }
 
-        return projectHistoryPage(state: &state, pageSize: pageSize)
+        let page = projectHistoryPage(state: &state, pageSize: pageSize)
+        var items: [SyncV2HistoryItem] = []
+        for var item in page.items {
+            item.snapshotAvailability = await (try? kernel.snapshotAvailability(workID: workID, snapshotID: item.snapshotID)) ?? .unknown
+            items.append(item)
+        }
+        guard historyScopeGeneration == requestScopeGeneration else { throw SyncV2ApplicationError.invalidHistoryCursor }
+        return SyncV2HistoryPage(items: items, nextCursor: page.nextCursor, localAvailability: page.localAvailability,
+                                 onlineAvailability: page.onlineAvailability, onlineFailure: page.onlineFailure)
     }
 }
 

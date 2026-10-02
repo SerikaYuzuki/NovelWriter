@@ -16,7 +16,7 @@ func offlineCheckpointsRegisterParents(restartEveryStep: Bool) async throws {
         document.title = "offline \(generation)"
         let saved = try await store.checkpoint(V2CheckpointRequest(
             workID: workID, document: document, documentCreatedAt: applicationTestCreatedAt,
-            expectedGeneration: Int64(generation)
+            expectedGeneration: Int64(generation), reason: .explicit
         ), scope: productionScope)
         expectedSnapshots.append(saved.snapshotID)
     }
@@ -24,6 +24,7 @@ func offlineCheckpointsRegisterParents(restartEveryStep: Bool) async throws {
     var planner = ProductionSyncV2Planner(store: store, scope: scope)
     var registered: [SnapshotID] = []
     var published: [SnapshotID] = []
+    var prepares: [SnapshotID: Int] = [:]
     var uploaded = Set<ObjectID>()
     var available = Set<ObjectID>()
     for _ in 0 ..< 250 {
@@ -42,6 +43,7 @@ func offlineCheckpointsRegisterParents(restartEveryStep: Bool) async throws {
             var result = V2CommandTerminalResult.applied
             var status = ["createWork", "prepareObject"].contains(command.commandKind) ? 201 : 200
             if command.commandKind == "prepareObject" {
+                prepares[command.sourceSnapshotId, default: 0] += 1
                 let object = try ObjectID(rawValue: productionString(payload, key: "objectId"))
                 if available.contains(object) {
                     result = .noChanges; status = 200
@@ -59,7 +61,7 @@ func offlineCheckpointsRegisterParents(restartEveryStep: Bool) async throws {
                 let manifest = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
                 let parents = try #require(manifest["parentSnapshotIds"] as? [String])
                 // Same prerequisites as the server's registration transaction.
-                #expect(Set(parents).isSubset(of: Set(registered.map(\.rawValue))))
+                #expect(Set(parents).isSubset(of: Set(registered.map { $0.rawValue })))
                 let entries = try #require(manifest["entries"] as? [[String: Any]])
                 for entry in entries {
                     let rawObject = try #require(entry["objectId"] as? String)
@@ -82,6 +84,8 @@ func offlineCheckpointsRegisterParents(restartEveryStep: Bool) async throws {
                 commandID: command.commandId, canonicalReceiptEnvelope: envelope
             ), scope: productionScope)
         case .idle:
+            #expect(prepares[expectedSnapshots[1]] == 1)
+            #expect(prepares[expectedSnapshots[2]] == 1)
             #expect(registered == expectedSnapshots)
             #expect(published == [expectedSnapshots[2]])
             #expect(try await store.pendingIntents(scope: productionScope, workID: workID).isEmpty)
@@ -98,8 +102,8 @@ func offlineCheckpointsRegisterParents(restartEveryStep: Bool) async throws {
     await store.close()
 }
 
-@Test("concurrent planning seals one publish intent after a verified download")
-func concurrentPlanningSealsOnePublish() async throws {
+@Test("concurrent planning does not republish a verified download")
+func concurrentPlanningDoesNotRepublishReceivedContent() async throws {
     let config = try TestRuntimeConfiguration()
     let store = try LocalSyncV2Store(root: config.localRoot.url, policy: .createNew)
     let workID = WorkID(UUID())
@@ -119,24 +123,84 @@ func concurrentPlanningSealsOnePublish() async throws {
         store: store, scope: TestScopeResolver(vault: config.vault, store: store)
     )
     try await planner.requestSynchronization(workID: workID)
-    let ids = try await withThrowingTaskGroup(of: UUID.self) { group in
+    try await withThrowingTaskGroup(of: Void.self) { group in
         for _ in 0 ..< 20 {
             group.addTask {
                 let plan = try await planner.nextCommand(workID: workID)
-                guard case let .command(command) = plan else {
-                    throw SyncV2Failure.fatal(.unexpected)
+                guard case .idle = plan else {
+                    Issue.record("received content must not create another publish")
+                    return
                 }
-                #expect(command.commandKind == "publish")
-                return command.commandId
             }
         }
-        var ids = Set<UUID>()
-        for try await id in group {
-            ids.insert(id)
-        }
-        return ids
+        try await group.waitForAll()
     }
-    #expect(ids.count == 1)
-    #expect(try await store.allSealedCommands(scope: productionScope, workID: workID).count == 1)
+    #expect(try await store.allSealedCommands(scope: productionScope, workID: workID).isEmpty)
+    #expect(try await store.pendingIntents(scope: productionScope, workID: workID).isEmpty)
+    await store.close()
+}
+
+@Test("initial install registers only the new checkpoint or two-parent restore", arguments: [false, true])
+func initialHistoryIsAlreadyRegistered(restore: Bool) async throws {
+    let config = try TestRuntimeConfiguration()
+    let store = try LocalSyncV2Store(root: config.localRoot.url, policy: .createNew)
+    let workID = WorkID(UUID())
+    var document = applicationTestDocument(title: "history")
+    var snapshots: [EncodedSnapshot] = []
+    for index in 0 ..< 512 {
+        document.title = "history \(index)"
+        try snapshots.append(SnapshotCodec.encode(SnapshotModel(workId: workID, document: document,
+                                                                documentCreatedAt: applicationTestCreatedAt),
+                                                  parents: snapshots.last.map { [$0.snapshotId] } ?? []))
+    }
+    let head = try #require(snapshots.last)
+    try await store.installInitialGraph(V2RemoteSnapshotGraph(workID: workID, headSnapshotID: head.snapshotId,
+                                                              snapshots: snapshots, expectedCurrentSnapshotID: nil,
+                                                              expectedLocalGeneration: 0,
+                                                              expectedRemoteHead: V2RemoteHead(snapshotID: head.snapshotId, generation: 512)),
+                                        scope: productionScope)
+    let expected: SnapshotID
+    if restore {
+        let result = try await store.prepareRestore(V2RestorePreparationRequest(workID: workID,
+                                                                                selectedSnapshotID: snapshots[3].snapshotId,
+                                                                                expectedLocalGeneration: 1), scope: productionScope)
+        expected = result.checkpoint.snapshotID
+        #expect(try await store.snapshotParents(workID: workID, snapshotID: expected, scope: productionScope).count == 2)
+    } else {
+        document.title = "only changed object"
+        expected = try await store.checkpoint(V2CheckpointRequest(workID: workID, document: document,
+                                                                  documentCreatedAt: applicationTestCreatedAt,
+                                                                  expectedGeneration: 1, reason: .explicit), scope: productionScope).snapshotID
+    }
+    // Restart exercises evidence recovery from SQLite rather than runtime cache.
+    let planner = ProductionSyncV2Planner(store: store, scope: TestScopeResolver(vault: config.vault, store: store))
+    var registrations: [SnapshotID] = []
+    var prepares = 0
+    for _ in 0 ..< 8 {
+        guard case let .command(command) = try await planner.nextCommand(workID: workID) else {
+            Issue.record("Expected transfer command"); break
+        }
+        if ["publish", "restore"].contains(command.commandKind) {
+            break
+        }
+        if command.commandKind == "registerSnapshot" {
+            registrations.append(command.sourceSnapshotId)
+        }
+        if command.commandKind == "prepareObject" {
+            prepares += 1
+        }
+        let result: V2CommandTerminalResult = command.commandKind == "prepareObject" ? .noChanges : .applied
+        let response = try productionResponse(command: command, result: result, head: nil, cloneHead: nil, status: 200)
+        try await store.acknowledge(V2CommandAcknowledgement(commandID: command.commandId,
+                                                             canonicalReceiptEnvelope: productionEnvelope(command: command, response: response,
+                                                                                                          result: result, status: 200)), scope: productionScope)
+        if command.commandKind == "registerSnapshot" {
+            let view = try #require(await store.immutableTransferView(workID: workID, scope: productionScope))
+            #expect(try await store.nextSnapshotTransferView(for: view, scope: productionScope) == nil)
+            break
+        }
+    }
+    #expect(registrations == [expected])
+    #expect(prepares == (restore ? 0 : 1))
     await store.close()
 }

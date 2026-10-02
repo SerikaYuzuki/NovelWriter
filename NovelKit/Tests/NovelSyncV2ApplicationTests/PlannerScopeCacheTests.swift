@@ -82,7 +82,7 @@ struct PlannerScopeCacheTests {
         _ = try await app.checkpoint(
             workID: workID,
             document: firstDocument,
-            reason: .autosave,
+            reason: .explicit,
             documentCreatedAt: applicationTestCreatedAt
         )
         try await app.resumePending()
@@ -111,7 +111,7 @@ struct PlannerScopeCacheTests {
                 title: "二版",
                 body: "不変本文"
             ),
-            reason: .autosave,
+            reason: .explicit,
             documentCreatedAt: applicationTestCreatedAt
         )
         try await app.resumePending()

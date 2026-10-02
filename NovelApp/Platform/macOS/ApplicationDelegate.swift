@@ -7,6 +7,16 @@ import AppKit
 @MainActor
 final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     weak var appState: AppState?
+    var reopenWorkbench: (() -> Void)?
+
+    func applicationShouldTerminateAfterLastWindowClosed(_: NSApplication) -> Bool {
+        false
+    }
+
+    func applicationShouldHandleReopen(_: NSApplication, hasVisibleWindows _: Bool) -> Bool {
+        reopenWorkbench?()
+        return true
+    }
 
     private var pendingOpenURL: URL?
     private var didFinishBootstrap = false
@@ -55,6 +65,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
             pendingOpenURL = url
             return
         }
+        reopenWorkbench?()
         Task { @MainActor in
             _ = await appState.openExternalDocument(at: url)
         }

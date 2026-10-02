@@ -17,6 +17,11 @@ public actor FakeSyncV2RemoteClient: SyncV2RemoteClient {
 
     private var deletionFailure: SyncV2Failure? = .offline
     private var deletions: [WorkID] = []
+    private var deletionHandler: (@Sendable (WorkID) async throws -> Void)?
+
+    public func setDeletionHandler(_ handler: @escaping @Sendable (WorkID) async throws -> Void) {
+        deletionHandler = handler
+    }
 
     public func setDeletionFailure(_ failure: SyncV2Failure?) {
         deletionFailure = failure
@@ -28,9 +33,30 @@ public actor FakeSyncV2RemoteClient: SyncV2RemoteClient {
 
     public func deleteWork(workID: WorkID, binding _: SyncV2AccountScopeBinding) async throws {
         deletions.append(workID)
+        if let deletionHandler {
+            return try await deletionHandler(workID)
+        }
         if let deletionFailure {
             throw deletionFailure
         }
+    }
+
+    private var updateReads: [WorkID] = []
+
+    public func recordedUpdateReads() -> [WorkID] {
+        updateReads
+    }
+
+    private var updateHandler: (@Sendable (WorkID) async throws -> SyncV2RemoteInbox)?
+
+    public func setUpdateHandler(_ handler: @escaping @Sendable (WorkID) async throws -> SyncV2RemoteInbox) {
+        updateHandler = handler
+    }
+
+    public func downloadUpdate(workID: WorkID) async throws -> SyncV2RemoteInbox {
+        updateReads.append(workID)
+        guard let updateHandler else { throw SyncV2Failure.offline }
+        return try await updateHandler(workID)
     }
 
     private var headHandler: (@Sendable (WorkID) async throws -> SyncV2RemoteHead?)?
@@ -49,6 +75,9 @@ public actor FakeSyncV2RemoteClient: SyncV2RemoteClient {
         guard let headHandler else { throw SyncV2Failure.offline }
         return try await headHandler(workID)
     }
+
+    var historyEntries: [WorkID: [SyncV2RemoteHistoryEntry]] = [:]
+    var historyBackfillHandler: (@Sendable (WorkID, Bool, @escaping @Sendable () async -> Void) async throws -> Void)?
 
     public init() {}
 

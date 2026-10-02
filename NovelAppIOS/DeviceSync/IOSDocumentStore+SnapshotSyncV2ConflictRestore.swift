@@ -20,7 +20,7 @@ extension IOSDocumentStore {
                   !isSyncV2AccountTransitionActive,
                   !isDocumentTransitionInProgress,
                   currentDocumentSessionToken == expectedSession,
-                  snapshotSyncV2AccountScope == expectedAccountScope else { return false }
+                  matchesSyncAccount(expectedAccountScope) else { return false }
             guard saveState == .saved else {
                 operationErrorMessage = "未保存の変更があります。復元前に保存してください。"
                 return false
@@ -33,12 +33,12 @@ extension IOSDocumentStore {
                     )
                     guard !isSyncV2AccountTransitionActive,
                           currentDocumentSessionToken == expectedSession,
-                          snapshotSyncV2AccountScope == expectedAccountScope else { return }
+                          matchesSyncAccount(expectedAccountScope) else { return }
                     applySnapshotSyncV2State(result.state)
                     let opened = try await app.openLocal(workID: activeWorkID)
                     guard !isSyncV2AccountTransitionActive,
                           currentDocumentSessionToken == expectedSession,
-                          snapshotSyncV2AccountScope == expectedAccountScope,
+                          matchesSyncAccount(expectedAccountScope),
                           opened.workID == activeWorkID,
                           let value = opened.document,
                           installSnapshotSyncV2Opened(opened, value: value) else { return }
@@ -48,9 +48,8 @@ extension IOSDocumentStore {
                     )
                     restored = true
                 } catch {
-                    if !isSyncV2AccountTransitionActive,
-                       snapshotSyncV2AccountScope == expectedAccountScope {
-                        snapshotSyncOutcome = .failed
+                    if matchesLocalSyncAccount(expectedAccountScope) {
+                        snapshotSyncOutcome = .failure(.fatal(.invalidLocalState))
                     }
                 }
             }
@@ -109,8 +108,7 @@ extension IOSDocumentStore {
                     }
                 }
                 let result = try await app.resolveConflict(workID: workID, action: action)
-                guard !isSyncV2RemoteAccountTransitionActive,
-                      snapshotSyncV2AccountScope == expectedAccountScope,
+                guard matchesRemoteSyncAccount(expectedAccountScope),
                       currentDocumentSessionToken == expectedSession else { return false }
                 guard acceptsSnapshotSyncV2ConflictResult(result.typedResult) else {
                     if choice == .keepBoth {
@@ -131,7 +129,7 @@ extension IOSDocumentStore {
                           syncV2KeepBothPendingWorkID == opened.workID,
                           currentDocumentSessionToken == expectedSession,
                           localEditGeneration == expectedEditGeneration,
-                          snapshotSyncV2AccountScope == expectedAccountScope else {
+                          matchesSyncAccount(expectedAccountScope) else {
                         operationErrorMessage = "両方を保持する作品を安全に開けませんでした。"
                         return false
                     }
@@ -139,8 +137,7 @@ extension IOSDocumentStore {
                         return false
                     }
                     let state = await app.uiState(workID: opened.workID)
-                    guard !isSyncV2RemoteAccountTransitionActive,
-                          snapshotSyncV2AccountScope == expectedAccountScope,
+                    guard matchesRemoteSyncAccount(expectedAccountScope),
                           syncV2ActiveWorkID == opened.workID else { return false }
                     applySnapshotSyncV2State(state)
                 } else {
@@ -151,11 +148,8 @@ extension IOSDocumentStore {
                 // eventual conflict/adoption result without making this
                 // action wait.
                 let automaticAdoption = choice == .useServer
-                    ? AutoAdoptionExpectation(
-                        session: expectedSession,
-                        editGeneration: expectedEditGeneration,
-                        accountScope: expectedAccountScope
-                    )
+                    ? AutoAdoptionExpectation(workID: expectedSession.workID, session: expectedSession,
+                                              account: expectedAccountScope, editGeneration: expectedEditGeneration)
                     : nil
                 startSnapshotSyncV2Reprojection(
                     app,
@@ -169,8 +163,8 @@ extension IOSDocumentStore {
                 if choice == .keepBoth {
                     syncV2KeepBothPendingWorkID = nil
                 }
-                if snapshotSyncV2AccountScope == expectedAccountScope {
-                    snapshotSyncOutcome = .failed
+                if matchesSyncAccount(expectedAccountScope) {
+                    snapshotSyncOutcome = .failure(.fatal(.invalidLocalState))
                 }
                 return false
             }

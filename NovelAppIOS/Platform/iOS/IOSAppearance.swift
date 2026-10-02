@@ -8,25 +8,6 @@ enum IOSPalette {
         green: 23.0 / 255.0,
         blue: 25.0 / 255.0
     )
-
-    static let accent = Color(
-        uiColor: UIColor { traits in
-            if traits.userInterfaceStyle == .dark {
-                return UIColor(
-                    red: 140.0 / 255.0,
-                    green: 167.0 / 255.0,
-                    blue: 223.0 / 255.0,
-                    alpha: 1
-                )
-            }
-            return UIColor(
-                red: 52.0 / 255.0,
-                green: 85.0 / 255.0,
-                blue: 139.0 / 255.0,
-                alpha: 1
-            )
-        }
-    )
 }
 
 enum IOSAppearance: String, CaseIterable, Identifiable {
@@ -145,7 +126,7 @@ struct IOSAppearanceSettingsSections: View {
             .accessibilityLabel("アプリの外観")
             .accessibilityIdentifier("ios.appearance.picker")
         } header: {
-            Text("アプリの外観")
+            Label("外観", systemImage: "circle.lefthalf.filled")
         } footer: {
             Text("本文キャンバスの色や作品ファイルには影響しません。")
         }
@@ -160,7 +141,7 @@ struct IOSAppearanceSettingsSections: View {
             .pickerStyle(.navigationLink)
             .accessibilityIdentifier("ios.editorFont.picker")
         } header: {
-            Text("本文フォント")
+            Label("本文", systemImage: "textformat")
         } footer: {
             Text("この端末の本文表示だけに適用され、作品ファイルには保存されません。")
         }

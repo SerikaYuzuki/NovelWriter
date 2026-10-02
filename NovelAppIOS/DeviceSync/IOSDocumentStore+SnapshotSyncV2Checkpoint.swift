@@ -13,7 +13,7 @@ extension IOSDocumentStore {
               let application = snapshotSyncV2Application else { return }
         let session = currentDocumentSessionToken
         let account = snapshotSyncV2AccountScope
-        await application.runAutomaticSynchronization(workID: workID) { [weak self] in
+        await application.observeForegroundSynchronization(workID: workID) { [weak self] in
             await self?.refreshAutomaticSnapshotSyncV2(session: session, account: account)
         }
     }
@@ -22,9 +22,9 @@ extension IOSDocumentStore {
         session: IOSDocumentSessionToken?, account: IOSSnapshotSyncV2AccountScope
     ) async {
         guard !Task.isCancelled, currentDocumentSessionToken == session,
-              snapshotSyncV2AccountScope == account,
+              matchesSyncAccount(account),
               snapshotSyncV2ReprojectionTask == nil else { return }
-        await resumeSnapshotSyncV2()
+        await resumeSnapshotSyncV2(reason: nil)
     }
 
     @discardableResult
@@ -41,12 +41,12 @@ extension IOSDocumentStore {
             guard let self else { return false }
             return currentDocumentSessionToken == expectedSession
                 && syncV2ActiveWorkID == workID
-                && snapshotSyncV2AccountScope == expectedAccountScope
+                && matchesSyncAccount(expectedAccountScope)
         }
         do {
             guard let syncAttachments = currentV2Attachments() else {
                 operationErrorMessage = "資料の本文を読み込めないため、端末への保存を中止しました。"
-                snapshotSyncOutcome = .failed
+                snapshotSyncOutcome = .failure(.fatal(.invalidLocalState))
                 saveState = .failed
                 return false
             }
@@ -62,7 +62,7 @@ extension IOSDocumentStore {
                 }
             } catch {
                 operationErrorMessage = "portable metadataを安全に保存できないため、端末への保存を中止しました。"
-                snapshotSyncOutcome = .failed
+                snapshotSyncOutcome = .failure(.fatal(.invalidLocalState))
                 saveState = .failed
                 return false
             }
@@ -83,13 +83,13 @@ extension IOSDocumentStore {
             return true
         } catch {
             guard matchesExpectedSource() else { return false }
-            snapshotSyncOutcome = .failed
+            snapshotSyncOutcome = .failure(.fatal(.invalidLocalState))
             saveState = .failed
             return false
         }
     }
 
-    func resumeSnapshotSyncV2() async {
+    func resumeSnapshotSyncV2(reason: SyncV2WakeReason? = .foreground) async {
         guard !isSnapshotSyncInFlight, !isSyncV2RemoteAccountTransitionActive,
               let application = snapshotSyncV2Application else { return }
         let resumedWorkID = syncV2ActiveWorkID
@@ -120,7 +120,8 @@ extension IOSDocumentStore {
             workID: resumedWorkID,
             automaticAdoption: automaticAdoption,
             expectedAccountScope: expectedAccountScope,
-            resumesWorker: true
+            resumesWorker: reason != nil,
+            wakeReason: reason ?? .foreground
         )
     }
 
@@ -137,14 +138,14 @@ extension IOSDocumentStore {
         let expectedSession = currentDocumentSessionToken
         let saved = await documentOperationGate.perform { [weak self] in
             guard let self, currentDocumentSessionToken == expectedSession,
-                  snapshotSyncV2AccountScope == expectedAccountScope else { return false }
+                  matchesSyncAccount(expectedAccountScope) else { return false }
             return await prepareForEditorSurfaceDeparture(clearProofreadingHighlights: true)
         }
         guard saved,
               !isSyncV2RemoteAccountTransitionActive,
               syncV2ActiveWorkID == workID,
               currentDocumentSessionToken == expectedSession,
-              snapshotSyncV2AccountScope == expectedAccountScope else { return false }
+              matchesSyncAccount(expectedAccountScope) else { return false }
         // Pin the clean editor boundary before the asynchronous worker starts.
         // Any subsequent editing or session/account change invalidates adoption.
         let automaticAdoption = automaticAdoptionExpectation(
@@ -156,7 +157,7 @@ extension IOSDocumentStore {
             guard !isSyncV2RemoteAccountTransitionActive,
                   syncV2ActiveWorkID == workID,
                   currentDocumentSessionToken == expectedSession,
-                  snapshotSyncV2AccountScope == expectedAccountScope else { return false }
+                  matchesSyncAccount(expectedAccountScope) else { return false }
             applySnapshotSyncV2State(result.state)
             if case .failure = result.typedResult {
                 operationErrorMessage = result.state.japaneseLabel
@@ -176,7 +177,7 @@ extension IOSDocumentStore {
         } catch {
             if !isSyncV2RemoteAccountTransitionActive,
                syncV2ActiveWorkID == workID,
-               snapshotSyncV2AccountScope == expectedAccountScope {
+               matchesSyncAccount(expectedAccountScope) {
                 operationErrorMessage = "同期を開始できませんでした。サインインと作品の同期設定を確認してください。原稿はこの端末に保存されています。"
             }
             return false

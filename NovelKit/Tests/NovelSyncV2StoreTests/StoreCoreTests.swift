@@ -17,7 +17,7 @@ func checkpointIsAtomicReopensAndNoOpSucceeds() async throws {
             workID: workID,
             document: document,
             documentCreatedAt: testDate,
-            expectedGeneration: 0
+            expectedGeneration: 0, reason: .explicit
         ),
         scope: scopeA
     )
@@ -26,7 +26,7 @@ func checkpointIsAtomicReopensAndNoOpSucceeds() async throws {
             workID: workID,
             document: document,
             documentCreatedAt: testDate,
-            expectedGeneration: 1
+            expectedGeneration: 1, reason: .explicit
         ),
         scope: scopeA
     )
@@ -58,7 +58,7 @@ func emptyAttachmentBytesRoundTripThroughSQLite() async throws {
             workID: workID,
             document: makeDocument(title: "empty attachment"),
             documentCreatedAt: testDate,
-            expectedGeneration: 0,
+            expectedGeneration: 0, reason: .explicit,
             attachments: [attachment]
         ),
         scope: scopeA
@@ -80,7 +80,7 @@ func noOpCheckpointKeepsIntentAndProtectsOnlyExplicitOccurrence() async throws {
             workID: workID,
             document: document,
             documentCreatedAt: testDate,
-            expectedGeneration: 0
+            expectedGeneration: 0, reason: .explicit
         ),
         scope: scopeA
     )
@@ -89,7 +89,7 @@ func noOpCheckpointKeepsIntentAndProtectsOnlyExplicitOccurrence() async throws {
             workID: workID,
             document: document,
             documentCreatedAt: testDate,
-            expectedGeneration: first.generation
+            expectedGeneration: first.generation, reason: .autosave
         ),
         scope: scopeA
     )
@@ -116,7 +116,7 @@ func noOpCheckpointKeepsIntentAndProtectsOnlyExplicitOccurrence() async throws {
     #expect(history.last?.localGeneration == first.generation)
     #expect(history.last?.reason == V2CheckpointReason.explicit.rawValue)
     #expect(history.last?.pinned == true)
-    #expect(try await store.pendingIntents(scope: scopeA).map(\.intentID) == [
+    #expect(try await store.pendingIntents(scope: scopeA).map { $0.intentID } == [
         first.intentID
     ])
 
@@ -148,7 +148,7 @@ func failedCheckpointLeavesHeadAndIntentUnchanged() async throws {
             workID: workID,
             document: document,
             documentCreatedAt: testDate,
-            expectedGeneration: 0
+            expectedGeneration: 0, reason: .explicit
         ),
         scope: scopeA
     )
@@ -160,7 +160,7 @@ func failedCheckpointLeavesHeadAndIntentUnchanged() async throws {
                 workID: workID,
                 document: changed,
                 documentCreatedAt: testDate.addingTimeInterval(60),
-                expectedGeneration: 1
+                expectedGeneration: 1, reason: .explicit
             ),
             scope: scopeA
         )
@@ -185,11 +185,11 @@ func unboundWorkStaysLocalAndExplicitAccountMoveClonesNewIdentity() async throws
             workID: sourceWorkID,
             document: sourceDocument,
             documentCreatedAt: testDate,
-            expectedGeneration: 0
+            expectedGeneration: 0, reason: .explicit
         ),
         scope: .unbound
     )
-    #expect(try await store.listWorks(scope: .unbound).map(\.workID) == [sourceWorkID])
+    #expect(try await store.listWorks(scope: .unbound).map { $0.workID } == [sourceWorkID])
     #expect(try await store.listWorks(scope: scopeA).isEmpty)
 
     let destinationDocumentID = DocumentID(UUID())
@@ -205,8 +205,8 @@ func unboundWorkStaysLocalAndExplicitAccountMoveClonesNewIdentity() async throws
     #expect(original.document == sourceDocument)
     #expect(clone.document?.title == sourceDocument.title)
     #expect(clone.document?.id == destinationDocumentID.rawValue)
-    #expect(try await store.listWorks(scope: .unbound).map(\.workID) == [sourceWorkID])
-    #expect(try await store.listWorks(scope: scopeA).map(\.workID) == [destinationWorkID])
+    #expect(try await store.listWorks(scope: .unbound).map { $0.workID } == [sourceWorkID])
+    #expect(try await store.listWorks(scope: scopeA).map { $0.workID } == [destinationWorkID])
 }
 
 @Test
@@ -221,7 +221,7 @@ func exactAccountScopeDoesNotDiscloseForeignWork() async throws {
             workID: workID,
             document: document,
             documentCreatedAt: testDate,
-            expectedGeneration: 0
+            expectedGeneration: 0, reason: .explicit
         ),
         scope: scopeA
     )
@@ -243,7 +243,7 @@ func exactAccountScopeDoesNotDiscloseForeignWork() async throws {
                 workID: workID,
                 document: document,
                 documentCreatedAt: testDate,
-                expectedGeneration: 1
+                expectedGeneration: 1, reason: .explicit
             ),
             scope: scopeB
         )
@@ -366,7 +366,7 @@ func legacyRestoreStateMigratesPreparedAndSealedRowsWithoutDataLoss() async thro
             workID: preparedWorkID,
             document: preparedDocument,
             documentCreatedAt: testDate,
-            expectedGeneration: 0
+            expectedGeneration: 0, reason: .explicit
         ),
         scope: scopeA
     )
@@ -376,7 +376,7 @@ func legacyRestoreStateMigratesPreparedAndSealedRowsWithoutDataLoss() async thro
             workID: preparedWorkID,
             document: preparedDocument,
             documentCreatedAt: testDate,
-            expectedGeneration: preparedFirst.generation
+            expectedGeneration: preparedFirst.generation, reason: .explicit
         ),
         scope: scopeA
     )
@@ -395,7 +395,7 @@ func legacyRestoreStateMigratesPreparedAndSealedRowsWithoutDataLoss() async thro
             workID: sealedWorkID,
             document: sealedDocument,
             documentCreatedAt: testDate,
-            expectedGeneration: 0
+            expectedGeneration: 0, reason: .explicit
         ),
         scope: scopeA
     )
@@ -405,7 +405,7 @@ func legacyRestoreStateMigratesPreparedAndSealedRowsWithoutDataLoss() async thro
             workID: sealedWorkID,
             document: sealedDocument,
             documentCreatedAt: testDate,
-            expectedGeneration: sealedFirst.generation
+            expectedGeneration: sealedFirst.generation, reason: .explicit
         ),
         scope: scopeA
     )
@@ -459,7 +459,7 @@ func legacyRestoreStateMigratesPreparedAndSealedRowsWithoutDataLoss() async thro
         .joined()
     let rewrite = """
     BEGIN IMMEDIATE;
-    DROP TABLE work_deletions;
+    DROP TABLE legacy_command_recovery; DROP TABLE history_backfills; DROP TABLE shallow_boundaries; DROP TABLE work_deletions;
     ALTER TABLE restore_records RENAME TO restore_records_modern;
     \(legacyRestoreDDL)
     INSERT INTO restore_records(

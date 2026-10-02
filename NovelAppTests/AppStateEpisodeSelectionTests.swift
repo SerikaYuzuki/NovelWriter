@@ -19,7 +19,7 @@ struct AppStateEpisodeSelectionTests {
         state.addEpisode(to: chapterID)
 
         #expect(state.selectedEpisode?.title == "第2話")
-        #expect(state.document.chapters[0].episodes.map(\.title) == ["本文", "第2話"])
+        #expect(state.document.chapters[0].episodes.map { $0.title } == ["本文", "第2話"])
     }
 
     @Test("章追加は空章を選択し、話追加は選択中の章へ追加する")
@@ -31,7 +31,8 @@ struct AppStateEpisodeSelectionTests {
         #expect(state.selectedEpisodeID == nil)
 
         state.addEpisode()
-        #expect(try state.document.episode(#require(state.selectedEpisodeID))?.chapterID == chapterID)
+        let selectedEpisodeID = try #require(state.selectedEpisodeID)
+        #expect(state.document.episode(selectedEpisodeID)?.chapterID == chapterID)
         #expect(state.selectedEpisode?.title == "第1話")
     }
 

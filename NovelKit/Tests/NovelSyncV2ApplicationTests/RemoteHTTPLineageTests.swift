@@ -9,6 +9,47 @@ import Testing
 
 @Suite("Snapshot Sync v2 remote HTTP lineage", .serialized)
 struct RemoteHTTPLineageTests {
+    @Test("a temporary failure resumes the failed graph request without restarting history", arguments: ["head", "manifest", "object"], [false, true])
+    func transientGraphRequestResumes(stage: String, disconnected: Bool) async throws {
+        let fixture = LineageFixture()
+        let base = try fixture.snapshot(title: "base")
+        let head = try fixture.snapshot(title: "head", parents: [base.snapshotId])
+        let objectID = try #require(base.objects.keys.first)
+        let path = switch stage {
+        case "head": "/v2/works/\(fixture.workID.description)/head"
+        case "manifest": "/v2/snapshots/\(base.snapshotId.rawValue)/manifest"
+        default: "/v2/objects/\(objectID.rawValue)"
+        }
+        let state = LineageHTTPState(workID: fixture.workID, snapshots: [base, head], publishResponse: nil)
+        state.failNext(path: path, replies: [LineageHTTPReply(
+            status: 502, headers: [:], body: Data(),
+            transportError: disconnected ? .networkConnectionLost : nil
+        )])
+        let client = try fixture.client(snapshots: [], overrideState: state)
+        let inbox = try await client.downloadRemoteOnly(workID: fixture.workID)
+        #expect(inbox.snapshots.map { $0.snapshotId } == [base.snapshotId, head.snapshotId])
+        #expect(state.count(path: path) == 2)
+        #expect(state.count(path: "/v2/snapshots/\(head.snapshotId.rawValue)/manifest") == 1)
+    }
+
+    @Test("persistent graph failures are bounded and authorization failures are not retried", arguments: [403, 404, 429, 503])
+    func graphRequestFailureIsBounded(status: Int) async throws {
+        let fixture = LineageFixture()
+        let path = "/v2/works/\(fixture.workID.description)/head"
+        let state = LineageHTTPState(replies: [
+            "GET \(path)": LineageHTTPReply(status: status, headers: [:], body: Data())
+        ])
+        let client = try fixture.client(snapshots: [], overrideState: state)
+        let expected: SyncV2Failure = switch status {
+        case 403: .accountFenceChanged
+        case 404: .fatal(.remoteDataUnavailable)
+        case 429: .retryable(.serverUnavailable)
+        default: .retryable(.serverUnavailable)
+        }
+        await #expect(throws: expected) { try await client.downloadRemoteOnly(workID: fixture.workID) }
+        #expect(state.count(path: path) == ([429, 503].contains(status) ? 6 : 1))
+    }
+
     @Test("publish conflict decodes its sealed base and store accepts B to L/R divergence")
     func publishConflictCarriesBaseIntoStore() async throws {
         let fixture = LineageFixture()
@@ -79,8 +120,8 @@ struct RemoteHTTPLineageTests {
 
         let inbox = try await client.downloadRemoteOnly(workID: fixture.workID)
         let expected = [base.snapshotId, orderedParents[0], orderedParents[1], decision.snapshotId]
-        #expect(inbox.snapshots.map(\.snapshotId) == expected)
-        #expect(Set(inbox.snapshots.map(\.snapshotId)).count == 4)
+        #expect(inbox.snapshots.map { $0.snapshotId } == expected)
+        #expect(Set(inbox.snapshots.map { $0.snapshotId }).count == 4)
         #expect(fixture.requestCount(path: "/v2/snapshots/\(base.snapshotId.rawValue)/manifest") == 1)
         let sharedObjects = Set(base.objects.keys).intersection(decision.objects.keys)
         #expect(!sharedObjects.isEmpty)
@@ -139,7 +180,7 @@ struct RemoteHTTPLineageTests {
         let client = try fixture.client(snapshots: snapshots)
 
         let inbox = try await client.downloadRemoteOnly(workID: fixture.workID)
-        #expect(inbox.snapshots.map(\.snapshotId) == snapshots.map(\.snapshotId))
+        #expect(inbox.snapshots.map { $0.snapshotId } == snapshots.map { $0.snapshotId })
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let store = try LocalSyncV2Store(root: root, policy: .createNew)
@@ -215,7 +256,7 @@ private func makeStore(
             workID: fixture.workID,
             document: fixture.document,
             documentCreatedAt: fixture.createdAt,
-            expectedGeneration: 0
+            expectedGeneration: 0, reason: .explicit
         ),
         scope: scope
     )
@@ -224,15 +265,19 @@ private func makeStore(
             workID: fixture.workID,
             document: fixture.document(title: "L"),
             documentCreatedAt: fixture.createdAt,
-            expectedGeneration: 1
+            expectedGeneration: 1, reason: .explicit
         ),
         scope: scope
     )
     return (store, root)
 }
 
-private struct LineageFixture: Sendable {
-    let workID = WorkID(UUID(uuidString: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")!)
+struct LineageFixture: Sendable {
+    let workID: WorkID
+    init(workID: WorkID = WorkID(UUID(uuidString: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")!)) {
+        self.workID = workID
+    }
+
     let documentID = UUID(uuidString: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")!
     let serverID = UUID(uuidString: "cccccccc-cccc-4ccc-8ccc-cccccccccccc")!
     let binding = V2AccountBinding(
@@ -337,7 +382,7 @@ private struct LineageFixture: Sendable {
             origin: ProductionHTTPSOrigin(url: URL(string: "https://lineage.test")!),
             vault: InMemoryAuthSessionVault(session: auth),
             session: session,
-            localStore: localStore
+            snapshotCache: localStore, backfillPersistence: localStore
         )
     }
 
@@ -387,7 +432,7 @@ extension RemoteHTTPLineageTests {
         let scope = V2LocalWorkScope.bound(fixture.binding)
         let saved = try await store.checkpoint(V2CheckpointRequest(
             workID: fixture.workID, document: fixture.document,
-            documentCreatedAt: fixture.createdAt, expectedGeneration: 0
+            documentCreatedAt: fixture.createdAt, expectedGeneration: 0, reason: .explicit
         ), scope: scope)
         var parent = saved.snapshotID
         var snapshots: [EncodedSnapshot] = []
@@ -443,7 +488,7 @@ extension RemoteHTTPLineageTests {
             )
         ])
         let client = try fixture.client(snapshots: [], overrideState: state)
-        await #expect(throws: exact ? SyncV2Failure.retryable(.publishLineageRejected) : .fatal(.unexpected)) {
+        await #expect(throws: exact ? SyncV2Failure.retryable(.publishLineageRejected) : .receiptMismatch) {
             _ = try await client.execute(.command(SyncV2SealedRemoteCommand(command: command)))
         }
         #expect(state.count(path: "/v2/receipts/\(command.commandId.uuidString.lowercased())") == 0)
@@ -462,7 +507,7 @@ extension RemoteHTTPLineageTests {
                 workID: fixture.workID,
                 document: fixture.document(title: "local-\(generation)"),
                 documentCreatedAt: fixture.createdAt,
-                expectedGeneration: Int64(generation)
+                expectedGeneration: Int64(generation), reason: .explicit
             ), scope: scope)
             head = saved.snapshotID
         }
@@ -474,7 +519,7 @@ extension RemoteHTTPLineageTests {
         // would fail, rather than silently passing against a full server fixture.
         let client = try fixture.client(snapshots: [remote], localStore: store)
         let inbox = try await client.downloadRemoteOnly(workID: fixture.workID)
-        #expect(inbox.snapshots.map(\.snapshotId) == (remoteChanged ? [anchor, remote.snapshotId] : [anchor]))
+        #expect(inbox.snapshots.map { $0.snapshotId } == (remoteChanged ? [anchor, remote.snapshotId] : [anchor]))
         #expect(fixture.requestCount(path: "/v2/snapshots/\(anchor.rawValue)/manifest") == 0)
         let graph = try V2RemoteSnapshotGraph(
             inboxID: inbox.inboxID,
@@ -507,7 +552,7 @@ extension RemoteHTTPLineageTests {
         let scope = V2LocalWorkScope.bound(fixture.binding)
         let saved = try await store.checkpoint(V2CheckpointRequest(
             workID: fixture.workID, document: fixture.document,
-            documentCreatedAt: fixture.createdAt, expectedGeneration: 0
+            documentCreatedAt: fixture.createdAt, expectedGeneration: 0, reason: .explicit
         ), scope: scope)
         let command = try SealedCommand.decodeCanonical(productionJSON([
             "binding": ["accountFence": fixture.binding.accountFence, "accountId": fixture.binding.accountID,

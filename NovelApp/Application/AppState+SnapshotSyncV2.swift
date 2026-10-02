@@ -4,6 +4,7 @@ import NovelSyncV2
 import NovelSyncV2Application
 import NovelSyncV2PortableBridge
 import os
+import SwiftUI
 
 private let snapshotSyncV2StartupLogger = Logger(
     subsystem: "dev.serikayuzuki.fuminiwa",
@@ -14,12 +15,7 @@ extension AppState {
     /// A document identity change explicitly retires background UI operations.
     /// The eventual installer itself must never cancel the Task that owns it.
     func cancelSnapshotSyncV2BackgroundOperations() {
-        snapshotSyncV2RemoteOnlyOpenToken = nil
-        snapshotSyncV2RemoteOnlyOpenTask?.cancel()
-        snapshotSyncV2RemoteOnlyOpenTask = nil
-        snapshotSyncV2AutoAdoptionToken = nil
-        snapshotSyncAutoAdoptionTask?.cancel()
-        snapshotSyncAutoAdoptionTask = nil
+        syncSessionController.cancelBackgroundOperations(remoteOnly: .releaseImmediately)
     }
 
     private func checkpointSnapshotSyncV2(
@@ -97,6 +93,7 @@ extension AppState {
     func checkpointSnapshotSyncV2(
         _ document: NovelDocument,
         reason: SyncV2CheckpointReason = .autosave,
+        attachments: [SyncAttachment]? = nil,
         resources: [PortableResource]? = nil,
         portableCreatedAt: Date? = nil
     ) async -> Bool {
@@ -136,6 +133,7 @@ extension AppState {
                 saveState = .failed
                 return false
             }
+            let checkpointAttachments = attachments ?? snapshotSyncV2Attachments
             if snapshotSyncV2Session?.workID != workID {
                 snapshotSyncV2Session = await application.beginSession(workID: workID)
             }
@@ -145,7 +143,7 @@ extension AppState {
                 document: document,
                 reason: reason,
                 documentCreatedAt: documentCreatedAt,
-                attachments: snapshotSyncV2Attachments,
+                attachments: checkpointAttachments,
                 resources: localResources
             )
             saveState = .saved
@@ -165,7 +163,20 @@ extension AppState {
 
     @discardableResult
     func saveNow() async -> Bool {
-        await saveCoordinator.saveNow()
+        let workID = snapshotSyncV2ActiveWorkID
+        let session = documentSessionToken
+        let account = snapshotSyncV2AccountScopeToken
+        guard await saveCoordinator.saveNow(), documentSessionToken == session,
+              snapshotSyncV2ActiveWorkID == workID, matchesSnapshotSyncV2AccountScope(account) else { return false }
+        do {
+            if let workID, let application = snapshotSyncV2Application {
+                try await application.promoteCheckpoint(workID: workID)
+            }
+            return true
+        } catch {
+            saveState = .failed
+            return false
+        }
     }
 
     func saveBeforeTermination() async -> Bool {
@@ -200,7 +211,7 @@ extension AppState {
 
     /// Launch/foreground/network recovery only wakes the shared outbox once.
     /// It intentionally does not wait for a remote response.
-    func resumeSnapshotSyncV2() async {
+    func resumeSnapshotSyncV2(reason: SyncV2WakeReason = .foreground) async {
         guard let application = snapshotSyncV2Application else { return }
         let coordinator = authSessionCoordinator
         Task { @MainActor [weak self] in
@@ -213,7 +224,7 @@ extension AppState {
                     try await coordinator.resumePendingRevoke()
                 }
             }
-            try? await application.resumePending()
+            try? await application.wake(reason: reason)
             // Re-project terminal worker state after the background wake. The
             // caller has already returned and never waits for the network lane.
             await self?.refreshSnapshotSyncV2UIState()
@@ -254,13 +265,13 @@ extension AppState {
         defer { isSnapshotSyncInFlight = false }
         let saved = await documentOperationGate.perform { [weak self] in
             guard let self, documentSessionToken == expectedSession,
-                  snapshotSyncV2AccountScopeToken == expectedAccount,
+                  matchesSnapshotSyncV2AccountScope(expectedAccount),
                   editorCommandSession.prepareForDocumentTransition() else { return false }
             defer { editorCommandSession.resumeAfterDocumentTransition() }
             return await saveNow()
         }
         guard saved, documentSessionToken == expectedSession,
-              snapshotSyncV2AccountScopeToken == expectedAccount,
+              matchesSnapshotSyncV2AccountScope(expectedAccount),
               currentSnapshotSyncV2WorkID == workID else { return }
         editorCommandSession.clearProofreadingHighlights()
         // Cmd-S also serves local-only works. Never add an account binding or
@@ -274,18 +285,11 @@ extension AppState {
             _ = try await application.synchronize(workID: workID)
         } catch {
             guard documentSessionToken == expectedSession,
-                  snapshotSyncV2AccountScopeToken == expectedAccount else { return }
+                  matchesSnapshotSyncV2AccountScope(expectedAccount) else { return }
             operationMessage = "同期を開始できませんでした。原稿はこの端末に保存されています。"
-            #if DEBUG
-            if let diagnostic = await application.syncDebugDiagnostic(workID: workID),
-               documentSessionToken == expectedSession,
-               snapshotSyncV2AccountScopeToken == expectedAccount {
-                operationMessage = "同期を開始できませんでした。原稿はこの端末に保存されています。\n\n一時診断: \(diagnostic)"
-            }
-            #endif
         }
         guard documentSessionToken == expectedSession,
-              snapshotSyncV2AccountScopeToken == expectedAccount else { return }
+              matchesSnapshotSyncV2AccountScope(expectedAccount) else { return }
         await refreshSnapshotSyncV2UIState()
         await refreshSnapshotLibrary()
     }
@@ -305,6 +309,10 @@ extension AppState {
         let state = await application.uiState(workID: workID)
         guard matchesSnapshotSyncV2AccountScope(accountScope),
               currentSnapshotSyncV2WorkID == workID else { return }
+        if state?.remoteProgress == .retryable(.historyIncomplete),
+           snapshotSyncV2UIState?.remoteProgress != state?.remoteProgress {
+            AccessibilityNotification.Announcement(SyncV2HistoryFetchState.conflictWaiting).post()
+        }
         snapshotSyncV2UIState = state
         snapshotSyncConflict = state?.conflict
         if state?.remoteProgress == .authenticationRequired, case .signedIn = authUIState {
@@ -313,17 +321,6 @@ extension AppState {
         if case let .failed(reason) = state?.remoteProgress {
             operationMessage = reason.japaneseDescription
         }
-        #if DEBUG
-        if let diagnostic = await application.syncDebugDiagnostic(workID: workID),
-           matchesSnapshotSyncV2AccountScope(accountScope), currentSnapshotSyncV2WorkID == workID {
-            let guidance: String = if case let .failed(reason) = state?.remoteProgress {
-                reason.japaneseDescription
-            } else {
-                "同期が停止しました。原稿はこの端末に保存されています。"
-            }
-            operationMessage = "\(guidance)\n\n一時診断: \(diagnostic)"
-        }
-        #endif
         if let progress = state?.remoteProgress,
            case .readyForSafeAdoption = progress {
             scheduleAutomaticServerAdoption()
@@ -440,10 +437,10 @@ extension AppState {
     func openExternalDocument(at url: URL) async -> Bool {
         let isBootstrapImport = !hasCompletedBootstrap && startupState == .loading
         guard let application = snapshotSyncV2Application,
-              permitsDocumentTransitionOperation || isBootstrapImport else { return false }
+              permitsDocumentImport || isBootstrapImport else { return false }
         return await documentOperationGate.perform { [weak self] in
             guard let self,
-                  permitsDocumentTransitionOperation || isBootstrapImport,
+                  permitsDocumentImport || isBootstrapImport,
                   editorCommandSession.prepareForDocumentTransition() else { return false }
             defer { editorCommandSession.resumeAfterDocumentTransition() }
             isDocumentTransitionInProgress = true

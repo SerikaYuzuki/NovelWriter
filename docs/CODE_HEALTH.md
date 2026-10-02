@@ -17,10 +17,14 @@
 
 端末SQLiteへの保存後にremote workerを動かす。250 MiB添付は8 MiB単位で送り、全体digestを確認する。長い履歴は非再帰で取得し、128件を理由に打ち切らない。原稿コピー、校正・感想、AIチャット、共通・作品指示の同期、依頼範囲への生成編集と永続Undo、Mac起動中のMCPを実装した。同期作品の削除後1年保管、別作品復元、日単位の復元履歴、再送、小さな5分遅延表示、可読救出も実装済み。
 
+自動保存は安定checkpointからの端末内の葉とし、保護保存・明示同期・60秒待機・5分上限・起動復旧で昇格する（D-103）。旧履歴とローカルの葉は保持する。既存の長い履歴自体は短縮しないため、serverの深さ上限など[レビュー S-01](SYNC_REVIEW.md)の別課題は残る。
+
 macOSの滑らかなカーソルを通常EditorKitへ組み込み、端末の執筆設定で切り替える。[表示の仕様と受入](CARET_ANIMATION_INVESTIGATION.md)。
 
 ## 実装が残るもの
 
+- Sync v2全体の不具合・性能・構造・UIの課題。[全体レビュー](SYNC_REVIEW.md)。D-01の端末内自動保存・昇格は実装済み。残る項目は個別に扱う。
+- 構造整理R-08は保留。LocalSyncV2Storeのrepository分割とCommandValidationの型付きrow化は、R-03〜R-07の境界検証後に別passで行う。共有connectionとcheckpoint/installの単一transactionを維持する。
 - 削除予約・取消のアプリ画面。サーバーAPIと720時間後のworkerは実装済み。[lifecycle](auth/v1/account-deletion.md)。
 - Package Validator / 共通fixtureの全体、Windows 11版とinstaller。[互換契約](CROSS_PLATFORM.md)。
 
@@ -29,14 +33,21 @@ macOSの滑らかなカーソルを通常EditorKitへ組み込み、端末の執
 - Apple通知: 規範`/v1/auth/providers/apple/notifications`に対し、`auth_http.rs`は`/v1/auth/apple/notifications`を登録している。規範へ揃える際はApple側の登録先も確認する。[通知契約](auth/v1/apple-notification.md)。
 - LAN CA export: `Scripts/export-sync-v2-staging-ca.sh`のedge固定名が現行role-splitと異なり、Sync epoch検査も不足する。[LAN手順](SNAPSHOT_SYNC_V2_STAGING.md)。
 
+
 いずれも今回の文書更新では実装修正していない。
 
 2026-09-26の実装・全体検証・サーバー反映と端末インストールは[受入記録](PROTECTION_AI_ACCEPTANCE.md)を参照する。
 
 ## 受入が残るもの
 
+D-106 Step 1〜3は実装済み。head-first／backfill、優先取得、未取得版の復元確認、深いInbox／競合の待機、通信・検証エラー、従量接続の確認を両OSへ接続した。[検証範囲と残る制約](sync/v2/shallow-history-verification.md)。実accountでの二台同期・実機Low Data Mode・VoiceOver受入と稼働反映は未実施。
+
 AI実APIでの応答・編集、登録済みMCPクライアントとの実利用、Mac／iPhone／iPadでのAI記録と指示の二台同期は別途受入する。
 
 現行版のMac／iPhone／iPadでApple認証、長時間のIME・Undo、offline編集、二端末競合、履歴復元を確認する。署名・配布・clean install等の一般公開条件は[公開受入](COMMERCIALIZATION_IMPLEMENTATION.md)。ローカルテスト・個別画面・過去の実機成功から全項目を完了扱いにしない。
 
 自動保存のdebounce変更は利用者が不採用とした方針であり、不具合修正の残件へ戻さない。
+
+## サムネイル（D-104）
+
+NovelThumbnailが予約名・所有者判定とImageIO／CoreGraphicsでの縮小JPEG生成を担当し、NovelUIが両OS共通の表示・切り抜き・設定操作を提供する。作品情報・人物・世界観と棚に接続し、所有者との同時削除、AI／MCPからの除外と添付書き戻し保全を実装。schema／wire／package形式の変更はない。合成画像・隔離された端末ストアで検証し、実写真・実原稿・実accountによる試験は行わない。実機の写真権限・Files provider別の操作や二台同期の受入は別途必要。

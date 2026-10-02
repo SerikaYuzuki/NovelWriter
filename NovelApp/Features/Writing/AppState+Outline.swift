@@ -2,6 +2,7 @@ import AppKit
 import EditorKit
 import Foundation
 import NovelCore
+import NovelThumbnail
 
 extension AppState {
     // MARK: - 選択中章
@@ -266,7 +267,9 @@ extension AppState {
     func deleteWorldNote(id: WorldNoteID, expectedSession: DocumentSessionToken? = nil) -> Bool {
         guard permitsMutation(expectedSession: expectedSession) else { return false }
         guard let index = document.worldNotes.firstIndex(where: { $0.id == id }) else { return false }
-        document.worldNotes.remove(at: index)
+        var replacement = document
+        replacement.worldNotes.remove(at: index)
+        applyOwnerRemoval(replacement)
         if selectedWorldNoteID == id {
             let fallbackIndex = min(index, max(document.worldNotes.count - 1, 0))
             selectedWorldNoteID = document.worldNotes.indices.contains(fallbackIndex)

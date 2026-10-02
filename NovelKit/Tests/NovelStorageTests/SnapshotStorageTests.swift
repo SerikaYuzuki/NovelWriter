@@ -57,7 +57,7 @@ import Testing
     let secondURL = try await repository.saveSnapshot(doc, to: packageURL)
 
     let listed = try await repository.listSnapshots(in: packageURL)
-    #expect(listed.map(\.url.lastPathComponent) == [
+    #expect(listed.map { $0.url.lastPathComponent } == [
         secondURL.lastPathComponent,
         firstURL.lastPathComponent
     ])
@@ -91,10 +91,10 @@ import Testing
 
     let restored = try await repository.load(from: packageURL)
     #expect(restored.chapters[0].episodes[0].content == "初版")
-    #expect(try await repository.listAttachments(in: packageURL).map(\.fileName) == ["旧資料.txt"])
+    #expect(try await repository.listAttachments(in: packageURL).map { $0.fileName } == ["旧資料.txt"])
 
     let listed = try await repository.listSnapshots(in: packageURL)
-    #expect(Set(listed.map(\.url.lastPathComponent)) == Set([
+    #expect(Set(listed.map { $0.url.lastPathComponent }) == Set([
         snapshotURL.lastPathComponent,
         backupURL.lastPathComponent
     ]))

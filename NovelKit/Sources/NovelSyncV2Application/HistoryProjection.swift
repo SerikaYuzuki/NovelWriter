@@ -49,10 +49,16 @@ public struct SyncV2LocalHistoryPage: Hashable, Sendable {
 /// One occurrence, never a snapshot-ID merge. A local and a remote occurrence
 /// with the same SnapshotID remain two rows because their retention and restore
 /// authority are different.
+public enum SyncV2SnapshotAvailability: String, Hashable, Sendable {
+    case local, unfetched, unknown
+}
+
 public struct SyncV2HistoryItem: Hashable, Sendable {
+    public var snapshotAvailability: SyncV2SnapshotAvailability = .local
+
     public var displayReason: String {
         switch reason {
-        case "autosave": "自動保存"
+        case "autosave", "autosaveLeaf": "自動保存"
         case "explicit": "手動保存"
         case "navigation": "画面切替時の保存"
         case "close": "終了時の保存"

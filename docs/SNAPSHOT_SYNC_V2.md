@@ -92,6 +92,20 @@ manifest is deliberately small; entity payload schemas remain closed and are
 versioned by content type. A server may retain history, but may not mutate an
 accepted manifest.
 
+D-106 installs only the pinned head H for an explicitly opened or downloaded
+work. `shallow_boundaries` records missing parents without weakening ordinary
+parent attestation: the disjoint union of real edges and boundaries must exactly
+match each manifest. Local snapshots require local parents. Every insertion
+replaces incoming boundaries atomically; complete history is never truncated.
+`history_backfills` persists the root, exact binding, state and safe group cursor.
+Each verified page commits with its cursor in one transaction, never changing
+current snapshot or local generation. Validation runs outside the SQLite write
+transaction; edits, promotion and publish continue against H. Newer heads enter
+through the existing Inbox/document gate. Missing ancestry is retryable
+`historyIncomplete`, never evidence of disjointness or a null conflict base.
+Initial mode rejection falls back to the complete D-101/D-102 import. See
+[design](sync/v2/shallow-history-design.md) and [verification](sync/v2/shallow-history-verification.md).
+
 Checkpoint capture is atomic and has these required fields:
 
 ```text
@@ -99,8 +113,43 @@ checkpointId, workId, snapshotId, localGeneration,
 currentBefore, reason, pinned, accountBinding, sealedCommandId?
 ```
 
-Autosave produces dense local leaves from the stable checkpoint. Manual and
-lifecycle checkpoints promote a leaf or occurrence atomically. Restore first
+Autosave produces dense local leaves from the stable checkpoint (D-103).
+The stable checkpoint is the last promoted snapshot, initially the current
+snapshot of an upgraded work or the acknowledged head installed by import.
+Every changed autosave commits its immutable snapshot, objects, current pointer,
+generation and local history atomically, with the stable checkpoint as parent
+(not the preceding leaf). It creates no sync intent, upload, register or publish.
+A new work without any stable checkpoint has parentless local leaves until its
+first promotion. Unchanged autosaves do not add another occurrence.
+
+Manual and lifecycle checkpoints promote the latest leaf or occurrence
+atomically: protecting reasons `explicit`, `navigation`, `close`, `migration`,
+work switch/background/termination, explicit sync, 60 seconds after the last
+changed autosave, and at most 300 seconds from the first outstanding leaf while
+writing continues. Both intervals live in `SyncV2PromotionClock`; its clock and
+sleep are injectable. Promotion protects the existing snapshot and creates its
+normal account-scoped intent in the same SQLite transaction. A protecting save
+with new content commits that content directly against the prior stable point.
+Network work starts only after commit and never gates local saving.
+
+Open promotes a crash-retained leaf. Launch/first recovery for an attested
+binding also promotes unopened works; later periodic worker wakes do not.
+A changed remote-head check reconciles a local leaf by first promoting it, so
+normal expected-head CAS yields the same explicit conflict instead of silently
+adopting over local changes. Same-account fence/rebind replanning protects any
+leaf it queues. A parked or deleting work cannot publish through these paths.
+Promotion reads durable bytes only and never captures, commits or installs
+marked editor text; platform lifecycle saves retain their IME/session gates.
+
+No SQLite schema migration is needed: new leaves use history reason
+`autosaveLeaf`, `pinned=0`; an additional pinned occurrence (`promotion` or the
+protecting reason) marks promotion of those same bytes. The UI labels leaves
+「自動保存」. Any legacy occurrence, including old `autosave` rows, is stable;
+its graph, occurrences and pending intents remain intact. Leaves that are not
+promoted remain in local history and are never pruned by this change. Only
+promoted/protected snapshots and their required ancestors are registered.
+
+Restore first
 protects the current state, then creates a new two-parent Snapshot whose
 content is the selected historical Snapshot; it never rewinds the head in
 place. A keep-both resolution creates a new WorkID and never silently changes
@@ -164,6 +213,7 @@ The v2 wire has these endpoints under `/v2`:
 | POST | `/v2/works/{work_id}/conflict/resolve` | one of the three choices |
 | POST | `/v2/works/{work_id}/restore` | new two-parent restore Snapshot |
 | GET | `/v2/works` | account-scoped catalog; no cross-account existence leak |
+| GET | `/v2/works/{work_id}/download` | [bounded, read-only pages](sync/v2/download.md) of pinned ancestry and deduplicated small objects |
 
 Every sealed-command body contains `schemaVersion: 2`, `commandId`, `binding`, and
 the operation-specific payload. The server derives the authenticated account

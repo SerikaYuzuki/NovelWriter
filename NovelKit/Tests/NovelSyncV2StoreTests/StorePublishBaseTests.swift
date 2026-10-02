@@ -11,13 +11,17 @@ func editingBeforeRemoteAdoptionUsesAncestralHeadAndRecoversLegacyRejection() as
     let workID = WorkID(UUID())
     let document = makeDocument(title: "base")
     let base = try await store.checkpoint(V2CheckpointRequest(
-        workID: workID, document: document, documentCreatedAt: testDate, expectedGeneration: 0
+        workID: workID, document: document, documentCreatedAt: testDate, expectedGeneration: 0, reason: .explicit
     ), scope: scopeA)
     let baseHead = try V2RemoteHead(snapshotID: base.snapshotID, generation: 1)
     let first = try publishCommand(workID: workID, checkpoint: base)
     try await store.seal(first, intentID: base.intentID, scope: scopeA)
     try await store.acknowledge(commandAcknowledgement(first, head: baseHead), scope: scopeA)
-    try await store.requestSynchronization(workID: workID, scope: scopeA)
+    // Old releases queued a probe publish for already received content.
+    // Preserve that legacy recovery scenario without reintroducing the bug.
+    let intentID = UUID()
+    try await store.insertIntent(intentID: intentID, workID: workID, snapshotID: base.snapshotID,
+                                 generation: base.generation, kind: "checkpoint", scope: scopeA)
     let pending = try #require(await store.pendingIntents(scope: scopeA).first)
     let probe = try publishCommand(workID: workID, checkpoint: base, expectedHead: baseHead)
     try await store.seal(probe, intentID: pending.intentID, scope: scopeA)
@@ -25,7 +29,7 @@ func editingBeforeRemoteAdoptionUsesAncestralHeadAndRecoversLegacyRejection() as
     var edited = document
     edited.title = "offline edit"
     let local = try await store.checkpoint(V2CheckpointRequest(
-        workID: workID, document: edited, documentCreatedAt: testDate, expectedGeneration: base.generation
+        workID: workID, document: edited, documentCreatedAt: testDate, expectedGeneration: base.generation, reason: .explicit
     ), scope: scopeA)
     var remoteDocument = document
     remoteDocument.title = "other device edit"
@@ -78,12 +82,12 @@ func remoteConflictPreservesVerifiedGraphBaseAndServerIdentity() async throws {
     let workID = WorkID(UUID())
     let document = makeDocument(title: "base")
     let base = try await store.checkpoint(V2CheckpointRequest(
-        workID: workID, document: document, documentCreatedAt: testDate, expectedGeneration: 0
+        workID: workID, document: document, documentCreatedAt: testDate, expectedGeneration: 0, reason: .explicit
     ), scope: scopeA)
     var edited = document
     edited.title = "local"
     let local = try await store.checkpoint(V2CheckpointRequest(
-        workID: workID, document: edited, documentCreatedAt: testDate, expectedGeneration: base.generation
+        workID: workID, document: edited, documentCreatedAt: testDate, expectedGeneration: base.generation, reason: .explicit
     ), scope: scopeA)
     var remoteDocument = document
     remoteDocument.title = "remote first"
@@ -140,7 +144,7 @@ func signingBackIntoSameAccountRecoversVerifiedPublishBase() async throws {
     let workID = WorkID(UUID())
     var document = makeDocument(title: "before sign-out")
     let base = try await store.checkpoint(V2CheckpointRequest(
-        workID: workID, document: document, documentCreatedAt: testDate, expectedGeneration: 0
+        workID: workID, document: document, documentCreatedAt: testDate, expectedGeneration: 0, reason: .explicit
     ), scope: scopeA)
     let head = try V2RemoteHead(snapshotID: base.snapshotID, generation: 1)
     let published = try publishCommand(workID: workID, checkpoint: base)
@@ -148,7 +152,7 @@ func signingBackIntoSameAccountRecoversVerifiedPublishBase() async throws {
     try await store.acknowledge(commandAcknowledgement(published, head: head), scope: scopeA)
     document.title = "local edit retained"
     _ = try await store.checkpoint(V2CheckpointRequest(
-        workID: workID, document: document, documentCreatedAt: testDate, expectedGeneration: base.generation
+        workID: workID, document: document, documentCreatedAt: testDate, expectedGeneration: base.generation, reason: .explicit
     ), scope: scopeA)
     guard case let .bound(binding) = scopeA else { throw SyncV2StoreError.accountMismatch }
     try await store.transitionAccountScopes(from: binding, to: nil)

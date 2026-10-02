@@ -91,7 +91,7 @@ struct ProductionInboxIsolationTests {
         let sealed = try await store.allSealedCommands(scope: productionScope, workID: targetWorkID)
         #expect(sealed.first { $0.commandID == publish.commandId }?.lifecycle == .quarantined)
         let afterWorks = try await store.listWorks(scope: productionScope)
-        #expect(afterWorks.map(\.workID) == beforeWorks.map(\.workID))
+        #expect(afterWorks.map { $0.workID } == beforeWorks.map { $0.workID })
         let target = try await store.open(workID: targetWorkID, scope: productionScope)
         #expect(target.summary.currentSnapshotID == checkpoint.snapshotID)
         #expect(try await store.listWorks(scope: .unbound).isEmpty)

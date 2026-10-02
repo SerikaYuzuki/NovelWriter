@@ -6,6 +6,8 @@ import NovelSyncV2Store
 actor ProductionSyncV2Planner: SyncV2CommandPlanner {
     let store: LocalSyncV2Store
     let scope: any SyncV2ScopeResolver
+    private var recoveredCommandBindings: Set<V2AccountBinding> = []
+    private var recoveredLeafBindings: Set<V2AccountBinding> = []
     /// Immutable object presence is reusable only in this exact account,
     /// server, protocol, fence, and Work namespace. It is separate from a
     /// command's upload capability session.
@@ -28,22 +30,60 @@ actor ProductionSyncV2Planner: SyncV2CommandPlanner {
         let commandID: UUID
     }
 
+    // Object availability grows within a binding/work; checkpoints do not
+    // invalidate it. Revisions prevent late actor completions repopulating
+    // a cache invalidated during account transitions or deletion.
+    private var loadedPresence: [WorkID: V2AccountBinding] = [:]
+    private var presenceRevisions: [WorkID: UInt64] = [:]
+    private let loadKnownRemoteObjects: @Sendable (WorkID, V2LocalWorkScope) async throws -> Set<ObjectID>
     private var remoteObjectPresence: Set<RemoteObjectPresenceKey> = []
     private var transfers: [TransferSessionKey: SyncV2UploadTransfer] = [:]
     private var planningTasks: [WorkID: Task<SyncV2CommandPlan, Error>] = [:]
 
-    init(store: LocalSyncV2Store, scope: any SyncV2ScopeResolver) {
+    init(
+        store: LocalSyncV2Store,
+        scope: any SyncV2ScopeResolver,
+        loadKnownRemoteObjects: (@Sendable (WorkID, V2LocalWorkScope) async throws -> Set<ObjectID>)? = nil
+    ) {
         self.store = store
         self.scope = scope
+        self.loadKnownRemoteObjects = loadKnownRemoteObjects ?? { workID, scope in
+            try await store.knownRemoteObjectIDs(workID: workID, scope: scope)
+        }
     }
 
     func pendingWorkIDs() async throws -> [WorkID] {
         guard let binding = try await scope.activeBinding() else { return [] }
+        // Periodic UI refresh also resumes workers. Recover only on first
+        // launch/login for this binding, never turn those polls into promotions.
+        if recoveredLeafBindings.insert(binding).inserted {
+            do {
+                try await store.promoteUnpromotedLeaves(scope: .bound(binding))
+            } catch {
+                recoveredLeafBindings.remove(binding)
+                throw error
+            }
+        }
+        try await recoverLegacyCommandsOnce(binding: binding)
         return try await store.pendingWorkIDs(scope: .bound(binding))
+    }
+
+    private func recoverLegacyCommandsOnce(binding: V2AccountBinding) async throws {
+        guard recoveredCommandBindings.insert(binding).inserted else { return }
+        do {
+            try await store.retryUnacknowledgedCommands(scope: .bound(binding))
+        } catch {
+            recoveredCommandBindings.remove(binding)
+            throw error
+        }
     }
 
     func invalidateCaches(for workIDs: Set<WorkID>) async {
         guard !workIDs.isEmpty else { return }
+        for workID in workIDs {
+            loadedPresence.removeValue(forKey: workID)
+            presenceRevisions[workID, default: 0] &+= 1
+        }
         transfers = transfers.filter { !workIDs.contains($0.key.workID) }
         remoteObjectPresence = remoteObjectPresence.filter { !workIDs.contains($0.workID) }
     }
@@ -68,12 +108,16 @@ actor ProductionSyncV2Planner: SyncV2CommandPlanner {
             return .idle
         }
         let localScope = try await scope.existingScope(workID: workID)
-        guard case .bound = localScope else {
+        guard case let .bound(binding) = localScope else {
             await invalidateCaches(for: [workID])
             // Local-only works have no remote lane. Their durable intent is
             // retained locally; opening or saving them is not an auth failure.
             return .idle
         }
+        if let loaded = loadedPresence[workID], loaded != binding {
+            await invalidateCaches(for: [workID])
+        }
+        try await recoverLegacyCommandsOnce(binding: binding)
         if let reason = try await store.quarantinedUploadReason(workID: workID, scope: localScope) {
             return .blocked(.fatal(SyncV2FatalReason(rawValue: reason) ?? .unexpected))
         }
@@ -84,8 +128,8 @@ actor ProductionSyncV2Planner: SyncV2CommandPlanner {
             return try .command(SealedCommand.decodeCanonical(record.canonicalRequest))
         }
         let records = try await store.planningGuardCommands(scope: localScope, workID: workID)
-        if records.contains(where: { $0.commandKind == "createWork" && $0.lifecycle == .quarantined }),
-           !records.contains(where: { $0.commandKind == "createWork" && $0.lifecycle == .completed }) {
+        if records.contains(where: { $0.kind == .createWork && $0.lifecycle == .quarantined }),
+           !records.contains(where: { $0.kind == .createWork && $0.lifecycle == .completed }) {
             return .blocked(.receiptMismatch)
         }
         let pending = try await store.pendingIntents(scope: localScope, workID: workID)
@@ -98,7 +142,7 @@ actor ProductionSyncV2Planner: SyncV2CommandPlanner {
         }
         return try await planPending(
             workID: workID, scope: localScope, pending: pending,
-            hasCreatedWork: records.contains { $0.commandKind == "createWork" && $0.lifecycle == .completed }
+            hasCreatedWork: records.contains { $0.kind == .createWork && $0.lifecycle == .completed }
         )
     }
 
@@ -195,7 +239,15 @@ private extension ProductionSyncV2Planner {
                 resolutionIntentID: resolutionIntentID
             )
         }
-        let command = try makePublish(view)
+        let command: SealedCommand
+        if view.pendingIntent.kind == "restore" {
+            let source = try await store.restoreCommandSource(
+                workID: workID, intentID: view.pendingIntent.intentID, scope: localScope
+            )
+            command = try makeRestore(view, source: source)
+        } else {
+            command = try makePublish(view)
+        }
         try await store.seal(command, intentID: view.pendingIntent.intentID, scope: localScope)
         return .command(command)
     }
@@ -205,6 +257,15 @@ private extension ProductionSyncV2Planner {
         scope localScope: V2LocalWorkScope,
         view: V2ImmutableTransferView
     ) async throws -> SyncV2CommandPlan? {
+        if loadedPresence[workID] != view.binding {
+            let revision = presenceRevisions[workID, default: 0]
+            let known = try await loadKnownRemoteObjects(workID, localScope)
+            guard presenceRevisions[workID, default: 0] == revision else { throw CancellationError() }
+            remoteObjectPresence.formUnion(known.map {
+                RemoteObjectPresenceKey(binding: view.binding, workID: workID, objectID: $0)
+            })
+            loadedPresence[workID] = view.binding
+        }
         // Read only this dependency occurrence, not every historical request.
         let currentRecords = try await store.completedTransferCommands(
             scope: localScope, workID: workID,
@@ -216,8 +277,10 @@ private extension ProductionSyncV2Planner {
             view: view,
             records: currentRecords
         )
-        if let object = view.snapshot.manifest.entries.map(\.objectId).first(where: { !progress.prepared.contains($0) }) {
-            let command = try makeObjectCommand(kind: "prepareObject", objectID: object, view: view)
+        if let object = view.snapshot.manifest.entries.map(\.objectId).first(where: { !progress.prepared.contains($0) &&
+                !remoteObjectPresence.contains(RemoteObjectPresenceKey(binding: view.binding, workID: workID, objectID: $0))
+        }) {
+            let command = try makeObjectCommand(kind: .prepareObject, objectID: object, view: view)
             try await store.seal(command, scope: localScope)
             return .command(command)
         }
@@ -230,17 +293,17 @@ private extension ProductionSyncV2Planner {
         ) {
             return upload
         }
-        let ready = progress.finalized.union(
-            remoteObjectPresence
-                .filter { $0.binding == view.binding && $0.workID == workID }
-                .map(\.objectID)
-        )
+        // Test only this occurrence's objects, without scanning the growing
+        // cache on every autosave command.
+        let ready = progress.finalized.union(progress.prepared.filter {
+            remoteObjectPresence.contains(RemoteObjectPresenceKey(binding: view.binding, workID: workID, objectID: $0))
+        })
         if !progress.prepared.isSubset(of: ready) {
             guard let object = progress.prepared.subtracting(ready).first else {
                 return .blocked(.fatal(.invalidLocalState))
             }
             let command = try makeObjectCommand(
-                kind: "finalizeObject",
+                kind: .finalizeObject,
                 objectID: object,
                 view: view,
                 uploadID: currentTransfer(
@@ -273,15 +336,26 @@ private extension ProductionSyncV2Planner {
         view: V2ImmutableTransferView,
         records: [V2SealedCommandRecord]
     ) async throws -> TransferProgress {
+        let revision = presenceRevisions[workID, default: 0]
+        guard loadedPresence[workID] == view.binding else { throw CancellationError() }
         var prepared = Set<ObjectID>()
         var uploaded = Set<ObjectID>()
         var finalized = Set<ObjectID>()
         var registered = false
         for record in records {
-            switch record.commandKind {
-            case "prepareObject":
+            guard presenceRevisions[workID, default: 0] == revision else { throw CancellationError() }
+            switch record.kind {
+            case .prepareObject:
                 let object = try objectID(record)
-                if let transfer = try await store.uploadTransfer(commandID: record.commandID, scope: localScope) {
+                // A replayed receipt can already be expired before any transfer
+                // was created (for example after a response-less quarantine).
+                // Materialize it before counting the object as prepared so the
+                // ordinary fresh-command path renews the capability without PUT.
+                var stored = try await store.uploadTransfer(commandID: record.commandID, scope: localScope)
+                if stored == nil, try await makeTransfer(from: record, view: view) != nil {
+                    stored = try await store.uploadTransfer(commandID: record.commandID, scope: localScope)
+                }
+                if let transfer = stored {
                     if transfer.expiresAt <= Date() {
                         continue
                     }
@@ -294,6 +368,7 @@ private extension ProductionSyncV2Planner {
                 prepared.insert(object)
                 if let receipt = try await store.receiptReadback(commandID: record.commandID, scope: localScope),
                    receipt.result == .noChanges {
+                    guard presenceRevisions[workID, default: 0] == revision else { throw CancellationError() }
                     remoteObjectPresence.insert(
                         RemoteObjectPresenceKey(
                             binding: view.binding,
@@ -302,14 +377,17 @@ private extension ProductionSyncV2Planner {
                         )
                     )
                 }
-            case "finalizeObject":
-                try finalized.insert(objectID(record))
-            case "registerSnapshot":
+            case .finalizeObject:
+                let object = try objectID(record)
+                finalized.insert(object)
+                remoteObjectPresence.insert(RemoteObjectPresenceKey(binding: view.binding, workID: workID, objectID: object))
+            case .registerSnapshot:
                 registered = try commandSnapshotID(record) == view.snapshot.snapshotId
             default:
                 continue
             }
         }
+        guard presenceRevisions[workID, default: 0] == revision else { throw CancellationError() }
         return TransferProgress(prepared: prepared, uploaded: uploaded, finalized: finalized, registered: registered)
     }
 
@@ -332,7 +410,7 @@ private extension ProductionSyncV2Planner {
         }
         guard let target = candidates.first else { return nil }
         guard let prepare = records.reversed().first(where: {
-            $0.commandKind == "prepareObject" && (try? objectID($0)) == target
+            $0.kind == .prepareObject && (try? objectID($0)) == target
         }) else {
             return nil
         }
@@ -357,7 +435,7 @@ private extension ProductionSyncV2Planner {
         records: [V2SealedCommandRecord]
     ) -> SyncV2UploadTransfer? {
         guard let prepare = records.reversed().first(where: {
-            $0.commandKind == "prepareObject" && (try? self.objectID($0)) == objectID
+            $0.kind == .prepareObject && (try? self.objectID($0)) == objectID
         }) else { return nil }
         return transfers[
             transferSessionKey(for: prepare, objectID: objectID, view: view)
@@ -500,6 +578,7 @@ extension ProductionSyncV2Planner {
     ) async throws {
         let workID = try command.workID
         let localScope = try await scope.existingScope(workID: workID)
+        let revision = presenceRevisions[workID, default: 0]
         do {
             try await store.acknowledge(
                 V2CommandAcknowledgement(
@@ -509,6 +588,18 @@ extension ProductionSyncV2Planner {
                 scope: localScope,
                 verifiedPublishInboxID: verifiedInboxID
             )
+            // Verification happens before acknowledgement in the worker, so
+            // inbox objects are known even if editor adoption is deferred.
+            let known = try await store.acknowledgedRemoteObjectIDs(
+                commandID: command.commandId, verifiedInboxID: verifiedInboxID, scope: localScope
+            )
+            if case let .bound(binding) = localScope,
+               loadedPresence[workID] == binding,
+               presenceRevisions[workID, default: 0] == revision {
+                remoteObjectPresence.formUnion(known.map {
+                    RemoteObjectPresenceKey(binding: binding, workID: workID, objectID: $0)
+                })
+            }
         } catch {
             throw SyncV2Failure.receiptMismatch
         }
@@ -534,175 +625,6 @@ extension ProductionSyncV2Planner {
 }
 
 private extension ProductionSyncV2Planner {
-    func makeCreateWork(_ view: V2ImmutableTransferView) throws -> SealedCommand {
-        try makeCommand(kind: "createWork", payload: CreateWorkPayload(documentId: view.summary.documentID.description, workId: view.workID.description), view: view)
-    }
-
-    func makeObjectCommand(
-        kind: String,
-        objectID: ObjectID,
-        view: V2ImmutableTransferView,
-        uploadID: UUID? = nil
-    ) throws -> SealedCommand {
-        if kind == "prepareObject" {
-            return try makeCommand(
-                kind: kind,
-                payload: PrepareObjectPayload(
-                    byteCount: view.snapshot.objects[objectID]?.count ?? 0,
-                    objectId: objectID.rawValue,
-                    workId: view.workID.description
-                ),
-                view: view
-            )
-        }
-        guard let uploadID else { throw SyncV2Failure.fatal(.invalidLocalState) }
-        return try makeCommand(
-            kind: kind,
-            payload: FinalizeObjectPayload(
-                byteCount: view.snapshot.objects[objectID]?.count ?? 0,
-                objectId: objectID.rawValue,
-                uploadId: uploadID.uuidString.lowercased(),
-                workId: view.workID.description
-            ),
-            view: view
-        )
-    }
-
-    func makeRegister(_ view: V2ImmutableTransferView) throws -> SealedCommand {
-        try makeCommand(
-            kind: "registerSnapshot",
-            payload: RegisterSnapshotPayload(
-                manifestBase64URL: view.snapshot.manifestBytes.base64URLEncodedString(),
-                manifestBytesDigest: view.snapshot.snapshotId.rawValue,
-                snapshotId: view.snapshot.snapshotId.rawValue,
-                workId: view.workID.description
-            ),
-            view: view
-        )
-    }
-
-    func makePublish(_ view: V2ImmutableTransferView) throws -> SealedCommand {
-        let envelope = CommandEnvelope(
-            binding: CommandBinding(binding: view.binding),
-            commandId: UUID().uuidString.lowercased(),
-            commandKind: "publish",
-            payload: PublishPayload(
-                candidateSnapshotId: view.snapshot.snapshotId.rawValue,
-                expectedRemoteHead: view.expectedRemoteHead.map(CommandHead.init) ?? nil,
-                workId: view.workID.description
-            ),
-            schemaVersion: 2,
-            sourceGeneration: view.pendingIntent.sourceGeneration,
-            sourceSnapshotId: view.pendingIntent.sourceSnapshotID.rawValue
-        )
-        return try SealedCommand.decodeCanonical(CanonicalJSON.encode(envelope))
-    }
-
-    func makeResolveServer(_ view: V2ImmutableTransferView, conflict: V2ConflictCandidate) throws -> SealedCommand {
-        try makeCommand(
-            kind: "resolveServer",
-            payload: ResolveServerPayload(
-                conflictId: conflict.conflictID.uuidString.lowercased(),
-                conflictRevision: conflict.revision,
-                expectedCurrentSnapshotId: conflict.localSnapshotID.rawValue,
-                expectedLocalGeneration: conflict.sourceGeneration,
-                preAdoptionSnapshotId: conflict.localSnapshotID.rawValue,
-                remoteSnapshotId: conflict.remoteSnapshotID.rawValue,
-                workId: view.workID.description
-            ),
-            view: view
-        )
-    }
-
-    func makeResolveDevice(
-        _ view: V2ImmutableTransferView,
-        conflict: V2ConflictCandidate,
-        decisionSnapshotID: SnapshotID,
-        expectedRemoteHead: V2RemoteHead
-    ) throws -> SealedCommand {
-        let envelope = CommandEnvelope(
-            binding: CommandBinding(binding: view.binding),
-            commandId: UUID().uuidString.lowercased(),
-            commandKind: "resolveDevice",
-            payload: ResolveDevicePayload(
-                conflictId: conflict.conflictID.uuidString.lowercased(),
-                conflictRevision: conflict.revision,
-                decisionSnapshotId: decisionSnapshotID.rawValue,
-                expectedRemoteHead: CommandHead(expectedRemoteHead),
-                localCandidateSnapshotId: conflict.localSnapshotID.rawValue,
-                workId: view.workID.description
-            ),
-            schemaVersion: 2,
-            sourceGeneration: conflict.sourceGeneration,
-            sourceSnapshotId: conflict.localSnapshotID.rawValue
-        )
-        return try SealedCommand.decodeCanonical(CanonicalJSON.encode(envelope))
-    }
-
-    func makeClone(
-        _ view: V2ImmutableTransferView,
-        conflict: V2ConflictCandidate,
-        reservation: V2KeepBothReservation,
-        remoteHead: V2RemoteHead
-    ) throws -> SealedCommand {
-        let envelope = CommandEnvelope(
-            binding: CommandBinding(binding: view.binding),
-            commandId: UUID().uuidString.lowercased(),
-            commandKind: "cloneWork",
-            payload: CloneWorkPayload(
-                conflictId: conflict.conflictID.uuidString.lowercased(),
-                conflictRevision: conflict.revision,
-                expectedOriginalHead: CommandHead(remoteHead),
-                localCandidateSnapshotId: conflict.localSnapshotID.rawValue,
-                newDocumentId: reservation.newDocumentID.description,
-                newRootSnapshotId: reservation.newRootSnapshotID.rawValue,
-                newWorkId: reservation.newWorkID.description,
-                sourceWorkId: view.workID.description
-            ),
-            schemaVersion: 2,
-            sourceGeneration: conflict.sourceGeneration,
-            sourceSnapshotId: conflict.localSnapshotID.rawValue
-        )
-        return try SealedCommand.decodeCanonical(CanonicalJSON.encode(envelope))
-    }
-
-    func makeCommand(
-        kind: String,
-        payload: some Encodable,
-        view: V2ImmutableTransferView
-    ) throws -> SealedCommand {
-        let envelope = CommandEnvelope(
-            binding: CommandBinding(binding: view.binding),
-            commandId: UUID().uuidString.lowercased(),
-            commandKind: kind,
-            payload: payload,
-            schemaVersion: 2,
-            sourceGeneration: view.sourceGeneration,
-            sourceSnapshotId: view.snapshot.snapshotId.rawValue
-        )
-        return try SealedCommand.decodeCanonical(CanonicalJSON.encode(envelope))
-    }
-
-    func objectID(_ record: V2SealedCommandRecord) throws -> ObjectID {
-        let object = try JSONSerialization.jsonObject(with: record.canonicalRequest)
-        guard let dictionary = object as? [String: Any],
-              let payload = dictionary["payload"] as? [String: Any],
-              let raw = payload["objectId"] as? String else {
-            throw SyncV2Failure.fatal(.invalidLocalState)
-        }
-        return try ObjectID(rawValue: raw)
-    }
-
-    func commandSnapshotID(_ record: V2SealedCommandRecord) throws -> SnapshotID {
-        let object = try JSONSerialization.jsonObject(with: record.canonicalRequest)
-        guard let dictionary = object as? [String: Any],
-              let payload = dictionary["payload"] as? [String: Any],
-              let raw = payload["snapshotId"] as? String else {
-            throw SyncV2Failure.fatal(.invalidLocalState)
-        }
-        return try SnapshotID(rawValue: raw)
-    }
-
     func makeTransfer(from record: V2SealedCommandRecord, view: V2ImmutableTransferView) async throws -> SyncV2UploadTransfer? {
         let objectID = try objectID(record)
         if let stored = try await store.uploadTransfer(commandID: record.commandID, scope: .bound(view.binding)) {
@@ -756,22 +678,10 @@ private extension ProductionSyncV2Planner {
     }
 }
 
-private extension Data {
-    func base64URLEncodedString() -> String {
-        base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
-    }
-}
-
 private extension SealedCommand {
     var workID: WorkID {
         get throws {
-            let object = try JSONSerialization.jsonObject(
-                with: payloadBytes
-            ) as? [String: Any]
-            let raw = object?["workId"] as? String ??
-                object?["sourceWorkId"] as? String
-            guard let raw else { throw SyncV2Failure.receiptMismatch }
-            return try WorkID(uuidString: raw)
+            try payload.workID
         }
     }
 }

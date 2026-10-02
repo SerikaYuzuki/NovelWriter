@@ -7,6 +7,13 @@ extension ProductionSyncV2Planner {
         let localScope = try await scope.existingScope(workID: workID)
         guard case let .bound(binding) = localScope,
               let candidate = try await store.automaticSyncCandidate(workID: workID, scope: localScope) else { return nil }
+        let summary = try await store.workSummary(workID: workID, scope: localScope)
+        let acknowledged: SnapshotID? = if let id = summary.currentSnapshotID,
+                                           try await store.isAcknowledgedContent(workID: workID, snapshotID: id, scope: localScope) {
+            id
+        } else {
+            nil
+        }
         return try SyncV2AutomaticSyncCandidate(
             generation: candidate.generation,
             head: SyncV2RemoteHead(snapshotID: candidate.head.snapshotID, generation: candidate.head.generation),
@@ -15,7 +22,7 @@ extension ProductionSyncV2Planner {
                 accountFence: binding.accountFence,
                 serverInstanceID: binding.serverInstanceID,
                 protocolEpoch: binding.protocolEpoch
-            )
+            ), acknowledgedSnapshotID: acknowledged
         )
     }
 

@@ -2,6 +2,7 @@ import Foundation
 import NovelCore
 import NovelSyncV2
 import NovelSyncV2Application
+import SwiftUI
 
 /// macOSのv2作品棚とremote catalogの投影。
 extension AppState {
@@ -31,23 +32,22 @@ extension AppState {
         case .signedIn: .available
         case .signedOut, .unavailable, .signingIn, .failed: .offline
         }
-        guard let projection = try? await application.library() else {
+        let projection: SyncV2LibraryProjection
+        do {
+            projection = try await application.library()
+        } catch {
             guard matchesSnapshotSyncV2AccountScope(accountScope) else { return }
-            // A transient local read failure must not erase the last verified
-            // shelf. The cached projection remains usable offline and is
-            // refreshed on the next explicit/background read.
+            snapshotSyncLibraryLocalFailure = syncV2FailureKind(error)
+            logSyncV2PresentationFailure(error)
+            // Keep the last verified shelf on read failure.
             if shouldPresentSelection {
-                startupState = .documentSelection(
-                    .init(
-                        works: snapshotSyncLibraryWorks,
-                        presentation: .localAndRemote,
-                        connection: connection
-                    )
-                )
+                startupState = .documentSelection(.init(works: snapshotSyncLibraryWorks,
+                                                        presentation: .localAndRemote, connection: connection))
             }
             return
         }
         guard matchesSnapshotSyncV2AccountScope(accountScope) else { return }
+        snapshotSyncLibraryLocalFailure = nil
         let pendingDeletionIDs = await (try? application.pendingDeletionWorkIDs()) ?? []
         let deletedIDs = await (try? application.deletedWorkIDs()) ?? []
         guard matchesSnapshotSyncV2AccountScope(accountScope) else { return }
@@ -61,35 +61,7 @@ extension AppState {
         snapshotSyncCurrentWorkAccountState = currentSnapshotSyncV2WorkID.flatMap { workID in
             projection.items.first(where: { $0.workID == workID })?.accountState
         }
-        var worksByID = Dictionary(uniqueKeysWithValues: projection.items.compactMap { item -> (WorkID, StartupLibraryWork)? in
-            guard item.accountState == .active || item.accountState == .unbound
-                || item.accountState == .parkedDifferentAccount else { return nil }
-            let availability: StartupLibraryWorkAvailability = if item.accountState == .parkedDifferentAccount {
-                .parked
-            } else {
-                switch item.availability {
-                case .localOnly: .local
-                case .cached: .cached
-                case .remoteOnly: .remoteOnly
-                }
-            }
-            let withConflict = item.accountState != .parkedDifferentAccount &&
-                item.remoteProgress == .needsChoice
-            let remoteProgress: SyncV2RemoteProgress = if item.accountState == .parkedDifferentAccount {
-                .parkedDifferentAccount
-            } else {
-                item.remoteProgress
-            }
-            let work = StartupLibraryWork(
-                id: item.workID.rawValue,
-                title: item.title,
-                availability: withConflict ? .conflict : availability,
-                workID: item.workID,
-                remoteProgress: remoteProgress,
-                oldestUnreceivedAt: item.oldestUnreceivedAt
-            )
-            return (item.workID, work)
-        })
+        var worksByID = Dictionary(uniqueKeysWithValues: projection.items.compactMap(Self.startupLibraryWork))
         for remote in snapshotSyncRemoteCatalogItems {
             if parkedWorkIDs.contains(remote.workID) || deletedIDs.contains(remote.workID) {
                 continue
@@ -97,14 +69,17 @@ extension AppState {
             if let local = worksByID[remote.workID] {
                 let availability: StartupLibraryWorkAvailability = local.availability == .conflict
                     ? .conflict
-                    : .cached
+                    : (local.availability == .remoteOnly ? .remoteOnly : .cached)
                 worksByID[remote.workID] = StartupLibraryWork(
                     id: remote.workID.rawValue,
-                    title: local.title.isEmpty ? remote.title : local.title,
+                    title: local.availability == .remoteOnly || local.title.isEmpty ? remote.title : local.title,
                     availability: availability,
                     workID: remote.workID,
                     remoteProgress: local.remoteProgress,
-                    oldestUnreceivedAt: local.oldestUnreceivedAt
+                    historyBackfillNote: local.historyBackfillNote,
+                    oldestUnreceivedAt: local.oldestUnreceivedAt,
+                    accountState: local.accountState, remoteHeadConfirmed: local.remoteHeadConfirmed,
+                    localGeneration: local.localGeneration
                 )
             } else {
                 worksByID[remote.workID] = StartupLibraryWork(
@@ -112,36 +87,75 @@ extension AppState {
                     title: remote.title,
                     availability: .remoteOnly,
                     workID: remote.workID,
-                    remoteProgress: .idle
+                    remoteProgress: .idle, accountState: .active
                 )
             }
         }
-        let works = worksByID.values.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+        let works = worksByID.values.sorted { SyncV2LibraryPresentation.precedes(title: $0.title, workID: $0.workID, otherTitle: $1.title, otherWorkID: $1.workID) }
         snapshotSyncLibraryWorks = works
         if shouldPresentSelection {
             startupState = .documentSelection(.init(works: works, presentation: .localAndRemote, connection: connection))
         }
     }
 
+    private static func startupLibraryWork(_ item: SyncV2LibraryItem) -> (WorkID, StartupLibraryWork)? {
+        guard item.accountState == .active || item.accountState == .unbound
+            || item.accountState == .parkedDifferentAccount else { return nil }
+        let availability: StartupLibraryWorkAvailability = if item.accountState == .parkedDifferentAccount {
+            .parked
+        } else {
+            switch item.availability {
+            case .localOnly: .local
+            case .cached: .cached
+            case .remoteOnly: .remoteOnly
+            }
+        }
+        let withConflict = item.accountState != .parkedDifferentAccount &&
+            item.remoteProgress == .needsChoice
+        let remoteProgress: SyncV2RemoteProgress = if item.accountState == .parkedDifferentAccount {
+            .parkedDifferentAccount
+        } else {
+            item.remoteProgress
+        }
+        let work = StartupLibraryWork(
+            id: item.workID.rawValue,
+            title: item.title,
+            availability: withConflict ? .conflict : availability,
+            workID: item.workID,
+            remoteProgress: remoteProgress,
+            historyBackfillNote: item.historyBackfillNote,
+            oldestUnreceivedAt: item.oldestUnreceivedAt,
+            accountState: item.accountState, remoteHeadConfirmed: item.remoteHeadConfirmed,
+            localGeneration: item.localGeneration
+        )
+        return (item.workID, work)
+    }
+
     /// Refresh the account-scoped remote catalog in the background. The
     /// provider performs account/fence filtering; this layer only deduplicates
     /// by WorkID and merges the result into the local shelf.
-    func refreshSnapshotRemoteCatalog() async {
+    func refreshSnapshotRemoteCatalog(loadMore: Bool = false) async {
+        if loadMore, snapshotSyncLibraryIsLoading || snapshotSyncRemoteCatalogNextCursor == nil {
+            return
+        }
         guard let application = snapshotSyncV2Application,
               let session = authSession,
               authUIState == .signedIn(accountID: session.accountID) else { return }
         let accountScope = snapshotSyncV2AccountScopeToken
         let operationToken = UUID()
         snapshotSyncV2CatalogRefreshToken = operationToken
+        snapshotSyncLibraryIsLoading = true
+        snapshotSyncLibraryFailure = nil
         defer {
             if snapshotSyncV2CatalogRefreshToken == operationToken {
                 snapshotSyncV2CatalogRefreshToken = nil
+                snapshotSyncLibraryIsLoading = false
             }
         }
         do {
-            var cursor: String?
-            var items: [SyncV2RemoteCatalogEntry] = []
-            repeat {
+            let cursor = loadMore ? snapshotSyncRemoteCatalogNextCursor : nil
+            var items: [SyncV2RemoteCatalogEntry] = loadMore ? snapshotSyncRemoteCatalogItems : []
+            do {
                 guard matchesSnapshotSyncV2AccountScope(accountScope),
                       snapshotSyncV2CatalogRefreshToken == operationToken else { return }
                 #if FUMINIWA_TEST_COMPOSITION
@@ -156,8 +170,8 @@ extension AppState {
                 guard matchesSnapshotSyncV2AccountScope(accountScope),
                       snapshotSyncV2CatalogRefreshToken == operationToken else { return }
                 items.append(contentsOf: page.items)
-                cursor = page.nextCursor
-            } while cursor != nil
+                snapshotSyncRemoteCatalogNextCursor = page.nextCursor
+            }
             guard matchesSnapshotSyncV2AccountScope(accountScope),
                   snapshotSyncV2CatalogRefreshToken == operationToken else {
                 return
@@ -178,6 +192,8 @@ extension AppState {
             if error as? SyncV2Failure == .authenticationRequired, case .signedIn = authUIState {
                 authUIState = .failed("認証の有効期限が切れました。Appleで再サインインしてください。原稿はこの端末に保存されています。")
             }
+            snapshotSyncLibraryFailure = syncV2FailureKind(error)
+            logSyncV2PresentationFailure(error)
             // Offline catalog reads leave the verified local shelf intact.
         }
     }
@@ -224,12 +240,17 @@ extension AppState {
         guard let application = snapshotSyncV2Application,
               work.isOpenable,
               permitsLibraryWorkOpening else { return false }
+        if snapshotSyncV2RemoteOnlyOpeningWorkID == work.workID, let task = snapshotSyncV2RemoteOnlyOpenTask {
+            return await task.value
+        }
         let accountScope = snapshotSyncV2AccountScopeToken
+        snapshotSyncLibraryOpenFailure = nil
+        operationMessage = nil
         // Selecting another shelf item explicitly retires any older remote
         // download/adoption operation before its bytes can cross the gate.
         cancelSnapshotSyncV2BackgroundOperations()
         if work.availability == .remoteOnly {
-            return startRemoteOnlyOpen(work, using: application)
+            return await startRemoteOnlyOpen(work, using: application)
         }
         return await documentOperationGate.perform { [weak self] in
             guard let self,
@@ -253,26 +274,30 @@ extension AppState {
                 #else
                 let opened = try await application.openLocal(workID: work.workID)
                 #endif
-                guard matchesSnapshotSyncV2AccountScope(accountScope),
-                      let openedDocument = opened.document else { return false }
+                guard matchesSnapshotSyncV2AccountScope(accountScope) else { return false }
+                guard let openedDocument = opened.document else { throw SyncV2ApplicationError.workNotFound }
                 let newSnapshotSession = await application.beginSession(workID: opened.workID)
-                guard matchesSnapshotSyncV2AccountScope(accountScope),
-                      installV2Document(
-                          openedDocument,
-                          workID: opened.workID,
-                          createdAt: opened.documentCreatedAt,
-                          attachments: opened.attachments,
-                          resources: opened.resources,
-                          expectedWorkID: work.workID
-                      ) else {
+                guard matchesSnapshotSyncV2AccountScope(accountScope) else { return false }
+                guard installV2Document(
+                    openedDocument,
+                    workID: opened.workID,
+                    createdAt: opened.documentCreatedAt,
+                    attachments: opened.attachments,
+                    resources: opened.resources,
+                    expectedWorkID: work.workID
+                ) else {
+                    snapshotSyncLibraryOpenFailure = .fatal(.invalidLocalState)
                     operationMessage = "作品データを検証できませんでした。端末の版は変更していません。"
                     return false
                 }
                 snapshotSyncV2Session = newSnapshotSession
                 startupState = .ready
+                scheduleAutomaticServerAdoption(expectedAccountScope: accountScope)
                 await refreshSnapshotSyncV2UIState()
                 return true
             } catch {
+                guard matchesSnapshotSyncV2AccountScope(accountScope) else { return false }
+                reportSnapshotSyncV2OpenFailure(error)
                 return false
             }
         }
@@ -286,21 +311,20 @@ extension AppState {
     private func startRemoteOnlyOpen(
         _ work: StartupLibraryWork,
         using application: SyncV2Application
-    ) -> Bool {
+    ) async -> Bool {
         guard snapshotSyncV2RemoteOnlyOpenTask == nil,
               containsSnapshotSyncV2LibraryWork(work) else { return false }
         let expectedSession = documentSessionToken
         let expectedWorkID = currentSnapshotSyncV2WorkID
         let expectedSnapshotSession = snapshotSyncV2Session
         let accountScope = snapshotSyncV2AccountScopeToken
-        let operationToken = UUID()
-        snapshotSyncV2RemoteOnlyOpenToken = operationToken
-        snapshotSyncV2RemoteOnlyOpenTask = Task { @MainActor [weak self] in
+        let operation = SyncOperationContext(workID: expectedWorkID, session: expectedSession,
+                                             account: accountScope, editGeneration: nil)
+        let operationToken = syncSessionController.beginRemoteOnlyOpen(workID: work.workID)
+        snapshotSyncLibraryOpenFailure = nil
+        let task = Task { @MainActor [weak self] in
             defer {
-                if let self, self.snapshotSyncV2RemoteOnlyOpenToken == operationToken {
-                    self.snapshotSyncV2RemoteOnlyOpenToken = nil
-                    self.snapshotSyncV2RemoteOnlyOpenTask = nil
-                }
+                self?.finishRemoteOnlyOpen(operationToken: operationToken)
             }
             do {
                 #if FUMINIWA_TEST_COMPOSITION
@@ -312,18 +336,18 @@ extension AppState {
                 #else
                 let opened = try await application.open(workID: work.workID)
                 #endif
+                guard opened.document != nil else { throw SyncV2ApplicationError.workNotFound }
                 guard !Task.isCancelled,
                       let self,
                       snapshotSyncV2RemoteOnlyOpenToken == operationToken,
-                      matchesSnapshotSyncV2AccountScope(accountScope) else { return }
+                      matchesSnapshotSyncV2AccountScope(accountScope) else { return false }
+                libraryImportPhases[work.workID] = ImportPhase(stage: .opening)
                 var validationRejected = false
                 let installed = await documentOperationGate.perform { [weak self] in
                     guard let self,
                           snapshotSyncV2RemoteOnlyOpenToken == operationToken,
-                          matchesSnapshotSyncV2AccountScope(accountScope),
+                          matchesSyncOperation(operation),
                           permitsLibraryWorkOpening,
-                          documentSessionToken == expectedSession,
-                          currentSnapshotSyncV2WorkID == expectedWorkID,
                           snapshotSyncV2Session == expectedSnapshotSession,
                           containsSnapshotSyncV2LibraryWork(work),
                           let openedDocument = opened.document,
@@ -334,18 +358,15 @@ extension AppState {
                     if expectedWorkID != nil {
                         guard await saveNow() else { return false }
                     }
+                    guard await (try? application.isCurrentLocalVersion(opened)) == true else { return false }
                     guard !Task.isCancelled,
                           snapshotSyncV2RemoteOnlyOpenToken == operationToken,
-                          matchesSnapshotSyncV2AccountScope(accountScope),
-                          documentSessionToken == expectedSession,
-                          currentSnapshotSyncV2WorkID == expectedWorkID,
+                          matchesSyncOperation(operation),
                           snapshotSyncV2Session == expectedSnapshotSession else { return false }
                     let newSnapshotSession = await application.beginSession(workID: opened.workID)
                     guard !Task.isCancelled,
                           snapshotSyncV2RemoteOnlyOpenToken == operationToken,
-                          matchesSnapshotSyncV2AccountScope(accountScope),
-                          documentSessionToken == expectedSession,
-                          currentSnapshotSyncV2WorkID == expectedWorkID,
+                          matchesSyncOperation(operation),
                           snapshotSyncV2Session == expectedSnapshotSession else { return false }
                     guard installV2Document(
                         openedDocument,
@@ -364,26 +385,61 @@ extension AppState {
                     await refreshSnapshotSyncV2UIState()
                     return true
                 }
-                if !installed,
-                   !Task.isCancelled,
-                   snapshotSyncV2RemoteOnlyOpenToken == operationToken,
-                   matchesSnapshotSyncV2AccountScope(accountScope),
-                   documentSessionToken == expectedSession,
-                   containsSnapshotSyncV2LibraryWork(work),
-                   !validationRejected {
-                    operationMessage = "作品の取得が完了しました。作品一覧を更新してから開いてください。"
-                }
+                reportRemoteOnlyOpenResult(
+                    installed: installed, validationRejected: validationRejected, work: work,
+                    operationToken: operationToken, accountScope: accountScope, expectedSession: expectedSession
+                )
+                return installed
             } catch is CancellationError {
-                return
+                return false
             } catch {
                 guard let self,
                       snapshotSyncV2RemoteOnlyOpenToken == operationToken,
                       matchesSnapshotSyncV2AccountScope(accountScope),
                       documentSessionToken == expectedSession,
-                      containsSnapshotSyncV2LibraryWork(work) else { return }
-                operationMessage = "作品を取得できませんでした。接続が戻ると再試行できます。"
+                      containsSnapshotSyncV2LibraryWork(work) else { return false }
+                reportRemoteOnlyOpenFailure(error)
+                return false
             }
         }
-        return true
+        snapshotSyncV2RemoteOnlyOpenTask = task
+        return await task.value
+    }
+
+    private func reportRemoteOnlyOpenFailure(_ error: Error) {
+        reportSnapshotSyncV2OpenFailure(error)
+        AccessibilityNotification.Announcement(operationMessage ?? "作品を取り込めませんでした").post()
+    }
+
+    private func finishRemoteOnlyOpen(operationToken: UUID) {
+        syncSessionController.finishRemoteOnlyOpen(owner: operationToken)
+    }
+
+    private func reportRemoteOnlyOpenResult(
+        installed: Bool,
+        validationRejected: Bool,
+        work: StartupLibraryWork,
+        operationToken: UUID,
+        accountScope: SnapshotSyncV2AccountScopeToken,
+        expectedSession: AppDocumentSessionToken
+    ) {
+        if !installed,
+           !Task.isCancelled,
+           snapshotSyncV2RemoteOnlyOpenToken == operationToken,
+           matchesSnapshotSyncV2AccountScope(accountScope),
+           documentSessionToken == expectedSession,
+           containsSnapshotSyncV2LibraryWork(work),
+           !validationRejected {
+            operationMessage = "作品の取得が完了しました。作品一覧を更新してから開いてください。"
+        }
+        if validationRejected {
+            let failure = SyncV2Failure.fatal(.invalidLocalState)
+            snapshotSyncLibraryOpenFailure = failure
+            logSyncV2PresentationFailure(failure)
+            AccessibilityNotification.Announcement(remoteOnlyOpenErrorMessage(failure)).post()
+        }
+        if installed {
+            AccessibilityNotification.Announcement("作品をこの端末に取り込みました").post()
+        }
     }
 }

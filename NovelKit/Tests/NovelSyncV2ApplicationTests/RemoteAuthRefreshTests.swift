@@ -26,7 +26,7 @@ struct RemoteAuthRefreshTests {
         async let third = provider.refresh(afterUnauthorizedFor: session)
         let results = try await [first, second, third]
 
-        #expect(results.map(\.refreshGeneration) == [2, 2, 2])
+        #expect(results.map { $0.refreshGeneration } == [2, 2, 2])
         #expect(await transport.refreshCount() == 1)
     }
 
@@ -75,6 +75,45 @@ struct RemoteAuthRefreshTests {
         }
         #expect(Auth401URLProtocol.requestCount == 2)
         #expect(await provider.refreshCount() == 1)
+    }
+
+    @Test("a slower parallel response cannot undo a download session refresh")
+    func downloadRefreshIsMonotonic() async throws {
+        let binding = refreshBinding(account: "acct")
+        let old = refreshSession(binding: binding, generation: 1)
+        let refreshed = refreshSession(binding: binding, generation: 2)
+        let context = SnapshotDownloadContext(session: old)
+        await context.update(refreshed)
+        await context.update(old)
+        #expect(try await context.session(matching: old).refreshGeneration == 2)
+        await context.update(refreshSession(binding: refreshBinding(account: "other"), generation: 3))
+        #expect(try await context.session(matching: old).binding == binding)
+    }
+
+    @Test("one download retains refreshed credentials for later reads")
+    func downloadRetainsRefresh() async throws {
+        let old = refreshSession(binding: refreshBinding(account: "acct"), generation: 1)
+        let provider = FixedSessionProvider(session: old)
+        Auth401URLProtocol.reset()
+        Auth401URLProtocol.acceptRefreshed = true
+        defer { Auth401URLProtocol.reset() }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [Auth401URLProtocol.self]
+        let url = try #require(URL(string: "https://auth-refresh.test"))
+        let client = try ProductionSyncV2RemoteClient(
+            origin: ProductionHTTPSOrigin(url: url), vault: InMemoryAuthSessionVault(session: old),
+            session: URLSession(configuration: configuration), sessionProvider: provider
+        )
+        try await SnapshotDownloadContext.$current.withValue(SnapshotDownloadContext(session: old)) {
+            for path in ["head", "page", "object"] {
+                var request = URLRequest(url: url.appendingPathComponent(path))
+                request.httpMethod = "GET"
+                request.setValue("Bearer \(old.accessToken)", forHTTPHeaderField: "Authorization")
+                _ = try await client.requestSnapshotData(request, session: old)
+            }
+        }
+        #expect(await provider.refreshCount() == 1)
+        #expect(Auth401URLProtocol.requestCount == 4)
     }
 
     @Test("refresh transport failure keeps the command retryable")
@@ -179,9 +218,11 @@ private actor FixedSessionProvider: SyncV2SessionProvider {
 
 private final class Auth401URLProtocol: URLProtocol, @unchecked Sendable {
     nonisolated(unsafe) static var requestCount = 0
+    nonisolated(unsafe) static var acceptRefreshed = false
 
     static func reset() {
         requestCount = 0
+        acceptRefreshed = false
     }
 
     override class func canInit(with _: URLRequest) -> Bool {
@@ -201,7 +242,7 @@ private final class Auth401URLProtocol: URLProtocol, @unchecked Sendable {
         ]
         let response = HTTPURLResponse(
             url: request.url!,
-            statusCode: 401,
+            statusCode: Self.acceptRefreshed && request.value(forHTTPHeaderField: "Authorization") == "Bearer fat_access_2" ? 200 : 401,
             httpVersion: nil,
             headerFields: headers
         )!

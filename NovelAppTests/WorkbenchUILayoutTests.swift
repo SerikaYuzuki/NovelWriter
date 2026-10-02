@@ -13,14 +13,6 @@ struct WorkbenchUILayoutTests {
         }
     }
 
-    @Test("Sidebar focusの引継ぎは2列と3列を跨ぐ場合だけ必要になる")
-    func sidebarFocusHandoffOnlyCrossesColumnLayouts() {
-        #expect(WorkbenchColumnLayout.requiresSidebarFocusHandoff(from: .projectInfo, to: .structure))
-        #expect(WorkbenchColumnLayout.requiresSidebarFocusHandoff(from: .structure, to: .settings))
-        #expect(!WorkbenchColumnLayout.requiresSidebarFocusHandoff(from: .projectInfo, to: .settings))
-        #expect(!WorkbenchColumnLayout.requiresSidebarFocusHandoff(from: .structure, to: .characters))
-    }
-
     @Test("章Disclosureは選択章を初期表示し、利用者が閉じられる")
     func disclosureStartsWithSelectedChapterAndCanCollapse() {
         let first = ChapterID()

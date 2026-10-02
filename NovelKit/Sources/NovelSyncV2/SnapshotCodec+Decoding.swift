@@ -24,7 +24,13 @@ struct SnapshotDecodingContext {
             manifestBytes: manifestBytes,
             objects: objects
         )
+        try self.init(encoded: encoded)
+    }
+
+    init(encoded: EncodedSnapshot) throws {
         try SnapshotValidator.validateObjects(encoded)
+        let manifest = encoded.manifest
+        let objects = encoded.objects
         self.manifest = manifest
         self.objects = objects
         entriesByKey = Dictionary(

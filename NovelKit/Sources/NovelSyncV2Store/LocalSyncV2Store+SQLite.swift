@@ -20,6 +20,8 @@ extension LocalSyncV2Store {
 
     func inTransaction<T>(_ body: () throws -> T) throws -> T {
         try exec("BEGIN IMMEDIATE")
+        transactionObjects = []
+        defer { transactionObjects = nil }
         do {
             let result = try body()
             try exec("COMMIT")
@@ -160,7 +162,14 @@ extension LocalSyncV2Store {
         snapshotID: SnapshotID,
         generation: Int64,
         scope: V2LocalWorkScope
-    ) throws -> UUID {
+    ) throws -> UUID? {
+        guard try !isAcknowledgedContent(workID: workID, snapshotID: snapshotID, scope: scope) else { return nil }
+        // Every route that queues these bytes (explicit sync, recovery,
+        // account replan) promotes the leaf in the caller's transaction.
+        if try isUnpromotedLeaf(workID: workID, snapshotID: snapshotID) {
+            try insertHistory(workID: workID, snapshotID: snapshotID, reason: "promotion",
+                              pinned: true, generation: generation)
+        }
         var sql = """
         SELECT intent_id FROM sync_intents
         WHERE work_id=? AND kind='checkpoint' AND status='pending'
@@ -258,35 +267,52 @@ extension LocalSyncV2Store {
               encoded.manifest.workId == workID else {
             throw SyncV2StoreError.invalidSnapshot
         }
-        try SnapshotValidator.validateObjects(encoded)
         guard let work = try query(
             "SELECT document_id,document_created_at FROM works WHERE work_id=?",
             [.text(workID.description)]
         ).first else { throw SyncV2StoreError.workNotFound }
-        let model = try SnapshotCodec.decode(
-            manifestBytes: encoded.manifestBytes,
-            objects: encoded.objects
-        )
+        let model = try SnapshotCodec.decode(encoded)
         guard work[0].text == DocumentID(model.document.id).description,
               try work[1].text == Self.iso8601(model.documentCreatedAt) else {
             throw SyncV2StoreError.invalidSnapshot
         }
-        try validateParents(encoded, workID: workID)
+        try insertValidatedEncoded(encoded, workID: workID, attestExistingObjects: false)
+    }
+
+    /// Caller must validate the immutable snapshot and its document anchor in this transaction.
+    func insertValidatedEncoded(_ encoded: EncodedSnapshot, workID: WorkID, attestExistingObjects: Bool = true, verifiedRemote: Bool = false) throws {
+        let alreadyExists = try !query("SELECT 1 FROM snapshots WHERE snapshot_id=?", [.blob(encoded.snapshotIDBytes)]).isEmpty
+        if !verifiedRemote || alreadyExists {
+            try validateParents(encoded, workID: workID, checkCycles: alreadyExists)
+        }
 
         for (objectID, bytes) in encoded.objects {
+            if transactionObjects?.contains(objectID) == true {
+                continue
+            }
             if let existing = try query(
-                "SELECT byte_count,bytes FROM objects WHERE object_id=?",
+                attestExistingObjects ? "SELECT byte_count,bytes FROM objects WHERE object_id=?" : "SELECT byte_count FROM objects WHERE object_id=?",
                 [.blob(objectID.bytes)]
             ).first {
+                // Incoming bytes have been digest-validated. Existing immutable CAS
+                // rows are protected by attested immutability triggers. Bytes are
+                // rehashed on read, rather than reread at every checkpoint.
+                // Import must attest bytes it will reuse from an earlier transaction,
+                // so a corrupt existing CAS row cannot turn valid input into a bad install.
+                // This happens once per unique object, not once per snapshot.
                 guard existing[0].int64 == Int64(bytes.count),
-                      existing[1].blob == bytes else {
+                      !attestExistingObjects || existing[1].blob == bytes else {
                     throw SyncV2StoreError.invalidSnapshot
+                }
+                if attestExistingObjects {
+                    transactionObjects?.insert(objectID)
                 }
             } else {
                 try exec(
                     "INSERT INTO objects(object_id,byte_count,bytes) VALUES(?,?,?)",
                     [.blob(objectID.bytes), .int(Int64(bytes.count)), .blob(bytes)]
                 )
+                transactionObjects?.insert(objectID)
             }
         }
 
@@ -302,6 +328,10 @@ extension LocalSyncV2Store {
                   existing[2].blob == encoded.snapshotIDBytes else {
                 throw SyncV2StoreError.invalidSnapshot
             }
+            // Existing rows must already be exact; do not repair missing children
+            // with INSERT OR IGNORE before attesting them.
+            try attestEncodedRows(encoded, workID: workID)
+            return
         } else {
             try exec(
                 """
@@ -316,10 +346,14 @@ extension LocalSyncV2Store {
                 ]
             )
         }
+        try resolveBoundaries(workID: workID, parent: encoded.snapshotId)
         for parent in encoded.manifest.parentSnapshotIds {
+            let local = try hasSnapshot(workID: workID, snapshotID: parent)
+            guard local || verifiedRemote else { throw SyncV2StoreError.invalidSnapshot }
+            let table = local ? "snapshot_parents" : "shallow_boundaries"
             try exec(
                 """
-                INSERT OR IGNORE INTO snapshot_parents(
+                INSERT OR IGNORE INTO \(table)(
                   work_id,snapshot_id,parent_snapshot_id
                 ) VALUES(?,?,?)
                 """,
@@ -343,7 +377,6 @@ extension LocalSyncV2Store {
                 ]
             )
         }
-        try attestEncodedRows(encoded, workID: workID)
     }
 
     func loadEncoded(workID: WorkID, snapshotID: SnapshotID) throws -> EncodedSnapshot {
@@ -375,14 +408,17 @@ extension LocalSyncV2Store {
         return encoded
     }
 
-    func validateParents(_ encoded: EncodedSnapshot, workID: WorkID) throws {
+    func validateParents(_ encoded: EncodedSnapshot, workID: WorkID, checkCycles: Bool = true) throws {
         for parent in encoded.manifest.parentSnapshotIds {
             guard parent != encoded.snapshotId,
-                  try !query(
-                      "SELECT 1 FROM snapshots WHERE work_id=? AND snapshot_id=?",
-                      [.text(workID.description), .blob(parent.bytes)]
-                  ).isEmpty else {
-                throw SyncV2StoreError.invalidSnapshot
+                  try hasSnapshot(workID: workID, snapshotID: parent) || !query(
+                      "SELECT 1 FROM shallow_boundaries WHERE work_id=? AND snapshot_id=? AND parent_snapshot_id=?",
+                      [.text(workID.description), .blob(encoded.snapshotIDBytes), .blob(parent.bytes)]
+                  ).isEmpty else { throw SyncV2StoreError.invalidSnapshot }
+            // A new content-addressed manifest can only point at existing rows.
+            // Immediate foreign keys make closing a cycle impossible on insertion.
+            if !checkCycles {
+                continue
             }
             let cycle = try query(
                 """
@@ -408,9 +444,13 @@ extension LocalSyncV2Store {
         let parents = try query(
             """
             SELECT parent_snapshot_id FROM snapshot_parents
+            WHERE work_id=? AND snapshot_id=?
+            UNION ALL
+            SELECT parent_snapshot_id FROM shallow_boundaries
             WHERE work_id=? AND snapshot_id=? ORDER BY parent_snapshot_id
             """,
-            [.text(workID.description), .blob(encoded.snapshotIDBytes)]
+            [.text(workID.description), .blob(encoded.snapshotIDBytes),
+             .text(workID.description), .blob(encoded.snapshotIDBytes)]
         ).compactMap { $0[0].blob?.hexString }
         guard parents == encoded.manifest.parentSnapshotIds.map(\.rawValue).sorted() else {
             throw SyncV2StoreError.invalidSnapshot
@@ -486,14 +526,7 @@ extension LocalSyncV2Store {
     }
 
     static func iso8601(_ date: Date) throws -> String {
-        let formatter = ISO8601DateFormatter()
-        formatter.timeZone = TimeZone(secondsFromGMT: 0)
-        formatter.formatOptions = [
-            .withInternetDateTime,
-            .withDashSeparatorInDate,
-            .withColonSeparatorInTime
-        ]
-        return formatter.string(from: date)
+        CanonicalTimestamp.string(date)
     }
 
     func changes() throws -> Int {
@@ -501,24 +534,35 @@ extension LocalSyncV2Store {
         return Int(sqlite3_changes(db))
     }
 
-    func exec(_ sql: String, _ bindings: [SQLiteValue] = []) throws {
+    private func preparedStatement(_ sql: String) throws -> OpaquePointer {
         guard let db else { throw SyncV2StoreError.sqlite("closed") }
+        if let statement = statements[sql] {
+            return statement
+        }
         var statement: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK, let statement else {
             throw sqliteError()
         }
-        defer { sqlite3_finalize(statement) }
+        statements[sql] = statement
+        return statement
+    }
+
+    func exec(_ sql: String, _ bindings: [SQLiteValue] = []) throws {
+        let statement: OpaquePointer? = try preparedStatement(sql)
+        defer {
+            sqlite3_reset(statement)
+            sqlite3_clear_bindings(statement)
+        }
         try bind(statement, bindings)
         guard sqlite3_step(statement) == SQLITE_DONE else { throw sqliteError() }
     }
 
     func query(_ sql: String, _ bindings: [SQLiteValue] = []) throws -> [[SQLiteValue]] {
-        guard let db else { throw SyncV2StoreError.sqlite("closed") }
-        var statement: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
-            throw sqliteError()
+        let statement: OpaquePointer? = try preparedStatement(sql)
+        defer {
+            sqlite3_reset(statement)
+            sqlite3_clear_bindings(statement)
         }
-        defer { sqlite3_finalize(statement) }
         try bind(statement, bindings)
         var rows: [[SQLiteValue]] = []
         var result = sqlite3_step(statement)
@@ -676,24 +720,36 @@ extension Data {
         return String(decoding: bytes, as: UTF8.self)
     }
 
-    init(hex: String) {
-        self.init((0 ..< hex.count / 2).map { index in
-            let start = String.Index(utf16Offset: index * 2, in: hex)
-            let end = String.Index(utf16Offset: index * 2 + 2, in: hex)
-            return UInt8(String(hex[start ..< end]), radix: 16)!
-        })
+    init?(hex: String) {
+        let input = Array(hex.utf8)
+        guard input.count.isMultiple(of: 2) else { return nil }
+        func nibble(_ byte: UInt8) -> UInt8? {
+            switch byte {
+            case 48 ... 57: byte - 48
+            case 65 ... 70: byte - 65 + 10
+            case 97 ... 102: byte - 97 + 10
+            default: nil
+            }
+        }
+        var bytes = Data()
+        bytes.reserveCapacity(input.count / 2)
+        for index in stride(from: 0, to: input.count, by: 2) {
+            guard let high = nibble(input[index]), let low = nibble(input[index + 1]) else { return nil }
+            bytes.append(high << 4 | low)
+        }
+        self = bytes
     }
 }
 
 extension ObjectID {
     var bytes: Data {
-        Data(hex: rawValue)
+        Data(hex: rawValue)! // Typed IDs already enforce a lowercase SHA-256 digest.
     }
 }
 
 extension SnapshotID {
     var bytes: Data {
-        Data(hex: rawValue)
+        Data(hex: rawValue)! // Typed IDs already enforce a lowercase SHA-256 digest.
     }
 }
 

@@ -34,6 +34,7 @@ public enum SyncV2RemoteProgress: Equatable, Sendable {
         case .fenceChanged: "アカウントの安全確認が必要です"
         case .parkedDifferentAccount: "別のアカウントのため保留中"
         case .quarantined: "安全確認後に同期を再開します"
+        case .retryable(.historyIncomplete): SyncV2HistoryFetchState.conflictWaiting
         case .retryable: "端末に保存済み・同期を再試行します"
         case .needsChoice: "競合の確認が必要です"
         case .readyForSafeAdoption: "サーバーの版を適用できます"

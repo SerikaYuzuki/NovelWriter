@@ -42,7 +42,8 @@ extension IOSDocumentStore {
                     saveState = .saved
                 }
             } catch {
-                startupState = .recovery(message: "作品を安全に開けませんでした。\n\(error.localizedDescription)")
+                logSyncV2PresentationFailure(error)
+                startupState = .recovery(message: remoteOnlyOpenErrorMessage(error))
             }
         }
         bootstrapTask = task
@@ -55,6 +56,7 @@ extension IOSDocumentStore {
     func makeNewDocument() async -> Bool {
         guard !isSyncV2AccountTransitionActive,
               await configureSnapshotSyncV2() else { return false }
+        cancelSnapshotSyncV2BackgroundOperations()
         let value = NovelDocument.newDocument()
         let candidateWorkID = WorkID(UUID())
         let candidateCreatedAt = Self.portableDatePrecision(Date())
@@ -84,6 +86,7 @@ extension IOSDocumentStore {
     @discardableResult
     func importPackage(from sourceURL: URL) async -> Bool {
         guard !isSyncV2AccountTransitionActive else { return false }
+        cancelSnapshotSyncV2BackgroundOperations()
         let expectedAccountScope = snapshotSyncV2AccountScope
         let expectedSession = currentDocumentSessionToken
         let expectedWorkID = syncV2ActiveWorkID
@@ -114,8 +117,7 @@ extension IOSDocumentStore {
                     let location = privateWorkingCopyLocation else {
                     throw IOSPrivateWorkingCopyLocationError.unsafeRoot
                 }
-                let sourceAttestation = try IOSPrivateWorkingCopyLocation
-                    .attestExplicitPackageSource(sourceURL)
+                let sourceAttestation = try IOSPrivateWorkingCopyLocation.attestExplicitPackageSource(sourceURL)
                 let staging = try location.stagingDestination()
                 do {
                     try fileManager.copyItem(at: sourceURL, to: staging)
@@ -237,7 +239,8 @@ extension IOSDocumentStore {
             try await operation()
             return true
         } catch {
-            operationErrorMessage = "作品を操作できませんでした。\n\(error.localizedDescription)"
+            logSyncV2PresentationFailure(error)
+            operationErrorMessage = remoteOnlyOpenErrorMessage(error)
             return false
         }
     }
@@ -245,7 +248,20 @@ extension IOSDocumentStore {
     @discardableResult
     func saveNow() async -> Bool {
         guard startupState == .ready else { return false }
-        return await saveCoordinator.saveNow()
+        let workID = syncV2ActiveWorkID
+        let session = currentDocumentSessionToken
+        let account = snapshotSyncV2AccountScope
+        guard await saveCoordinator.saveNow(), currentDocumentSessionToken == session,
+              syncV2ActiveWorkID == workID, matchesSyncAccount(account) else { return false }
+        do {
+            if let workID, let application = snapshotSyncV2Application {
+                try await application.promoteCheckpoint(workID: workID)
+            }
+            return true
+        } catch {
+            saveState = .failed
+            return false
+        }
     }
 
     func requestExport(readable: Bool = false) async {
@@ -258,12 +274,12 @@ extension IOSDocumentStore {
                   !isSyncV2AccountTransitionActive,
                   currentDocumentSessionToken == expectedSession,
                   syncV2ActiveWorkID == expectedWorkID,
-                  snapshotSyncV2AccountScope == expectedAccountScope else { return }
+                  matchesSyncAccount(expectedAccountScope) else { return }
             _ = await performDocumentTransition {
                 guard !isSyncV2AccountTransitionActive,
                       currentDocumentSessionToken == expectedSession,
                       syncV2ActiveWorkID == expectedWorkID,
-                      snapshotSyncV2AccountScope == expectedAccountScope,
+                      matchesSyncAccount(expectedAccountScope),
                       snapshotSyncV2Application != nil,
                       let attachments = currentV2Attachments() else {
                     throw SyncV2ApplicationError.invalidRuntimeMode
@@ -300,7 +316,7 @@ extension IOSDocumentStore {
                 guard !isSyncV2AccountTransitionActive,
                       currentDocumentSessionToken == expectedSession,
                       syncV2ActiveWorkID == expectedWorkID,
-                      snapshotSyncV2AccountScope == expectedAccountScope else {
+                      matchesSyncAccount(expectedAccountScope) else {
                     throw SyncV2ApplicationError.invalidRuntimeMode
                 }
                 pendingExportRootURL = root
@@ -318,7 +334,7 @@ extension IOSDocumentStore {
         !isSyncV2AccountTransitionActive
             && currentDocumentSessionToken == session
             && syncV2ActiveWorkID == workID
-            && snapshotSyncV2AccountScope == accountScope
+            && matchesSyncAccount(accountScope)
     }
 
     func dismissExport() {

@@ -157,7 +157,7 @@ struct IOSAttachmentEditorSafetyTests {
 
         let opened = try await application.openLocal(workID: workID)
         #expect(opened.document?.title == "資料保存中に届いた作品名")
-        #expect(opened.attachments.map(\.fileName) == [attachment.fileName])
+        #expect(opened.attachments.map { $0.fileName } == [attachment.fileName])
         #expect(store.saveState == .saved)
     }
 

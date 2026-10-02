@@ -30,7 +30,18 @@ struct StartupLibraryWork: Identifiable, Equatable {
     let availability: StartupLibraryWorkAvailability
     let workID: WorkID
     let remoteProgress: SyncV2RemoteProgress
+    var historyBackfillNote: String?
     var oldestUnreceivedAt: Date?
+    var accountState: SyncV2LibraryAccountState = .unbound
+    var remoteHeadConfirmed = false
+    var localGeneration: Int64?
+
+    var status: SyncV2LibraryStatus {
+        let value = SyncV2LibraryStatus.resolve(availability: availability == .remoteOnly ? .remoteOnly : .localOnly,
+                                                accountState: accountState, remoteHeadConfirmed: remoteHeadConfirmed, progress: remoteProgress)
+        return accountState == .active && availability != .remoteOnly
+            ? value.delayed(since: oldestUnreceivedAt, now: Date()) : value
+    }
 
     var isOpenable: Bool {
         // Parked works remain local-first and editable.  They are projected

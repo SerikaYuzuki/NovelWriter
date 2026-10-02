@@ -1,4 +1,6 @@
 import NovelCore
+import NovelThumbnail
+import NovelUI
 import SwiftUI
 
 @MainActor
@@ -49,8 +51,14 @@ struct IOSWorldNoteOutlineView: View {
             if store.document.worldNotes.isEmpty {
                 ContentUnavailableView {
                     Label("世界観ノートがありません", systemImage: "globe.asia.australia")
-                } description: {
-                    Text("右上の追加ボタンから世界観ノートを追加できます。")
+                } actions: {
+                    Button("世界観ノートを追加") {
+                        guard let expectedSession else { return }
+                        if let id = store.addWorldNote(expectedSession: expectedSession) {
+                            selection = id
+                        }
+                    }
+                    .disabled(expectedSession == nil)
                 }
             }
         }
@@ -99,13 +107,19 @@ struct IOSWorldNoteOutlineView: View {
                     dismissAfterDeletion: true
                 )
             } label: {
-                IOSWorldNoteRow(note: note)
+                HStack(spacing: Spacing.small) {
+                    ThumbnailImage(data: store.thumbnailData(ThumbnailOwner(.worldNote, note.id.rawValue)), kind: .worldNote, title: note.title, size: 28).accessibilityHidden(true)
+                    IOSWorldNoteRow(note: note)
+                }
             }
         } else {
             Button {
                 selection = note.id
             } label: {
-                IOSWorldNoteRow(note: note)
+                HStack(spacing: Spacing.small) {
+                    ThumbnailImage(data: store.thumbnailData(ThumbnailOwner(.worldNote, note.id.rawValue)), kind: .worldNote, title: note.title, size: 28).accessibilityHidden(true)
+                    IOSWorldNoteRow(note: note)
+                }
             }
             .buttonStyle(.plain)
             .accessibilityAddTraits(selection == note.id ? .isSelected : [])
@@ -160,7 +174,9 @@ struct IOSWorldNoteDetailView: View {
                 ContentUnavailableView {
                     Label("世界観ノートが選択されていません", systemImage: "globe.asia.australia")
                 } description: {
-                    Text("一覧から編集する世界観ノートを選んでください。")
+                    if !store.document.worldNotes.isEmpty {
+                        Text("一覧から世界観ノートを選択してください。")
+                    }
                 }
             }
         }
@@ -193,6 +209,9 @@ struct IOSWorldNoteDetailView: View {
 
     private func noteForm(_ note: WorldNote) -> some View {
         Form {
+            Section {
+                IOSThumbnailEditor(store: store, owner: ThumbnailOwner(.worldNote, note.id.rawValue), title: note.title)
+            }
             Section("世界観ノート") {
                 TextField("タイトル", text: noteBinding(note.id, \.title, fallback: ""))
                     .textInputAutocapitalization(.never)
@@ -268,7 +287,7 @@ private struct IOSWorldNoteRow: View {
                 .foregroundStyle(.primary)
                 .lineLimit(1)
             Text("\(characterCount)字")
-                .font(.caption)
+                .font(FuminiwaType.rowSecondary)
                 .foregroundStyle(.secondary)
                 .monospacedDigit()
         }
@@ -283,7 +302,7 @@ private struct IOSWorldNoteRow: View {
     }
 
     private var characterCount: Int {
-        ManuscriptMetrics.countCharacters(in: note.content)
+        ManuscriptCountCache.shared.count(note)
     }
 }
 

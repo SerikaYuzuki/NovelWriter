@@ -34,3 +34,29 @@ struct WorkDeletionTests {
         #expect(await configuration.remote.recordedDeletions() == [fixture.workID, fixture.workID])
     }
 }
+
+extension WorkDeletionTests {
+    @Test("remote-only intent does not download, survives restart and retries on resume")
+    func remoteOnlyIntentRecovery() async throws {
+        let configuration = try TestRuntimeConfiguration()
+        let app = try await SnapshotSyncV2Runtime.makeApplication(mode: .test(configuration))
+        let workID = WorkID(UUID())
+        _ = try await app.prepareWorkDeletion(workID: workID)
+        #expect(await configuration.remote.recordedDeletions().isEmpty)
+        #expect(await configuration.remote.recordedHeadReads().isEmpty)
+        await #expect(throws: SyncV2Failure.offline) { try await app.deleteWork(workID: workID) }
+        #expect(try await app.pendingDeletionWorkIDs() == [workID])
+        await configuration.remote.setDeletionFailure(nil)
+        let restarted = try await SnapshotSyncV2Runtime.makeApplication(mode: .test(configuration))
+        try await restarted.resumePending()
+        for _ in 0 ..< 100 {
+            if try await restarted.deletedWorkIDs().contains(workID) {
+                break
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(try await restarted.deletedWorkIDs() == [workID])
+        #expect(await configuration.remote.recordedHeadReads().isEmpty)
+        #expect(await configuration.remote.recordedDeletions() == [workID, workID])
+    }
+}

@@ -1,5 +1,7 @@
 import EditorKit
 import NovelCore
+import NovelThumbnail
+import NovelUI
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -27,10 +29,6 @@ enum WorkbenchColumnLayout: Hashable {
             self = .threeColumn
         }
     }
-
-    static func requiresSidebarFocusHandoff(from previous: ProjectSection, to next: ProjectSection) -> Bool {
-        WorkbenchColumnLayout(section: previous) != WorkbenchColumnLayout(section: next)
-    }
 }
 
 struct NovelWorkbenchView: View {
@@ -47,7 +45,6 @@ struct NovelWorkbenchView: View {
     @State private var isImportingAttachment = false
     @State private var attachmentImportSession: DocumentSessionToken?
     @State private var attachmentImportMessage: OperationMessage?
-    @State private var sidebarFocusHandoffID: UUID?
     @State private var isPlotCardRailPresented = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isAssistantPresented = false
@@ -57,7 +54,6 @@ struct NovelWorkbenchView: View {
         ResizableAssistantLayout(isPresented: isAssistantPresented && showsWritingActions, defaults: appState.userDefaults) {
             VStack(spacing: 0) {
                 workbenchSplitView
-                    .id(workbenchColumnLayout)
                 if !showsWritingActions {
                     WorkbenchStatusBarView()
                 }
@@ -66,7 +62,7 @@ struct NovelWorkbenchView: View {
         } panel: {
             assistantPanel
         }
-        .animation(reduceMotion ? nil : .easeInOut(duration: 0.22), value: isAssistantPresented)
+        .animation(Motion.standard(reduceMotion: reduceMotion), value: isAssistantPresented)
         .modifier(WritingSyncPulse(host: appState.writingAssistantHost))
         .navigationTitle(documentDisplayTitle)
         .modifier(WorkbenchToolbarTitleVisibility())
@@ -160,30 +156,20 @@ struct NovelWorkbenchView: View {
         )
     }
 
-    @ViewBuilder
     private var workbenchSplitView: some View {
-        if usesTwoColumnLayout {
-            NavigationSplitView(columnVisibility: $columnVisibility) {
-                projectSidebar
-            } detail: {
-                workbenchDetail
-                    .frame(minWidth: 560)
-            }
-        } else {
-            NavigationSplitView(columnVisibility: $columnVisibility) {
-                projectSidebar
-            } content: {
-                workbenchContent
-                    .toolbar { WorkbenchOutlineToolbarContent(requestEpisodeRename: requestEpisodeRename) }
-                    .navigationSplitViewColumnWidth(
-                        min: contentColumnWidths.min,
-                        ideal: contentColumnWidths.ideal,
-                        max: contentColumnWidths.max
-                    )
-            } detail: {
-                workbenchDetail
-                    .frame(minWidth: 560)
-            }
+        NavigationSplitView(columnVisibility: $columnVisibility) {
+            projectSidebar
+        } content: {
+            workbenchContent
+                .toolbar { WorkbenchOutlineToolbarContent(requestEpisodeRename: requestEpisodeRename) }
+                .navigationSplitViewColumnWidth(
+                    min: contentColumnWidths.min,
+                    ideal: contentColumnWidths.ideal,
+                    max: contentColumnWidths.max
+                )
+        } detail: {
+            workbenchDetail
+                .frame(minWidth: 560)
         }
     }
 
@@ -193,24 +179,14 @@ struct NovelWorkbenchView: View {
             onSelect: selectProjectSectionFromSidebar
         )
         .navigationSplitViewColumnWidth(min: 184, ideal: 200, max: 224)
+        .background(WorkbenchContentColumnVisibility(isCollapsed: usesTwoColumnLayout))
     }
 
     private func selectProjectSectionFromSidebar(_ section: ProjectSection) {
         Task { @MainActor in
-            let previous = appState.workspaceSelection.section
-            guard await appState.selectProjectSectionAfterTransition(section),
-                  WorkbenchColumnLayout.requiresSidebarFocusHandoff(from: previous, to: section) else { return }
-
-            // 2列と3列の切替ではNavigationSplitView自体が再生成される。クリック元の
-            // Listが消えた直後、新しいSidebarへだけfirst responderを引き継ぐ。
-            let handoffID = UUID()
-            sidebarFocusHandoffID = handoffID
-            projectSidebarIsFocused = false
-            await Task.yield()
-            guard sidebarFocusHandoffID == handoffID,
-                  appState.workspaceSelection.section == section else { return }
+            guard await appState.selectProjectSectionAfterTransition(section) else { return }
+            // The sidebar survives section changes; retain keyboard navigation on the clicked list.
             projectSidebarIsFocused = true
-            sidebarFocusHandoffID = nil
         }
     }
 
@@ -309,21 +285,21 @@ struct NovelWorkbenchView: View {
     private var workbenchDetailContent: some View {
         switch appState.workspaceSelection.section {
         case .structure:
-            EditorPaneView(
-                isPlotCardRailPresented: $isPlotCardRailPresented
-            )
-            .safeAreaInset(edge: .top, spacing: 0) {
+            VStack(spacing: 0) {
                 HStack {
                     Text(documentDisplayTitle)
                         .accessibilityIdentifier("workbench.editor.workTitle")
                         .font(.headline)
+                        .foregroundStyle((Color(hex: editorSettings.textColorHex) ?? .primary).opacity(0.75))
                         .lineLimit(1)
                         .help(documentDisplayTitle)
                     Spacer()
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 8)
-                .background(.thinMaterial)
+                .background(Color(hex: editorSettings.backgroundColorHex) ?? Color(nsColor: .textBackgroundColor))
+                .overlay(alignment: .bottom) { Divider() }
+                EditorPaneView(isPlotCardRailPresented: $isPlotCardRailPresented)
             }
         case .characters:
             CharacterDetailView { appearance in
@@ -355,7 +331,6 @@ struct NovelWorkbenchView: View {
             SectionSurface(title: "設定", systemImage: "gearshape") {
                 EditorSettingsView()
                     .environment(editorSettings)
-                    .frame(maxWidth: 560, alignment: .leading)
             }
         }
     }
@@ -402,9 +377,19 @@ struct ProjectSidebarView: View {
 
     var body: some View {
         List(selection: sectionSelection) {
-            ForEach(ProjectSection.allCases) { section in
-                Label(section.title, systemImage: section.systemImage)
-                    .tag(section)
+            Section("この作品") {
+                ForEach(ProjectSection.allCases.filter { $0 != .settings }) { section in
+                    if section == .plot {
+                        section.style.label
+                            .badge(appState.document.flags.count(where: { !$0.isResolved }))
+                            .tag(section)
+                    } else {
+                        section.style.label.tag(section)
+                    }
+                }
+            }
+            Section("アプリ") {
+                ProjectSection.settings.style.label.tag(ProjectSection.settings)
             }
         }
         .focused(isFocused)
@@ -412,6 +397,10 @@ struct ProjectSidebarView: View {
     }
 
     private var sectionSelection: Binding<ProjectSection?> {
+        Self.selectionBinding(appState: appState, onSelect: onSelect)
+    }
+
+    static func selectionBinding(appState: AppState, onSelect: @escaping (ProjectSection) -> Void) -> Binding<ProjectSection?> {
         Binding(
             get: { appState.workspaceSelection.section },
             set: { section in
@@ -433,15 +422,18 @@ private struct WorldbuildingOutlineView: View {
         VStack(spacing: 0) {
             List(selection: selectionBinding) {
                 ForEach(sessionBoundWorldNotes) { item in
-                    WorldNoteRow(note: item.value)
-                        .tag(item.value.id)
-                        .contextMenu {
-                            Button(role: .destructive) {
-                                notePendingDeletion = item
-                            } label: {
-                                Label("削除", systemImage: "trash")
-                            }
+                    HStack(spacing: Spacing.small) {
+                        ThumbnailImage(data: appState.thumbnailData(ThumbnailOwner(.worldNote, item.value.id.rawValue)), kind: .worldNote, title: item.value.title, size: 28).accessibilityHidden(true)
+                        WorldNoteRow(note: item.value)
+                    }
+                    .contextMenu {
+                        Button(role: .destructive) {
+                            notePendingDeletion = item
+                        } label: {
+                            Label("削除", systemImage: "trash")
                         }
+                    }
+                    .tag(item.value.id)
                 }
                 .onMove { offsets, destination in
                     appState.moveWorldNotes(fromOffsets: offsets, toOffset: destination)
@@ -449,11 +441,12 @@ private struct WorldbuildingOutlineView: View {
             }
             .overlay {
                 if appState.document.worldNotes.isEmpty {
-                    ContentUnavailableView(
-                        "世界観ノートがありません",
-                        systemImage: "globe.asia.australia",
-                        description: Text("上部の「ノートを追加」または世界観メニューから追加できます。")
-                    )
+                    ContentUnavailableView {
+                        Label("世界観ノートがありません", systemImage: "globe.asia.australia")
+                    } actions: {
+                        Button("ノートを追加") { appState.addWorldNote() }
+                            .disabled(!appState.permitsDocumentInteraction)
+                    }
                 }
             }
             .workbenchGlassOutlineStyle()
@@ -517,13 +510,13 @@ private struct WorldNoteRow: View {
         VStack(alignment: .leading, spacing: 4) {
             Text(displayTitle)
                 .lineLimit(1)
-            Text("\(ManuscriptMetrics.countCharacters(in: note.content))字")
+            Text("\(ManuscriptCountCache.shared.count(note))字")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .monospacedDigit()
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(displayTitle)、\(ManuscriptMetrics.countCharacters(in: note.content))字")
+        .accessibilityLabel("\(displayTitle)、\(ManuscriptCountCache.shared.count(note))字")
     }
 
     private var displayTitle: String {
@@ -542,6 +535,7 @@ private struct WorldNoteDetailView: View {
             if let note = appState.selectedWorldNote {
                 let session = appState.documentSessionToken
                 VStack(alignment: .leading, spacing: 16) {
+                    MacThumbnailEditor(owner: ThumbnailOwner(.worldNote, note.id.rawValue), title: note.title)
                     WorkbenchLabeledField("タイトル") {
                         TextField("ノートのタイトル", text: titleBinding(for: note))
                             .textFieldStyle(.roundedBorder)
@@ -571,11 +565,13 @@ private struct WorldNoteDetailView: View {
                 }
                 .padding(20)
             } else {
-                ContentUnavailableView(
-                    "世界観ノートが選択されていません",
-                    systemImage: "globe.asia.australia",
-                    description: Text("Outlineからノートを選択するか、ノートを追加してください。")
-                )
+                ContentUnavailableView {
+                    Label("世界観ノートが選択されていません", systemImage: "globe.asia.australia")
+                } description: {
+                    if !appState.document.worldNotes.isEmpty {
+                        Text("左の一覧から世界観ノートを選択してください。")
+                    }
+                }
             }
         }
         .workbenchGlassChromeStyle()
@@ -629,7 +625,7 @@ private struct WorkbenchStatusBarView: View {
     }
 
     private var totalCountText: String {
-        "全体 \(appState.document.manuscriptCharacterCount)字"
+        "全体 \(ManuscriptCountCache.shared.count(appState.document))字"
     }
 }
 
@@ -640,6 +636,10 @@ private struct ProjectInfoView: View {
         SectionSurface(title: "作品情報", systemImage: "book.closed") {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
+                    HStack(alignment: .top, spacing: Spacing.outer) {
+                        MacThumbnailEditor(owner: ThumbnailOwner(.work, appState.document.id), title: appState.document.title)
+                        WorkInfoSummary(document: appState.document, showsCover: false)
+                    }
                     GroupBox("編集") {
                         VStack(alignment: .leading, spacing: 8) {
                             WorkbenchLabeledField("作品タイトル") {
@@ -654,30 +654,11 @@ private struct ProjectInfoView: View {
                         }
                         .padding(8)
                     }
-
-                    GroupBox("保存情報") {
-                        VStack(alignment: .leading, spacing: 8) {
-                            LabeledContent("保存状態", value: appState.saveState.label)
-                            LabeledContent("章数") {
-                                Text("\(appState.document.chapters.count)")
-                                    .monospacedDigit()
-                            }
-                            LabeledContent("話数") {
-                                Text("\(episodeCount)")
-                                    .monospacedDigit()
-                            }
-                            LabeledContent("文字数") {
-                                Text("\(appState.document.manuscriptCharacterCount)")
-                                    .monospacedDigit()
-                            }
-                            LabeledContent("保存形式", value: ".novelpkg v3")
-                        }
-                        .padding(8)
-                    }
                 }
                 .padding(20)
                 .frame(maxWidth: 720, alignment: .leading)
             }
+            .background(FuminiwaColor.paper.color)
         }
     }
 
@@ -693,10 +674,6 @@ private struct ProjectInfoView: View {
             get: { appState.document.synopsis },
             set: { appState.updateDocumentSynopsis($0) }
         )
-    }
-
-    private var episodeCount: Int {
-        appState.document.chapters.reduce(0) { $0 + $1.episodes.count }
     }
 }
 
@@ -724,7 +701,7 @@ private struct SectionSurface<Content: View>: View {
             content
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .workbenchGlassChromeStyle()
+        .background(FuminiwaColor.paper.color)
     }
 }
 

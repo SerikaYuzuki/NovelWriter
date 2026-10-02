@@ -26,7 +26,7 @@ import Testing
     try await repository.save(doc, to: packageURL)
 
     let loaded = try await repository.load(from: packageURL)
-    #expect(loaded.flags.map(\.title) == ["C", "B", "A"])
+    #expect(loaded.flags.map { $0.title } == ["C", "B", "A"])
     #expect(loaded.flags[0].resolvedChapterID == chapter.id)
     #expect(loaded.flags[2].plantedChapterID == chapter.id)
 }

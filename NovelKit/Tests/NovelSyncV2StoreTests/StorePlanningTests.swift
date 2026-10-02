@@ -11,7 +11,7 @@ func planningQueriesPreserveExactScopeOccurrenceAndQuarantineGuards() async thro
     let workID = WorkID(UUID())
     var document = makeDocument(title: "initial")
     var checkpoint = try await store.checkpoint(
-        V2CheckpointRequest(workID: workID, document: document, documentCreatedAt: testDate, expectedGeneration: 0),
+        V2CheckpointRequest(workID: workID, document: document, documentCreatedAt: testDate, expectedGeneration: 0, reason: .explicit),
         scope: scopeA
     )
     let create = try createWorkCommand(workID: workID, documentID: document.id, checkpoint: checkpoint)
@@ -27,7 +27,7 @@ func planningQueriesPreserveExactScopeOccurrenceAndQuarantineGuards() async thro
         document.title = "revision \(index)"
         checkpoint = try await store.checkpoint(V2CheckpointRequest(
             workID: workID, document: document, documentCreatedAt: testDate,
-            expectedGeneration: checkpoint.generation
+            expectedGeneration: checkpoint.generation, reason: .explicit
         ), scope: scopeA)
     }
     let quarantined = try await publishCommand(workID: workID, checkpoint: checkpoint,
@@ -36,7 +36,7 @@ func planningQueriesPreserveExactScopeOccurrenceAndQuarantineGuards() async thro
     try await store.quarantine(commandID: quarantined.commandId, scope: scopeA)
     let all = try await store.allSealedCommands(scope: scopeA, workID: workID)
     let guards = try await store.planningGuardCommands(scope: scopeA, workID: workID)
-    #expect(guards.map(\.commandID) == [create.commandId, quarantined.commandId])
+    #expect(guards.map { $0.commandID } == [create.commandId, quarantined.commandId])
     try await expectExactTransferSelection(store: store, workID: workID, records: all)
     let otherFence = V2LocalWorkScope.bound(V2AccountBinding(
         accountID: bindingA.accountID, accountFence: "other-fence", serverInstanceID: bindingA.serverInstanceID
@@ -72,7 +72,7 @@ private func expectExactTransferSelection(
             $0.lifecycle == .completed && $0.sourceSnapshotID == record.sourceSnapshotID &&
                 $0.sourceGeneration == record.sourceGeneration
         }
-        #expect(selected.map(\.canonicalRequest) == expected.map(\.canonicalRequest))
-        #expect(selected.map(\.requestDigest) == expected.map(\.requestDigest))
+        #expect(selected.map { $0.canonicalRequest } == expected.map { $0.canonicalRequest })
+        #expect(selected.map { $0.requestDigest } == expected.map { $0.requestDigest })
     }
 }

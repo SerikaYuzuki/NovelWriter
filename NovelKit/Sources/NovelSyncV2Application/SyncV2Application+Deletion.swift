@@ -13,12 +13,12 @@ public extension SyncV2Application {
     func deleteWork(workID: WorkID) async throws {
         guard runtimeIdentity != .preview,
               remoteSchedulingSuspensions.isEmpty else { throw SyncV2ApplicationError.safeBoundaryRejected }
-        if let task = deletionTasks[workID] {
+        if let task = lanes[workID, default: WorkLane()].deletionTask {
             return try await task.value
         }
         let task = Task { try await self.performWorkDeletion(workID: workID) }
-        deletionTasks[workID] = task
-        defer { deletionTasks[workID] = nil }
+        lanes[workID, default: WorkLane()].deletionTask = task
+        defer { lanes[workID, default: WorkLane()].deletionTask = nil }
         try await task.value
     }
 
@@ -27,7 +27,7 @@ public extension SyncV2Application {
         guard runtimeIdentity != .preview,
               remoteSchedulingSuspensions.isEmpty else { throw SyncV2ApplicationError.safeBoundaryRejected }
         let deletion = try await kernel.prepareWorkDeletion(workID: workID)
-        deletingWorkIDs.insert(workID)
+        setLaneFlag(\.deletionPending, workID: workID, value: true)
         cancelWorker(for: workID)
         await planner.invalidateCaches(for: [workID])
         return deletion
@@ -41,8 +41,8 @@ public extension SyncV2Application {
             }
             try await kernel.completeWorkDeletion(deletion)
         }
-        sessions[workID] = nil
-        syncDiagnostics[workID] = nil
-        states[workID] = nil
+        lanes[workID, default: WorkLane()].session = nil
+        lanes[workID, default: WorkLane()].syncDiagnostic = nil
+        updateLaneState(nil, workID: workID)
     }
 }

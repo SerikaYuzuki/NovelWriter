@@ -230,14 +230,7 @@ extension SnapshotCodec {
     }
 
     static func dateString(_ date: Date) throws -> String {
-        let formatter = ISO8601DateFormatter()
-        formatter.timeZone = TimeZone(secondsFromGMT: 0)
-        formatter.formatOptions = [
-            .withInternetDateTime,
-            .withDashSeparatorInDate,
-            .withColonSeparatorInTime
-        ]
-        let result = formatter.string(from: date)
+        let result = CanonicalTimestamp.string(date)
         guard result.hasSuffix("Z") else {
             throw SyncV2TypeError.schemaViolation("date")
         }

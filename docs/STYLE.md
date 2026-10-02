@@ -10,24 +10,31 @@
 - 本文キャンバスの色・フォントはchromeと独立した端末設定。OS外観変更で上書きせず、作品へ保存しない。
 - 本文を最も広くし、Sidebar／Outline／toolbarは控えめにする。未実装機能やAIの予約領域を表示しない。
 - 棚は単一の作品一覧。通常操作に内部path、DB、WorkIDを出さず、外部packageは「作品を取り込む…」「書き出す…」から扱う。
-- macOSは作品一覧からWorkbench、iOSは作品棚から作品ホームと各機能へ進む。製品上の階層は維持し、旧CloudKitのラベルや保存処理は戻さない。
+- macOSは同じwindow内の全幅作品一覧からWorkbench、iOSは作品棚から作品ホームと各機能へ進む。製品上の階層は維持し、旧CloudKitのラベルや保存処理は戻さない。
 
 ## 2. カラー
 
-まず`primary`／`secondary`、OSのbackground／separator等を使う。固定色は以下のtokenと本文の利用者設定に限定する。彩度はドットや小さなアクセントへ使い、大きな面や画面全体をブランド色で塗らない。
+固定色はNovelUIの`FuminiwaColor` tokenと本文設定に限る。棚・作品ホーム・詳細はpaper／surfaceを面に使ってよい。accent（藍）は選択・主操作・リンク、leaf（若葉）は完了・進み具合に限り、大きな面を高彩度で塗らない。利用者の画像（表紙・人物・世界観）は面積の例外。Sidebar・toolbarはsystem material、本文は利用者設定のまま。
 
-| token | Dark基準値 | 用途 |
+| token | Light | Dark |
 | --- | --- | --- |
-| canvas | `#171719` | 本文と最背面 |
-| surface | `#202126` | 面の参考値。chromeはsystem material優先 |
-| surfaceRaised | `#292A30` | 一段上の面 |
-| border | `#3A3B42` | 基本はsemantic separator |
-| accent | `#8CA7DF` | 選択・リンク。iOS Light側は既存paletteの`#34558B` |
-| warning | `#E8A54A` | 注意 |
-| success | `#7FBF8A` | 完了 |
-| danger | `#E07A7A` | 破壊的操作の補助。button roleを併用 |
+| paper | `#F8F5EF` | `#18181B` |
+| surface | `#FFFDF9` | `#212126` |
+| elevatedSurface | `#FFFFFF` | `#2A2A30` |
+| sunken | `#F0ECE3` | `#131316` |
+| separator | `#E3DDD1` | `#3A3B42` |
+| textPrimary | `#23211D` | `#ECE9E2` |
+| textSecondary | `#6B655B` | `#A6A29A` |
+| textTertiary | `#9A9488` | `#706C66` |
+| accent | `#34558B` | `#8CA7DF` |
+| accentMuted | `#E4E9F3` | `#263049` |
+| leaf | `#50704A` | `#9DB58E` |
+| warning | `#9A5A00` | `#E8A54A` |
+| danger | `#B3413B` | `#E07A7A` |
 
-人物識別の既定10色は`#C25450`、`#C97F3D`、`#B89A3A`、`#5B9160`、`#4E9091`、`#5077B0`、`#6A6FB2`、`#8E6AA8`、`#B0628C`、`#8A7A6A`。基本は8ptの識別ドットで、任意色は利用者設定として扱う。
+本文UIは両外観でWCAG 4.5:1以上をテストする。textTertiaryは補助記号・装飾用とし、本文文字はtextSecondaryを使う。Increase Contrast／Reduce Transparencyは標準部品の挙動を保つ。
+
+人物識別の既定10色は`#C25450`、`#C97F3D`、`#B89A3A`、`#5B9160`、`#4E9091`、`#5077B0`、`#6A6FB2`、`#8E6AA8`、`#B0628C`、`#8A7A6A`。色名は順に紅、柿、芥子、松、青磁、縹、藤紫、菖蒲、梅紫、胡桃。help／VoiceOverは色名を使う。任意色は利用者設定として扱う。
 
 ## 3. タイポグラフィ
 
@@ -39,18 +46,18 @@
 | 文字数・数値 | `.monospacedDigit()` |
 | Editor本文 | 既定ヒラギノ明朝ProN 16pt、行間1.5、文字`#E8E6DF`、背景`#171719` |
 
-UIへ任意のフォントサイズを直書きしない。本文は利用者がフォント・サイズ・行間・配色を設定できる境界とし、OS側で提供している設定範囲は各platformの実装へ照合する。補助入力の話メモ等はsystem fontを使う。
+作品名（表紙・作品ホーム・作品情報の見出し）に限りヒラギノ明朝W6を`relativeTo:`付きで使う。棚見出しはlargeTitle、詳細見出しはtitle2.semibold、行の補足はiOS subheadline／macOS caption、メタ情報はcaption2。UIへ任意のフォントサイズを直書きしない。本文は利用者がフォント・サイズ・行間・配色を設定できる境界とし、OS側で提供している設定範囲は各platformの実装へ照合する。補助入力の話メモ等はsystem fontを使う。
 
 本文insetは左右・上下16pt、末尾に96ptの表示余白を置く。改行や空白を本文へ追加して余白を作らない。macOS本文幅は無制限が既定で、700pt／900ptへ変更できる。
 
 ## 4. スペーシングとレイアウト
 
-- 8ptグリッドを基本とし4pt刻みを許す。既定の外周20pt、グループ間16pt、グループ内8ptを使い、場当たりの数値を増やさない。
-- 角丸はカード／パネル8pt、チップ4pt。枠はseparatorのhairline。常設の影を付けない。
+- `Spacing`は2／4／8／12／16／20／24／32／48pt。既定の外周20pt、グループ間16pt、グループ内8ptを使い、場当たりの数値を増やさない。
+- 角丸は`Radius` token（continuous）：chip 4、thumbnail 6、card 10、hero 14、表紙4pt＋内側hairline。影は表紙サムネイルの1層（黒、Light 0.12／Dark 0.4、radius 3、y 1）とドラッグ中のカードだけ。
 - macOSの基準はSidebar 200pt（184〜224）、Outline 360pt（224〜440）、status bar 28pt。プロットlane 260pt、人物一覧280pt（最小240）。
 - Outlineがある機能はSidebar／Outline／Detail。作品情報・設定はSidebar／Detail。splitを入れ子にしない。
 - 狭幅では低頻度操作の標準overflowとOutline縮小を使い、本文の可読幅を守る。toolbarは一段で高さ・paddingをOSへ任せる。
-- Sidebar／Outline／detail chromeは`.thinMaterial`。既存の`workbenchGlassChromeStyle()`／`workbenchOutlineListStyle()`を使い、materialを二重にしない。本文・世界観Editorだけは不透明キャンバス。
+- Sidebar／Outline／toolbarはsystem material。詳細の面はpaper／surface。既存の`workbenchGlassChromeStyle()`／`workbenchOutlineListStyle()`を使い、materialを二重にしない。本文・世界観Editorだけは不透明キャンバス。
 - フォームはsystem grouped styleまたは既存Labeled Field。長文はラベル→8pt→入力、入力inset 8pt。
 - iOSの執筆補助バーは本文直下、keyboard表示時はIME直上。本文と同じ不透明背景でsafe areaまで連続させ、各操作を44pt以上にする。
 
@@ -58,10 +65,18 @@ UIへ任意のフォントサイズを直書きしない。本文は利用者が
 
 - 標準button、List selection、focus ringを使う。主操作は`.borderedProminent`、通常は`.bordered`、toolbar／行内は`.borderless`。破壊的操作は`.destructive`と対象が分かる確認を付ける。
 - Sidebarはアイコン＋短い名詞。通常行はタイトル＋captionの2行。章Disclosureは章名・話数・文字数を一行にし、label全体で開閉できるようにする。
-- 空状態は`ContentUnavailableView`で状況と次の一歩を示す。未設定、読込失敗、offlineを「作品がありません」にまとめない。
+- 空状態は`ContentUnavailableView`で状況と次の一歩を示し、実在する操作ボタンを付ける。未設定、読込失敗、offlineを「作品がありません」にまとめない。
 - macOSのtoolbarは [TOOLBAR.md](TOOLBAR.md)。保存／同期は上部へ集約し、下部は話／全体文字数や検索結果などに使う。同じ保存状態を上下に重複させない。
 - iOS本文の重複見出し・タイトル入力・文字数・下部status barを常設しない。執筆補助のdisabled理由は見た目とVoiceOverへ伝える。
-- プロットカードは淡い面＋separator＋8pt角丸。ドラッグ中だけ控えめな影を許す。
+- プロットカードは淡い面＋separator＋Radius.card角丸。ドラッグ中だけ控えめな影を許す。
+
+- サムネイル：表紙は2:3、一覧32×48、grid幅120〜150（iOS 104〜140）、home 96×144。人物は円形、一覧macOS 24／iOS 28、詳細72。世界観は角丸正方形、一覧28、詳細96。
+- 画像なしの表紙はpaper＋藍の帯＋作品名の先頭から数字・空白・句読点・記号を除いた最初の1文字（明朝、該当文字がなければ「文」）。人物はcolorHexの円＋頭文字（色なしは中立色）、世界観はaccentMuted＋`globe.asia.australia`。画像は表示寸法でdecode・cacheする。
+- 棚はtoolbarの標準Pickerで表紙／一覧を切り替え、端末のAppStorageへ記憶する。表紙はLazyVGrid、一覧は既存の行操作を保つ。iOSのアクセシビリティ文字サイズでは保存した選択を変えず一覧へ戻す。取り込みの進捗・中止・再試行は両形式のカード／行とcontext menuから利用できる。
+- 人物詳細は72ptの画像＋名前・ふりがな・役割を見出しにまとめ、設定をsurface cardへ分ける。色の選択状態はringとcheckmarkでも伝える。世界観詳細の画像領域は設定済みのときだけ表示し、未設定でも画像設定・dropの入口を残す。
+- プロット・伏線は`surfaceCard`相当の面と0.5ptの境界、選択は1.5ptのaccent。iPadはカード、iPhone・拡大文字・並べ替え編集中は一覧。未回収はwarningの`flag`、回収済みはleafの`checkmark.circle.fill`。通常時は影を付けない。
+- 切り抜きは対象形状の外側を暗くし、輪郭を表示する。位置・倍率の操作を保ち、「使用する」を主操作にする。
+- 状態は必ず記号＋文字。同期済みleaf、同期中／未取得accent、同期待ち／端末内secondary、offlineは記号tertiary・文字secondary、競合warning、失敗danger。文言と意味は共通applicationに従う。SF Symbolsはhierarchical、system weight。
 
 ## 6. 起動・同期・復旧の表示
 
@@ -77,11 +92,11 @@ UIへ任意のフォントサイズを直書きしない。本文は利用者が
 
 ## 7. インタラクション
 
-- フォーカスと選択はOS標準。アニメーションは既存`.snappy`（目安0.2秒）へ揃え、0.5秒超やバウンスを増やさない。
+- フォーカスと選択はOS標準。`Motion.standard`（短いease）を使い、Reduce Motion時はnil。本文入力中に数値や記号のアニメーションを動かさない。
 - macOS本文の「滑らかなカーソル」は既定ON。設定からOFFにでき、OSの「視差効果を減らす」では標準表示に戻す。縦線だけを90msで追従させ、IME候補の位置や実際の入力位置は遅らせない。
 - 編集一覧はEnterで編集、Deleteは確認付き削除。作品chooserは選択とopenを分け、ListにfocusがあるときのReturnとdouble clickで開く。
 - toolbarを唯一の入口にしない。削除可能なitemにはmenu／context menuの代替を残す。
-- macOSはCmd+1〜7でsection、Cmd+Nで新規、Cmd+OでImport、Cmd+Shift+SでExport。Cmd+Fはfocus対象のOutline検索／話内検索を使い分ける。
+- macOSはCmd+1〜7でsection、Cmd+Nで新規、Cmd+OでImport、Cmd+Shift+SでExport。Cmd+Fは作品一覧では棚検索へfocusし、Workbenchではfocus対象のOutline検索／話内検索を使い分ける。
 - Cmd+Sは同じlocal保存直列化へ接続する。保存後のv2 workerは非同期で再開し、network完了を待たない。
 
 ## 8. 文言
@@ -101,3 +116,5 @@ UIへ任意のフォントサイズを直書きしない。本文は利用者が
 - 本書のtoken／余白／階層と [iOSの操作契約](IOS.md) に対する回帰。
 
 色・配置の微調整は既存規約内で進める。外観既定、機能階層、保存／同期の意味を変える場合は製品判断として [DECISIONS.md](DECISIONS.md) を更新する。
+
+サムネイルの設定対象は作品・人物・世界観ノートだけ（D-104）。上記寸法・形状・表紙の影を共用し、人物の8pt識別色dotは画像と併存する。一覧画像はVoiceOverから隠し、詳細画像は「〇〇の画像」、設定／置換／削除は対象が分かるlabelを付ける。切り抜きsheetは中央cropを初期値に、対象形状のmask・pan・pinch（Macはscrollも）・拡大率sliderを使う。

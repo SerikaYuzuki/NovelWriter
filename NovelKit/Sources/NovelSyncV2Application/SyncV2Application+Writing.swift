@@ -16,31 +16,15 @@ public struct SyncV2WritingContext: Equatable, Sendable {
     }
 }
 
-public extension SyncV2LocalKernel {
-    func writingContext(workID: WorkID) async throws -> SyncV2WritingContext {
-        SyncV2WritingContext(workID: workID, commonNamespace: "local:common", binding: nil)
-    }
-}
-
-public extension SyncV2RemoteClient {
-    func appendWritingRecord(_: WritingRecord, binding _: SyncV2AccountScopeBinding) async throws -> WritingEnvelope {
-        throw WritingError.unavailable
-    }
-
-    func writingRecordPage(workID _: UUID?, after _: Int64, binding _: SyncV2AccountScopeBinding) async throws -> WritingRecordPage {
-        throw WritingError.unavailable
-    }
-}
-
 public extension SyncV2Application {
     func copyWritingHistory(source: WorkID, destination: WorkID) async {
         guard let writingStore, let id = UUID(uuidString: destination.description) else { return }
         do {
             try await writingStore.copyHistory(source: "work:\(source.description)", destination: "work:\(destination.description)", newWorkID: id)
-            writingCopyRetries[destination] = nil
+            lanes[destination, default: WorkLane()].writingCopyRetry = nil
         } catch {
             // The manuscript clone has already committed. Never report it as failed.
-            writingCopyRetries[destination] = source
+            lanes[destination, default: WorkLane()].writingCopyRetry = source
         }
     }
 
@@ -127,7 +111,7 @@ public extension SyncV2Application {
 
     private func retryWritingHistoryCopies() async throws {
         guard let writingStore else { return }
-        for (destination, source) in writingCopyRetries {
+        for (destination, source) in laneValues(\.writingCopyRetry) {
             await copyWritingHistory(source: source, destination: destination)
         }
         try await writingStore.retryHistoryCopies()

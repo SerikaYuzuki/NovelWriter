@@ -20,7 +20,7 @@ extension IOSDocumentStore {
         guard !isSyncV2AccountTransitionActive,
               currentDocumentSessionToken == context.expectedSession,
               syncV2ActiveWorkID == context.expectedWorkID,
-              snapshotSyncV2AccountScope == context.expectedAccountScope else {
+              matchesSyncAccount(context.expectedAccountScope) else {
             throw SyncV2ApplicationError.invalidRuntimeMode
         }
         // Keep Work A installed until Work B has committed its first SQLite
@@ -34,7 +34,7 @@ extension IOSDocumentStore {
         guard !isSyncV2AccountTransitionActive,
               currentDocumentSessionToken == context.expectedSession,
               syncV2ActiveWorkID == context.expectedWorkID,
-              snapshotSyncV2AccountScope == context.expectedAccountScope else {
+              matchesSyncAccount(context.expectedAccountScope) else {
             throw SyncV2ApplicationError.invalidRuntimeMode
         }
         // Install is the only point where the active editor/session and recent

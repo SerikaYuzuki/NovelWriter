@@ -40,6 +40,22 @@ async fn explicit_grace_cancel_restart_and_scoped_erasure() {
             .await
             .unwrap();
     }
+    let mut waiting_uploads = Vec::new();
+    for state in ["prepared", "uploaded", "finalized"] {
+        waiting_uploads.push((
+            state,
+            support::pending_gc_upload(
+                &ctx.repo,
+                &ctx.account_a,
+                ctx.primary_work,
+                &ctx.account_b,
+                ctx.foreign_work,
+                state,
+            )
+            .await
+            .unwrap(),
+        ));
+    }
     let identity = Uuid::new_v4();
     sqlx::query("INSERT INTO auth_v1.provider_configs(provider_config_id,provider_kind,exact_issuer,allowed_audiences,enabled,config_version) VALUES('retention-test','apple','https://test.invalid',ARRAY['test'],true,1)").execute(pool).await.unwrap();
     sqlx::query("INSERT INTO auth_v1.external_identities(identity_id,account_id,provider_config_id,exact_issuer,lookup_key_version,subject_lookup_hmac,state) VALUES($1,$2,'retention-test','https://test.invalid',1,$3,'active')").bind(identity).bind(account).bind(vec![2u8;32]).execute(pool).await.unwrap();
@@ -95,6 +111,22 @@ async fn explicit_grace_cancel_restart_and_scoped_erasure() {
         .await
         .unwrap();
     assert_eq!(own, 0);
+    for (state, (id, finalize)) in waiting_uploads {
+        let exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM sync_v2.global_blobs WHERE object_id=$1)",
+        )
+        .bind(id.as_slice())
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        assert!(exists, "account GC removed {state} capability blob");
+        if state == "uploaded" {
+            assert_eq!(
+                ctx.repo.command(&ctx.account_b, &finalize).await.unwrap().0,
+                200
+            );
+        }
+    }
     let own_ai: i64 =
         sqlx::query_scalar("SELECT count(*) FROM sync_v2.assistant_records WHERE account_id=$1")
             .bind(account)

@@ -1,6 +1,7 @@
 import AppKit
 import CoreTransferable
 import NovelCore
+import NovelUI
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -79,11 +80,14 @@ struct PlotBoardView: View {
             if let chapter = appState.document.chapters.first(where: { $0.id == focusedChapterID }) {
                 cardBoard(chapterID: chapter.id, cards: cards(in: chapter.id))
             } else {
-                ContentUnavailableView(
-                    "章が見つかりません",
-                    systemImage: "rectangle.stack",
-                    description: Text("Outlineから章または未割り当てを選び直してください。")
-                )
+                ContentUnavailableView {
+                    Label("章が見つかりません", systemImage: "rectangle.stack")
+                } description: {
+                    Text("章の一覧から章または未割り当てを選び直してください。")
+                } actions: {
+                    Button("未割り当てを見る") { appState.selectPlotOutline(.unassigned) }
+                        .disabled(!appState.permitsDocumentInteraction)
+                }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .padding(16)
             }
@@ -96,11 +100,12 @@ struct PlotBoardView: View {
         cards: [SessionBoundValue<PlotCard>]
     ) -> some View {
         if cards.isEmpty {
-            ContentUnavailableView(
-                "プロットカードがありません",
-                systemImage: "rectangle.stack",
-                description: Text("上部の「プロットカードを追加」またはプロットメニューから追加できます。")
-            )
+            ContentUnavailableView {
+                Label("プロットカードがありません", systemImage: "rectangle.stack")
+            } actions: {
+                Button("プロットカードを追加") { appState.addPlotCard(chapterID: chapterID) }
+                    .disabled(!appState.permitsDocumentInteraction)
+            }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .padding(16)
             .contentShape(Rectangle())
@@ -198,11 +203,12 @@ struct PlotChapterOutlineView: View {
             .overlay {
                 if appState.document.chapters.isEmpty,
                    appState.document.plotCards.allSatisfy({ $0.chapterID != nil }) {
-                    ContentUnavailableView(
-                        "章がありません",
-                        systemImage: "doc.text",
-                        description: Text("上部の「章を追加」または章メニューから追加できます。")
-                    )
+                    ContentUnavailableView {
+                        Label("章がありません", systemImage: "doc.text")
+                    } actions: {
+                        Button("章を追加") { Task { _ = await appState.addChapterAfterTransition() } }
+                            .disabled(!appState.permitsDocumentInteraction)
+                    }
                 }
             }
         }
@@ -358,13 +364,15 @@ private struct PlotCardCanvas: View {
 
     var body: some View {
         if cards.isEmpty {
-            ContentUnavailableView(
-                "プロットカードがありません",
-                systemImage: "rectangle.stack",
-                description: Text("上部の「プロットカードを追加」またはプロットメニューから追加できます。")
-            )
+            ContentUnavailableView {
+                Label("プロットカードがありません", systemImage: "rectangle.stack")
+            } actions: {
+                Button("プロットカードを追加") { appState.addPlotCard(chapterID: chapterID) }
+                    .disabled(!appState.permitsDocumentInteraction)
+            }
             .frame(width: 260)
             .frame(minHeight: 120)
+            .overlay(RoundedRectangle(cornerRadius: Radius.card).strokeBorder(FuminiwaColor.separator.color, style: StrokeStyle(lineWidth: 1, dash: [5, 4])))
             .dropDestination(for: PlotCardID.self) { items, _ in
                 guard let droppedID = items.first else { return false }
                 appState.movePlotCard(id: droppedID, toChapter: chapterID, before: nil)
@@ -375,6 +383,7 @@ private struct PlotCardCanvas: View {
                 let card = item.value
                 PlotBoardCard(
                     card: card,
+                    isSelected: appState.selectedPlotCard?.id == card.id,
                     onEdit: {
                         editingCardRequest = item
                         appState.selectPlotCard(card.id)
@@ -397,6 +406,9 @@ private struct PlotCardCanvas: View {
 
 private struct PlotBoardCard: View {
     let card: PlotCard
+    var isSelected = false
+    @State private var isHovered = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let onEdit: () -> Void
     let onDelete: () -> Void
 
@@ -417,14 +429,16 @@ private struct PlotBoardCard: View {
             }
             .padding(12)
             .frame(maxWidth: .infinity, alignment: .topLeading)
-            .background(.quaternary.opacity(0.5))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .background(isHovered ? FuminiwaColor.elevatedSurface.color : FuminiwaColor.surface.color)
+            .clipShape(RoundedRectangle(cornerRadius: Radius.card))
             .overlay {
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(.separator, lineWidth: 1)
+                RoundedRectangle(cornerRadius: Radius.card)
+                    .strokeBorder(isSelected ? FuminiwaColor.accent.color : FuminiwaColor.separator.color, lineWidth: isSelected ? 1.5 : 0.5)
             }
         }
         .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .animation(Motion.standard(reduceMotion: reduceMotion), value: isHovered)
         .contextMenu {
             Button("編集") {
                 onEdit()

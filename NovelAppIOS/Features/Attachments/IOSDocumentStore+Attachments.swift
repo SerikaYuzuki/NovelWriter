@@ -1,6 +1,7 @@
 import Foundation
 import NovelCore
 import NovelSyncV2
+import NovelThumbnail
 
 extension IOSDocumentStore {
     var supportsAttachments: Bool {
@@ -19,7 +20,7 @@ extension IOSDocumentStore {
             do {
                 let opened = try await application.openLocal(workID: workID)
                 guard !syncV2AccountTransitionInProgress,
-                      snapshotSyncV2AccountScope == expectedAccountScope,
+                      matchesSyncAccount(expectedAccountScope),
                       syncV2ActiveWorkID == workID,
                       opened.workID == workID,
                       validateCurrentDocumentSession(expectedSession) else { return false }
@@ -40,7 +41,7 @@ extension IOSDocumentStore {
         await documentOperationGate.perform { [weak self] in
             guard let self,
                   !syncV2AccountTransitionInProgress, !Task.isCancelled,
-                  expectedAccountScope == nil || snapshotSyncV2AccountScope == expectedAccountScope,
+                  expectedAccountScope == nil || matchesSyncAccount(expectedAccountScope),
                   validateCurrentDocumentSession(expectedSession),
                   synchronizeActiveEditorForAttachmentMutation(expectedSession: expectedSession) else { return nil }
 
@@ -66,7 +67,7 @@ extension IOSDocumentStore {
         return await documentOperationGate.perform { [weak self] in
             guard let self,
                   !syncV2AccountTransitionInProgress, !Task.isCancelled,
-                  expectedAccountScope == nil || snapshotSyncV2AccountScope == expectedAccountScope,
+                  expectedAccountScope == nil || matchesSyncAccount(expectedAccountScope),
                   validateCurrentDocumentSession(attachmentSession),
                   attachments.contains(where: { $0.id == attachment.id }),
                   synchronizeActiveEditorForAttachmentMutation(expectedSession: attachmentSession) else { return false }
@@ -105,7 +106,7 @@ extension IOSDocumentStore {
         replaceV2Attachments(values)
     }
 
-    private func synchronizeActiveEditorForAttachmentMutation(
+    func synchronizeActiveEditorForAttachmentMutation(
         expectedSession: IOSDocumentSessionToken
     ) -> Bool {
         switch editorCommandSession.captureActiveCommittedText() {
@@ -133,7 +134,7 @@ extension IOSDocumentStore {
     private func replaceV2Attachments(_ values: [SyncAttachment]) -> Bool {
         guard validateV2AttachmentRecords(values) else {
             operationErrorMessage = "資料一覧が壊れているため、作品を変更していません。"
-            snapshotSyncOutcome = .failed
+            snapshotSyncOutcome = .failure(.fatal(.invalidLocalState))
             return false
         }
         replaceAttachments(values.map {
@@ -167,7 +168,7 @@ extension IOSDocumentStore {
         guard let application = snapshotSyncV2Application,
               !syncV2AccountTransitionInProgress,
               syncV2ActiveWorkID == expectedWorkID,
-              snapshotSyncV2AccountScope == expectedAccountScope,
+              matchesSyncAccount(expectedAccountScope),
               validateCurrentDocumentSession(expectedSession) else { return nil }
         let accessed = sourceURL.startAccessingSecurityScopedResource()
         defer {
@@ -180,10 +181,11 @@ extension IOSDocumentStore {
                 () async throws -> Attachment? in
                 guard !syncV2AccountTransitionInProgress,
                       syncV2ActiveWorkID == expectedWorkID,
-                      snapshotSyncV2AccountScope == expectedAccountScope,
+                      matchesSyncAccount(expectedAccountScope),
                       validateCurrentDocumentSession(expectedSession) else { return nil }
                 let bytes = try Data(contentsOf: sourceURL)
-                let originalName = sourceURL.lastPathComponent.isEmpty ? "資料" : sourceURL.lastPathComponent
+                let sourceName = sourceURL.lastPathComponent.isEmpty ? "資料" : sourceURL.lastPathComponent
+                let originalName = ThumbnailOwner.isReserved(sourceName) ? "資料-" + sourceName : sourceName
                 let name = uniqueV2AttachmentName(originalName)
                 let value = Attachment(fileName: name, byteCount: Int64(bytes.count))
                 let previousAttachments = attachments
@@ -208,7 +210,7 @@ extension IOSDocumentStore {
                 }
                 guard !syncV2AccountTransitionInProgress,
                       syncV2ActiveWorkID == expectedWorkID,
-                      snapshotSyncV2AccountScope == expectedAccountScope,
+                      matchesSyncAccount(expectedAccountScope),
                       validateCurrentDocumentSession(expectedSession) else { return nil }
                 return value
             }
@@ -237,13 +239,13 @@ extension IOSDocumentStore {
         guard let application = snapshotSyncV2Application,
               !syncV2AccountTransitionInProgress,
               syncV2ActiveWorkID == expectedWorkID,
-              snapshotSyncV2AccountScope == expectedAccountScope,
+              matchesSyncAccount(expectedAccountScope),
               validateCurrentDocumentSession(expectedSession) else { return false }
         do {
             let result = try await saveCoordinator.performExclusiveAfterFlushing(flushAfter: true) {
                 guard !syncV2AccountTransitionInProgress,
                       syncV2ActiveWorkID == expectedWorkID,
-                      snapshotSyncV2AccountScope == expectedAccountScope,
+                      matchesSyncAccount(expectedAccountScope),
                       validateCurrentDocumentSession(expectedSession) else { return false }
                 let previousAttachments = attachments
                 let previousPayloads = syncV2AttachmentPayloads
@@ -267,7 +269,7 @@ extension IOSDocumentStore {
                 }
                 return !syncV2AccountTransitionInProgress
                     && syncV2ActiveWorkID == expectedWorkID
-                    && snapshotSyncV2AccountScope == expectedAccountScope
+                    && matchesSyncAccount(expectedAccountScope)
                     && validateCurrentDocumentSession(expectedSession)
             }
             switch result {

@@ -45,7 +45,7 @@ public enum SnapshotSyncV2Runtime {
             )
             let scope = TestScopeResolver(vault: configuration.vault, store: store)
             let remote = configuration.remote
-            let kernel = ProductionSyncV2Kernel(store: store, scope: scope, remote: remote)
+            let kernel = ProductionSyncV2Kernel(store: store, scope: scope)
             let planner = ProductionSyncV2Planner(store: store, scope: scope)
             composition = SyncV2RuntimeComposition(
                 identity: .test,
@@ -93,12 +93,12 @@ public enum SnapshotSyncV2Runtime {
                     clientVersion: configuration.clientVersion,
                     clientPlatform: configuration.clientPlatform,
                     sessionProvider: provider,
-                    localStore: store
+                    snapshotCache: store, backfillPersistence: store
                 )
             } else {
                 remote = OfflineProductionSyncV2RemoteClient()
             }
-            let kernel = ProductionSyncV2Kernel(store: store, scope: scope, remote: remote)
+            let kernel = ProductionSyncV2Kernel(store: store, scope: scope)
             let planner = ProductionSyncV2Planner(store: store, scope: scope)
             composition = SyncV2RuntimeComposition(
                 identity: .production,
@@ -209,7 +209,7 @@ enum ProductionStoreFactory {
     }
 }
 
-private actor PreviewSyncV2RemoteClient: SyncV2RemoteClient {
+actor PreviewSyncV2RemoteClient: SyncV2RemoteClient {
     func execute(
         _ operation: SyncV2RemoteOperation
     ) async throws -> SyncV2RemoteExecution {
@@ -218,7 +218,7 @@ private actor PreviewSyncV2RemoteClient: SyncV2RemoteClient {
     }
 }
 
-private actor OfflineProductionSyncV2RemoteClient: SyncV2RemoteClient {
+actor OfflineProductionSyncV2RemoteClient: SyncV2RemoteClient {
     func execute(_ operation: SyncV2RemoteOperation) async throws -> SyncV2RemoteExecution {
         _ = operation
         throw SyncV2Failure.authenticationRequired

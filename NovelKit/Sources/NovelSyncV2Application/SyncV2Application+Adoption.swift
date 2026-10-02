@@ -3,7 +3,7 @@ import NovelSyncV2
 public extension SyncV2Application {
     func beginSession(workID: WorkID) async -> DocumentSessionToken {
         let session = await gate.beginSession(workID: workID)
-        sessions[workID] = session
+        lanes[workID, default: WorkLane()].session = session
         return session
     }
 
@@ -13,17 +13,16 @@ public extension SyncV2Application {
     func documentGateToken(
         for session: DocumentSessionToken
     ) async throws -> DocumentGateToken {
-        guard sessions[session.workID] == session,
-              let state = states[session.workID],
-              case let .saved(generation, snapshotID) = state.localDurability else {
+        guard lanes[session.workID]?.session == session else {
+            throw SyncV2ApplicationError.safeBoundaryRejected
+        }
+        let durable = try await kernel.currentVersion(workID: session.workID)
+        guard lanes[session.workID]?.session == session else {
             throw SyncV2ApplicationError.safeBoundaryRejected
         }
         return try await gate.issueToken(
             for: session,
-            expectedLocalVersion: SyncV2LocalVersion(
-                generation: generation,
-                snapshotID: snapshotID
-            )
+            expectedLocalVersion: durable
         )
     }
 
@@ -34,7 +33,7 @@ public extension SyncV2Application {
         guard runtimeIdentity != .preview,
               pending?.inboxID == boundary.inboxID,
               pending?.expectedLocalVersion == boundary.gate.expectedLocalVersion,
-              sessions[boundary.workID] == boundary.session,
+              lanes[boundary.workID, default: WorkLane()].session == boundary.session,
               boundary.workID == boundary.session.workID,
               boundary.workID == boundary.gate.workID,
               boundary.gate.expectedLocalVersion.generation >= 0,
@@ -77,11 +76,11 @@ public extension SyncV2Application {
         // in between those hops (especially after restart).  Project the
         // durable fact here as well so the UI never reports a stale syncing
         // state while a safe adoption is already available.
-        if states[workID]?.remoteProgress != .readyForSafeAdoption(inboxID: pending.inboxID)
-            || states[workID]?.conflict != nil {
+        if lanes[workID, default: WorkLane()].state?.remoteProgress != .readyForSafeAdoption(inboxID: pending.inboxID)
+            || lanes[workID, default: WorkLane()].state?.conflict != nil {
             setState(
                 workID: workID,
-                localDurability: states[workID]?.localDurability ?? .unsaved,
+                localDurability: lanes[workID, default: WorkLane()].state?.localDurability ?? .unsaved,
                 remoteProgress: .readyForSafeAdoption(inboxID: pending.inboxID),
                 result: .adoptionPending,
                 conflict: .clear

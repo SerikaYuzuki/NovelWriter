@@ -5,6 +5,10 @@
 /// FIFO gate だけを提供し、package URL を保存 identity にしない。
 @MainActor
 final class DocumentOperationGate {
+    #if FUMINIWA_TEST_COMPOSITION
+    /// Signals an enqueued operation after the current owner has acquired the gate.
+    var didEnqueueOperation: (@MainActor () -> Void)?
+    #endif
     private var isRunning = false
     private var waiters: [CheckedContinuation<Void, Never>] = []
 
@@ -22,6 +26,9 @@ final class DocumentOperationGate {
 
         await withCheckedContinuation { continuation in
             waiters.append(continuation)
+            #if FUMINIWA_TEST_COMPOSITION
+            didEnqueueOperation?()
+            #endif
         }
     }
 

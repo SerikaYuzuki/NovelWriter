@@ -109,6 +109,11 @@ extension IOSDocumentStore {
 
     @discardableResult
     func refreshLibrary() async -> Bool {
+        #if FUMINIWA_TEST_COMPOSITION
+        if isLibraryPreview {
+            return true
+        }
+        #endif
         guard !isSyncV2AccountTransitionActive else { return false }
         do {
             guard try await reloadLibraryItems() else { return false }
@@ -135,7 +140,27 @@ extension IOSDocumentStore {
         let expectedAccountScope = snapshotSyncV2AccountScope
         libraryRefreshGeneration &+= 1
         let refreshGeneration = libraryRefreshGeneration
-        let projection = try await application.library()
+        libraryIsLoading = true
+        defer {
+            if libraryRefreshGeneration == refreshGeneration {
+                libraryIsLoading = false
+            }
+        }
+        let projection: SyncV2LibraryProjection
+        do {
+            projection = try await application.library()
+            let pending = try await application.pendingDeletionWorkIDs()
+            let deleted = try await application.deletedWorkIDs()
+            guard matchesSyncAccount(expectedAccountScope), libraryRefreshGeneration == refreshGeneration else { return false }
+            pendingDeletionWorkIDs = pending
+            deletedLibraryWorkIDs = deleted
+            libraryFailure = nil
+        } catch {
+            guard matchesSyncAccount(expectedAccountScope) else { return false }
+            libraryFailure = syncV2FailureKind(error)
+            logSyncV2PresentationFailure(error)
+            throw error
+        }
         return applySnapshotSyncV2LibraryProjection(
             projection,
             expectedAccountScope: expectedAccountScope,
@@ -151,7 +176,7 @@ extension IOSDocumentStore {
     ) -> Bool {
         guard !isSyncV2AccountTransitionActive,
               libraryRefreshGeneration == refreshGeneration,
-              snapshotSyncV2AccountScope == expectedAccountScope else { return false }
+              matchesSyncAccount(expectedAccountScope) else { return false }
         let localItems = projection.items.filter { item in
             if item.accountState == .parkedDifferentAccount {
                 return exposesParkedSyncV2Items
@@ -195,7 +220,7 @@ extension IOSDocumentStore {
             )
             guard !isSyncV2RemoteAccountTransitionActive,
                   remoteCatalogRefreshGeneration == refreshGeneration,
-                  snapshotSyncV2AccountScope == expectedAccountScope else { return false }
+                  matchesSyncAccount(expectedAccountScope) else { return false }
             var rows = Dictionary(
                 uniqueKeysWithValues: existingItems.map { ($0.workID, $0) }
             )
@@ -214,13 +239,14 @@ extension IOSDocumentStore {
         } catch {
             if !isSyncV2RemoteAccountTransitionActive,
                remoteCatalogRefreshGeneration == refreshGeneration,
-               snapshotSyncV2AccountScope == expectedAccountScope {
+               matchesSyncAccount(expectedAccountScope) {
                 if error as? SyncV2Failure == .authenticationRequired, case .signedIn = authUIState {
                     let message = "認証の有効期限が切れました。Appleで再サインインしてください。原稿はこの端末に保存されています。"
                     authUIState = .failed(message)
-                    syncV2RemoteCatalogError = message
+                    syncV2RemoteCatalogError = .authenticationRequired
                 } else {
-                    syncV2RemoteCatalogError = error.localizedDescription
+                    syncV2RemoteCatalogError = syncV2FailureKind(error)
+                    logSyncV2PresentationFailure(error)
                 }
             }
             return false
@@ -236,7 +262,7 @@ extension IOSDocumentStore {
     ) -> Bool {
         guard !isSyncV2RemoteAccountTransitionActive,
               remoteCatalogRefreshGeneration == refreshGeneration,
-              snapshotSyncV2AccountScope == expectedAccountScope else { return false }
+              matchesSyncAccount(expectedAccountScope) else { return false }
         // Merge into the current local rows, not a projection captured before
         // network I/O. A concurrent local refresh will likewise merge this cache.
         let localItems = syncV2LibraryItems.filter { item in
@@ -299,7 +325,7 @@ extension IOSDocumentStore {
             if !isSyncV2AccountTransitionActive,
                historyRefreshGeneration == refreshGeneration,
                syncV2HistoryWorkID == workID,
-               snapshotSyncV2AccountScope == expectedAccountScope {
+               matchesSyncAccount(expectedAccountScope) {
                 syncV2HistoryOnlineFailure = (error as? SyncV2Failure) ?? .offline
             }
             return false
@@ -317,7 +343,7 @@ extension IOSDocumentStore {
         guard !isSyncV2AccountTransitionActive,
               historyRefreshGeneration == refreshGeneration,
               syncV2HistoryWorkID == workID,
-              snapshotSyncV2AccountScope == expectedAccountScope else { return false }
+              matchesSyncAccount(expectedAccountScope) else { return false }
         syncV2HistoryItems = existingItems + page.items
         syncV2HistoryCursor = page.nextCursor
         syncV2HistoryLocalAvailability = page.localAvailability
@@ -330,8 +356,13 @@ extension IOSDocumentStore {
         into localItems: [SyncV2LibraryItem],
         catalog: [SyncV2RemoteCatalogEntry]
     ) -> [SyncV2LibraryItem] {
-        var rows = Dictionary(uniqueKeysWithValues: localItems.map { ($0.workID, $0) })
-        for remote in catalog {
+        var rows = Dictionary(uniqueKeysWithValues: localItems.filter { !deletedLibraryWorkIDs.contains($0.workID) }.map { ($0.workID, $0) })
+        // Pending local intents may be absent from the ordinary projection.
+        // Retain their shelf title for status and explicit retry, including remote-only works.
+        for item in syncV2LibraryItems where pendingDeletionWorkIDs.contains(item.workID) {
+            rows[item.workID] = item
+        }
+        for remote in catalog where !deletedLibraryWorkIDs.contains(remote.workID) {
             if let local = rows[remote.workID] {
                 // A parked local copy is an explicit account boundary.  A
                 // catalog row with the same WorkID must never turn it into a
@@ -341,14 +372,15 @@ extension IOSDocumentStore {
                 }
                 rows[remote.workID] = SyncV2LibraryItem(
                     workID: local.workID,
-                    title: local.title.isEmpty ? remote.title : local.title,
-                    availability: .cached,
+                    title: local.availability == .remoteOnly || local.title.isEmpty ? remote.title : local.title,
+                    availability: local.availability == .remoteOnly ? .remoteOnly : .cached,
                     accountState: local.accountState,
                     localGeneration: local.localGeneration,
-                    remoteHead: remote.head ?? local.remoteHead,
+                    remoteHead: local.remoteHead ?? remote.head,
+                    remoteHeadConfirmed: local.remoteHeadConfirmed,
                     conflict: local.conflict,
                     remoteProgress: local.remoteProgress,
-                    oldestUnreceivedAt: local.oldestUnreceivedAt
+                    oldestUnreceivedAt: local.oldestUnreceivedAt, historyBackfillNote: local.historyBackfillNote
                 )
             } else {
                 rows[remote.workID] = SyncV2LibraryItem(
@@ -360,7 +392,7 @@ extension IOSDocumentStore {
                 )
             }
         }
-        return rows.values.sorted { $0.workID.description < $1.workID.description }
+        return rows.values.sorted { SyncV2LibraryPresentation.precedes(title: $0.title, workID: $0.workID, otherTitle: $1.title, otherWorkID: $1.workID) }
     }
 
     @discardableResult
@@ -402,7 +434,7 @@ extension IOSDocumentStore {
             guard let self,
                   !isSyncV2AccountTransitionActive,
                   currentDocumentSessionToken == expectedSession,
-                  snapshotSyncV2AccountScope == expectedAccountScope else { return false }
+                  matchesSyncAccount(expectedAccountScope) else { return false }
             var cloned = false
             let transitioned = await performDocumentTransition {
                 do {
@@ -425,7 +457,7 @@ extension IOSDocumentStore {
                           await checkpointSnapshotSyncV2(document, reason: .explicit),
                           !isSyncV2AccountTransitionActive,
                           currentDocumentSessionToken == expectedSession,
-                          snapshotSyncV2AccountScope == expectedAccountScope else {
+                          matchesSyncAccount(expectedAccountScope) else {
                         operationErrorMessage = "端末へ保存できないため、アカウントへの追加を中止しました。"
                         return
                     }
@@ -439,17 +471,16 @@ extension IOSDocumentStore {
                     }
                     guard !isSyncV2AccountTransitionActive,
                           currentDocumentSessionToken == expectedSession,
-                          snapshotSyncV2AccountScope == expectedAccountScope else { return }
+                          matchesSyncAccount(expectedAccountScope) else { return }
                     let opened = try await application.openLocal(workID: newWorkID)
                     guard !isSyncV2AccountTransitionActive,
                           currentDocumentSessionToken == expectedSession,
-                          snapshotSyncV2AccountScope == expectedAccountScope,
+                          matchesSyncAccount(expectedAccountScope),
                           opened.workID == newWorkID,
                           let value = opened.document,
                           installSnapshotSyncV2Opened(opened, value: value) else { return }
                     let state = await application.uiState(workID: newWorkID)
-                    guard !isSyncV2AccountTransitionActive,
-                          snapshotSyncV2AccountScope == expectedAccountScope,
+                    guard matchesLocalSyncAccount(expectedAccountScope),
                           syncV2ActiveWorkID == newWorkID else { return }
                     applySnapshotSyncV2State(state)
                     Task { @MainActor [weak self] in

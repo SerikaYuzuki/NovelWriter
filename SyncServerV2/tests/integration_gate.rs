@@ -1,5 +1,9 @@
 //! Opt-in PostgreSQL/HTTP gate. Ordinary test runs emit an explicit skip and
 //! never connect to a fixed development or LAN server.
+#[path = "support/download_pages.rs"]
+mod download_pages;
+#[path = "support/shallow_download_pages.rs"]
+mod shallow_download_pages;
 mod support;
 
 use axum::{
@@ -694,7 +698,32 @@ async fn postgres_and_http_scenarios_are_opt_in() {
     verify_http_contract(&context).await;
     verify_chunk_upload_http(&context).await;
     verify_assistant_lane(&context).await;
-    verify_work_deletion(&context).await;
+    download_pages::verify_download_pages(&context).await;
+    download_pages::verify_merge_and_page_boundaries(&context).await;
+    let shallow_pages = shallow_download_pages::verify_shallow_download(&context).await;
+    verify_work_deletion(&context, &shallow_pages).await;
+    let (deleted_download, _, _) = get(
+        &context,
+        &context.account_a.account_id,
+        &format!(
+            "/v2/works/{}/download?snapshotId={}",
+            context.primary_work,
+            hex::encode(context.root_snapshot)
+        ),
+    )
+    .await;
+    assert_eq!(deleted_download, StatusCode::NOT_FOUND);
+    for mode in ["head", "backfill"] {
+        let path = format!(
+            "/v2/works/{}/download?snapshotId={}&mode={mode}",
+            context.primary_work,
+            hex::encode(context.root_snapshot)
+        );
+        assert_eq!(
+            get(&context, &context.account_a.account_id, &path).await.0,
+            StatusCode::NOT_FOUND
+        );
+    }
     context.repo.pool.close().await;
 }
 
@@ -713,7 +742,7 @@ fn integration_url_requires_an_isolated_sync_test_database() {
     }
 }
 
-async fn verify_work_deletion(context: &ScenarioContext) {
+async fn verify_work_deletion(context: &ScenarioContext, shallow_pages: &[String]) {
     let account = &context.account_a.account_id;
     let foreign_before: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM sync_v2.snapshots WHERE account_id=$1")
@@ -752,6 +781,11 @@ async fn verify_work_deletion(context: &ScenarioContext) {
     let mut ordered = vec![context.primary_work];
     ordered.extend(works.into_iter().filter(|w| *w != context.primary_work));
     for work in ordered {
+        if work == context.primary_work {
+            for path in shallow_pages {
+                assert_eq!(get(context, account, path).await.0, StatusCode::OK);
+            }
+        }
         for _ in 0..2 {
             let (status, headers, bytes) = request(
                 context,
@@ -773,6 +807,11 @@ async fn verify_work_deletion(context: &ScenarioContext) {
                 serde_json::from_slice::<Value>(&bytes).unwrap(),
                 serde_json::json!({"result":"deleted","workId":work})
             );
+        }
+        if work == context.primary_work {
+            for path in shallow_pages {
+                assert_eq!(get(context, account, path).await.0, StatusCode::NOT_FOUND);
+            }
         }
         let bytes = command_bytes(
             account,

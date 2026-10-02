@@ -1,7 +1,9 @@
 import NovelSyncV2Application
+import NovelUI
 import SwiftUI
 
 struct ExplicitSyncButton: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(AppState.self) private var appState
     let requestSync: () -> Void
     @State private var delayClock = SyncV2DelayClock()
@@ -27,9 +29,8 @@ struct ExplicitSyncButton: View {
         let pending = appState.snapshotSyncV2UIState?.oldestUnreceivedAt
         let delayed = SyncV2DelayNotice.isDelayed(since: pending, now: now)
         return Button(action: requestSync) {
-            Label("保存して同期", systemImage: status.systemImage)
-                .labelStyle(.iconOnly)
-                .foregroundStyle(status.isWarning || delayed ? Color.orange : Color.primary)
+            StatusLabel(status.title, systemImage: status.systemImage, tone: delayed && status.tone == .secondary ? .warning : status.tone)
+                .symbolEffect(.pulse, isActive: status.isSyncing && !reduceMotion)
         }
         .help((delayed ? "未同期の変更があります・" : "") + status.title + " — " + (appState.snapshotSyncCurrentWorkAccountState == .unbound
                 ? "この端末の同じ作品に保存します。同期用コピーは右クリックから作成できます。"

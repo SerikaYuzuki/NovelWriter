@@ -84,7 +84,10 @@ struct AppStateBootstrapTests {
         #expect(await state.configureSnapshotSyncV2(using: state.snapshotSyncV2Factory))
         await state.bootstrap()
 
-        #expect(await state.openExternalDocument(at: source))
+        #expect(await state.returnToSnapshotLibrary())
+        #expect(state.permitsDocumentImport)
+        let session = state.documentSessionToken
+        #expect(await state.importExternalDocument(at: source, expectedSession: session))
         #expect(state.document.title == imported.title)
         let activeWorkID = try #require(state.snapshotSyncV2ActiveWorkID)
         #expect(state.snapshotSyncV2Session?.workID == activeWorkID)

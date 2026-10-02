@@ -64,7 +64,7 @@ struct IOSSnapshotSyncV2PortableBoundaryTests {
             #expect(store.installSnapshotSyncV2Opened(opened, value: original) == false)
             #expect(store.document == original)
             #expect(store.attachments.isEmpty)
-            #expect(store.snapshotSyncOutcome == .failed)
+            #expect(store.snapshotSyncOutcome == .failure(.fatal(.invalidLocalState)))
             #expect(store.adoptV2AttachmentRecords(opened.attachments) == false)
             #expect(store.attachments.isEmpty)
         }
@@ -182,6 +182,7 @@ struct IOSSnapshotSyncV2PortableBoundaryTests {
             }
             store.snapshotSyncV2RemoteOnlyOpenTask = task
             store.snapshotSyncV2RemoteOnlyOpenToken = UUID()
+            store.snapshotSyncV2RemoteOnlyOpeningWorkID = activeWorkID
             let exportRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
                 "FUMINIWA-signout-export-\(UUID().uuidString)",
                 isDirectory: true
@@ -198,6 +199,7 @@ struct IOSSnapshotSyncV2PortableBoundaryTests {
             await store.signOutFromFuminiwa()
             #expect(store.snapshotSyncV2RemoteOnlyOpenTask == nil)
             #expect(store.snapshotSyncV2RemoteOnlyOpenToken == nil)
+            #expect(store.snapshotSyncV2RemoteOnlyOpeningWorkID == nil)
             #expect(task.isCancelled)
             #expect(store.syncV2ActiveWorkID == activeWorkID)
             #expect(store.syncV2LibraryItems.contains {

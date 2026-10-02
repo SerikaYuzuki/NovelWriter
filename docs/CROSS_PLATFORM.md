@@ -140,3 +140,7 @@ Swift／Rustの検証成功を将来C#の互換成功として扱わない。con
 ### 感想・アドバイスのMarkdown
 
 保存したAI感想・アドバイスは、[予約名付きMarkdown attachment](sync/v2/assistant-feedback.md)として既存Snapshot／明示package round-tripに含める。entity schema・package schemaは変更しない。対応clientは専用の読み取り画面に分類し、未対応clientは通常資料としてbytesを保持する。日時と用途を含む合成fixtureのencode/decode・削除をappテストで検証する。
+
+### サムネイルの予約名
+
+表紙・人物・WorldNoteの縮小JPEGは[予約名attachment契約](sync/v2/thumbnails.md)に従う。lowercaseのowner UUIDを含む名前で紐付け、AttachmentIDが再採番されてもpackage往復で保持する。旧clientでは通常のJPEG資料として表示・保持できる。schema・wire・package versionは変更しない。

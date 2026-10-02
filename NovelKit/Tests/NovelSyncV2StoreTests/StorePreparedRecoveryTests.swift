@@ -20,7 +20,7 @@ func deviceChoiceCanBeSealedAfterEditAndRestart() async throws {
             workID: workID,
             document: edited,
             documentCreatedAt: testDate,
-            expectedGeneration: first.generation
+            expectedGeneration: first.generation, reason: .explicit
         ),
         scope: scopeA
     )
@@ -38,7 +38,7 @@ func deviceChoiceCanBeSealedAfterEditAndRestart() async throws {
         expectedHead: fixture.remoteHead
     )
     try await reopened.seal(command, intentID: recovered.intentID, scope: scopeA)
-    #expect(try await reopened.pendingSealedCommands(scope: scopeA).map(\.commandID) == [
+    #expect(try await reopened.pendingSealedCommands(scope: scopeA).map { $0.commandID } == [
         command.commandId
     ])
     #expect(try await reopened.open(workID: workID, scope: scopeA).summary.currentSnapshotID ==
@@ -87,7 +87,7 @@ func restoreCanBeSealedAfterEditAndRestart() async throws {
         intentID: recovered.checkpoint.intentID,
         scope: scopeA
     )
-    #expect(try await reopened.pendingSealedCommands(scope: scopeA).map(\.commandID) == [
+    #expect(try await reopened.pendingSealedCommands(scope: scopeA).map { $0.commandID } == [
         command.commandId
     ])
     #expect(try await reopened.open(workID: workID, scope: scopeA).summary.currentSnapshotID ==
@@ -128,7 +128,7 @@ func keepBothReturnsOneConflictReservationAfterSourceEdit() async throws {
         expectedHead: second.expectedOriginalHead
     )
     try await store.seal(command, scope: scopeA)
-    #expect(try await store.pendingSealedCommands(scope: scopeA).map(\.commandID) == [
+    #expect(try await store.pendingSealedCommands(scope: scopeA).map { $0.commandID } == [
         command.commandId
     ])
     #expect(try await store.open(workID: workID, scope: scopeA).summary.currentSnapshotID ==
@@ -178,7 +178,7 @@ private func checkpoint(
             workID: workID,
             document: document,
             documentCreatedAt: testDate,
-            expectedGeneration: generation
+            expectedGeneration: generation, reason: .explicit
         ),
         scope: scopeA
     )

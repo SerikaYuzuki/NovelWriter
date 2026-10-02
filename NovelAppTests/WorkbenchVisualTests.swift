@@ -60,7 +60,7 @@ struct WorkbenchVisualTests {
         let defaults = makeIsolatedTestUserDefaults()
         let state = AppState(dependencies: AppDependencies(userDefaults: defaults))
         let presenter = DocumentPanelPresenter(appState: state)
-        let host = NSHostingView(rootView: LibraryWindowView().environment(state).environment(presenter))
+        let host = NSHostingView(rootView: LibraryView().environment(state).environment(presenter))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 540), styleMask: [.titled], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.contentView = host
@@ -102,7 +102,7 @@ struct WorkbenchVisualTests {
         try await Task.sleep(for: .milliseconds(200))
         let toolbar = try #require(window.toolbar)
         let syncItem = try #require(toolbar.items.first { $0.itemIdentifier.rawValue.contains("workbench.snapshot.sync") })
-        #expect(syncItem.paletteLabel == "保存して同期")
+        #expect(syncItem.paletteLabel == "同期済み")
         #expect(toolbar.visibleItems?.contains(where: { $0 === syncItem }) == true)
         #expect(syncItem.visibilityPriority > .standard)
         #expect((toolbar.visibleItems?.count ?? 0) < toolbar.items.count)
@@ -166,7 +166,8 @@ struct WorkbenchVisualTests {
         try await Task.sleep(for: .milliseconds(400))
         #expect(descendants(host).contains { $0 === editor })
         #expect(host.bounds.maxX - editor.convert(editor.bounds, to: host).maxX >= 300)
-        #expect(try #require(editor.enclosingScrollView).bounds.height > 150)
+        let editorScrollView = try #require(editor.enclosingScrollView)
+        #expect(editorScrollView.bounds.height > 150)
         try await snapshot(host, path: "/tmp/fuminiwa-assistant-bottom.png")
         NotificationCenter.default.post(name: .toggleWritingAssistant, object: nil)
         try await Task.sleep(for: .milliseconds(400))
@@ -227,7 +228,7 @@ struct WorkbenchVisualTests {
         let second = makeWindow()
         defer { second.close() }
         try await Task.sleep(for: .milliseconds(250))
-        #expect(second.toolbar?.items.map(\.itemIdentifier) == customized)
+        #expect(second.toolbar?.items.map { $0.itemIdentifier } == customized)
         search.focusSearchField()
         try await Task.sleep(for: .milliseconds(100))
         let field = try #require(second.toolbar?.items.first(where: { $0.itemIdentifier == searchID })?.view)

@@ -5,6 +5,7 @@ import NovelUI
 import SwiftUI
 
 struct OutlineContainerView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(AppState.self) private var appState
 
     @State private var chapterPendingDeletion: SessionBoundValue<Chapter>?
@@ -29,7 +30,7 @@ struct OutlineContainerView: View {
                 episodePendingDeletion: $episodePendingDeletion
             )
         }
-        .animation(.snappy(duration: 0.18), value: appState.outlinePresentation.isSearchVisible)
+        .animation(Motion.standard(reduceMotion: reduceMotion), value: appState.outlinePresentation.isSearchVisible)
         .workbenchGlassChromeStyle()
         .focusedValue(\.workbenchSearchSurface, .outline)
         .focusable()
@@ -206,11 +207,18 @@ struct OutlineView: View {
         .modifier(EpisodeRenameDialog(request: $episodePendingRename))
         .overlay {
             if filteredChapters.isEmpty {
-                ContentUnavailableView(
-                    "章または話がありません",
-                    systemImage: "doc.text",
-                    description: Text("上部の「章を追加」または章メニューから追加できます。")
-                )
+                ContentUnavailableView {
+                    Label(appState.outlinePresentation.searchText.isEmpty ? "章または話がありません" : "見つかりません", systemImage: "doc.text")
+                } description: {
+                    Text(appState.outlinePresentation.searchText.isEmpty ? "章を追加して書き始められます。" : "検索する言葉を変えてください。")
+                } actions: {
+                    if appState.outlinePresentation.searchText.isEmpty {
+                        Button("章を追加") { Task { _ = await appState.addChapterAfterTransition() } }
+                            .disabled(!appState.permitsDocumentInteraction)
+                    } else {
+                        Button("検索を解除") { appState.outlinePresentation.searchText = "" }
+                    }
+                }
             }
         }
         .background {

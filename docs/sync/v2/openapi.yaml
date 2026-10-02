@@ -98,6 +98,42 @@ paths:
         '403': { $ref: '#/components/responses/FenceMismatch' }
         '426': { $ref: '#/components/responses/ProtocolMismatch' }
         default: { $ref: '#/components/responses/TypedError' }
+  /v2/works/{workId}/download:
+    get:
+      operationId: v2DownloadSnapshotGraphPage
+      description: Read-only bounded page of a pinned snapshot. No mode preserves the full-ancestry D-101/D-105 bytes; head downloads only H, backfill streams ancestor groups in immutable longest-depth order. See download.md.
+      parameters:
+        - { $ref: '#/components/parameters/WorkId' }
+        - { $ref: '#/components/parameters/ServerInstance' }
+        - { $ref: '#/components/parameters/ProtocolEpoch' }
+        - { $ref: '#/components/parameters/AccountFence' }
+        - { $ref: '#/components/parameters/Cursor' }
+        - name: snapshotId
+          in: query
+          required: true
+          schema: { type: string, pattern: '^[0-9a-f]{64}$' }
+        - name: mode
+          in: query
+          description: Opt-in head-only or grouped ancestor backfill. Cursors must match the mode and pinned root; legacy cursors are rejected by either mode.
+          schema: { type: string, enum: [head, backfill] }
+        - name: include
+          in: query
+          description: First page only. Opt in to raw manifest and deduplicated object totals (including large objects) for the selected mode; backfill excludes H and H's objects.
+          schema: { type: string, enum: [totals] }
+      responses:
+        '200':
+          description: Canonical JCS page with no-store/no-cache headers; at most 256 items and normally 2 MiB of decoded payload.
+          content: { application/vnd.fuminiwa.sync.v2+jcs: { schema: { $ref: './download-page.schema.json' } } }
+        '503':
+          description: Retryable server failure; backfill saturation (one active request) includes Retry-After of 1 second.
+          headers:
+            Retry-After: { schema: { type: string }, description: Delay in seconds for backfill saturation. }
+          content: { application/vnd.fuminiwa.sync.v2+jcs: { schema: { $ref: '#/components/schemas/Error' } } }
+        '404': { $ref: '#/components/responses/NotFoundInAccount' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/FenceMismatch' }
+        '426': { $ref: '#/components/responses/ProtocolMismatch' }
+        default: { $ref: '#/components/responses/TypedError' }
   /v2/works/{workId}/history:
     get:
       operationId: v2ListHistory

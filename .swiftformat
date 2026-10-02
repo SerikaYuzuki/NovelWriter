@@ -23,6 +23,9 @@
 # リポジトリのK&R方針とSwiftLintのopening_braceルールに反するため無効化する。
 --disable wrapMultilineStatementBraces
 
+# swift-testing の #expect 内の closure を key path に戻さない。
+--disable preferKeyPath
+
 # SwiftFormat 0.62 のデフォルト(always)は複数行リストに末尾カンマを追加するが、
 # SwiftLint デフォルトの trailing_comma ルールは末尾カンマを禁止しており衝突する。
 # 既存コードのスタイル(末尾カンマなし)と SwiftLint に合わせて never にする。

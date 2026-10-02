@@ -22,6 +22,12 @@ struct FuminiwaIOSApp: App {
         guard let defaults = UserDefaults(suiteName: configuration.defaults.suiteName) else {
             preconditionFailure("Unable to create the isolated iOS test defaults")
         }
+        if let argument = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("--test-appearance=") }) {
+            let appearance = String(argument.dropFirst("--test-appearance=".count))
+            if ["light", "dark"].contains(appearance) {
+                defaults.set(appearance, forKey: IOSAppearance.preferenceKey)
+            }
+        }
         let store = IOSDocumentStore(
             userDefaults: defaults,
             libraryRoot: configuration.localRoot.url,
@@ -50,14 +56,21 @@ struct FuminiwaIOSApp: App {
         WindowGroup {
             IOSRootView(store: store)
                 .defaultAppStorage(store.userDefaults)
-                .tint(IOSPalette.accent)
+                .tint(.accentColor)
                 .preferredColorScheme(
                     IOSAppearance(storedRawValue: appearanceRawValue).colorScheme
                 )
                 .task {
+                    #if FUMINIWA_TEST_COMPOSITION
+                    if store.installLibraryPreviewIfRequested() {
+                        return
+                    }
+                    #endif
                     _ = await store.configureSnapshotSyncV2()
                     await store.bootstrap(localFirst: true)
-                    connectivityRecovery.start { await store.resumeSnapshotSyncV2() }
+                    connectivityRecovery.start(constrained: { online, limited in
+                        await store.snapshotSyncV2Application?.setHistoryBackfillNetwork(online: online, constrained: limited)
+                    }, recovered: { await store.resumeSnapshotSyncV2(reason: .networkRecovery) })
                     // The local shelf/editor is the launch boundary. Auth
                     // vault reconciliation and remote wakeups continue in
                     // background and never delay offline editing.
@@ -66,7 +79,7 @@ struct FuminiwaIOSApp: App {
                     }
                     store.resumePendingAuthRevoke()
                     Task { @MainActor in
-                        await store.resumeSnapshotSyncV2()
+                        await store.resumeSnapshotSyncV2(reason: .launch)
                     }
                 }
                 .onChange(of: scenePhase) { _, newPhase in

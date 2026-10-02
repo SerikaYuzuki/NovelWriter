@@ -28,7 +28,7 @@ struct SnapshotSyncV2MacConflictTests {
                 choice: $0
             )
         }
-        #expect(actions.map(\.choice) == choices)
+        #expect(actions.map { $0.choice } == choices)
     }
 
     @Test("keep-both returned work is installed before the worker wake")

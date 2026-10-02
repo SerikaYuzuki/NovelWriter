@@ -8,6 +8,16 @@ import Testing
 
 @MainActor
 struct ApplicationDelegateTests {
+    @Test("closing the single window keeps the app available for Dock reopening")
+    func reopensWorkbenchWithoutTerminating() {
+        let delegate = ApplicationDelegate()
+        var reopened = false
+        delegate.reopenWorkbench = { reopened = true }
+        #expect(!delegate.applicationShouldTerminateAfterLastWindowClosed(NSApplication.shared))
+        #expect(delegate.applicationShouldHandleReopen(NSApplication.shared, hasVisibleWindows: false))
+        #expect(reopened)
+    }
+
     @Test("cold launchのnovelpkgはbootstrap用に一度だけ保持する")
     func queuesColdLaunchDocument() {
         let delegate = ApplicationDelegate()

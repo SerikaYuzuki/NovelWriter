@@ -5,6 +5,7 @@ import NovelSyncV2
 import NovelSyncV2Application
 import NovelSyncV2PortableBridge
 import NovelSyncV2Runtime
+import SwiftUI
 
 extension IOSDocumentStore {
     @discardableResult
@@ -20,7 +21,7 @@ extension IOSDocumentStore {
                   opened.resources
               ) else {
             operationErrorMessage = "portable metadataが壊れているため、作品を開けませんでした。"
-            snapshotSyncOutcome = .failed
+            snapshotSyncOutcome = .failure(.fatal(.invalidLocalState))
             return false
         }
         let retainedEpisode = preservingSelection ? selectedEpisodeID.flatMap { value.episode($0) } : nil
@@ -55,6 +56,10 @@ extension IOSDocumentStore {
     }
 
     func applySnapshotSyncV2State(_ state: SyncUIState?) {
+        if state?.remoteProgress == .retryable(.historyIncomplete),
+           snapshotSyncState?.remoteProgress != state?.remoteProgress {
+            AccessibilityNotification.Announcement(SyncV2HistoryFetchState.conflictWaiting).post()
+        }
         snapshotSyncState = state
         snapshotSyncConflict = state?.conflict
         guard let state else { return }
@@ -64,21 +69,7 @@ extension IOSDocumentStore {
         if case let .failed(reason) = state.remoteProgress {
             operationErrorMessage = reason.japaneseDescription
         }
-        switch state.remoteProgress {
-        case .idle, .noChanges:
-            snapshotSyncOutcome = .idle
-        case .pending:
-            snapshotSyncOutcome = .pending
-        case .syncing:
-            snapshotSyncOutcome = .syncing
-        case .needsChoice, .readyForSafeAdoption:
-            snapshotSyncOutcome = .conflict
-        case .offline, .authenticationRequired, .parkedDifferentAccount,
-             .fenceChanged, .quarantined, .retryable:
-            snapshotSyncOutcome = .offline
-        case .failed, .receiptMismatch:
-            snapshotSyncOutcome = .failed
-        }
+        snapshotSyncOutcome = state.lastTypedResult
     }
 
     func startSnapshotSyncV2Reprojection(
@@ -86,28 +77,22 @@ extension IOSDocumentStore {
         workID: WorkID?,
         automaticAdoption: AutoAdoptionExpectation?,
         expectedAccountScope: IOSSnapshotSyncV2AccountScope,
-        resumesWorker: Bool
+        resumesWorker: Bool,
+        wakeReason: SyncV2WakeReason = .foreground
     ) {
-        guard !isSyncV2RemoteAccountTransitionActive,
-              snapshotSyncV2AccountScope == expectedAccountScope else { return }
-        snapshotSyncV2ReprojectionToken = nil
-        snapshotSyncV2ReprojectionTask?.cancel()
-        let operationToken = UUID()
-        snapshotSyncV2ReprojectionToken = operationToken
+        guard matchesRemoteSyncAccount(expectedAccountScope) else { return }
+        let operationToken = syncSessionController.beginReprojection()
         snapshotSyncV2ReprojectionTask = Task { @MainActor [weak self] in
             defer {
-                if let self, snapshotSyncV2ReprojectionToken == operationToken {
-                    snapshotSyncV2ReprojectionToken = nil
-                    snapshotSyncV2ReprojectionTask = nil
-                }
+                self?.syncSessionController.finishReprojection(owner: operationToken)
             }
             if resumesWorker {
-                try? await application.resumePending()
+                try? await application.wake(reason: wakeReason)
             }
             guard let self,
                   !isSyncV2RemoteAccountTransitionActive,
                   snapshotSyncV2ReprojectionToken == operationToken,
-                  snapshotSyncV2AccountScope == expectedAccountScope else { return }
+                  matchesSyncAccount(expectedAccountScope) else { return }
             if let workID {
                 guard syncV2ActiveWorkID == workID else { return }
                 await reprojectAfterResume(
@@ -133,11 +118,13 @@ extension IOSDocumentStore {
         expectedAccountScope: IOSSnapshotSyncV2AccountScope,
         operationToken: UUID
     ) async {
-        for _ in 0 ..< 600 {
+        let changes = await application.stateChanges(for: workID, until: .now.advanced(by: .seconds(30)))
+        for await event in changes {
+            guard event.concerns(workID) else { continue }
             guard !Task.isCancelled,
                   !isSyncV2RemoteAccountTransitionActive,
                   snapshotSyncV2ReprojectionToken == operationToken,
-                  snapshotSyncV2AccountScope == expectedAccountScope,
+                  matchesSyncAccount(expectedAccountScope),
                   syncV2ActiveWorkID == workID else { return }
             guard let state = await application.uiState(workID: workID) else {
                 await refreshSnapshotSyncV2Projection(
@@ -148,23 +135,20 @@ extension IOSDocumentStore {
                 return
             }
             guard snapshotSyncV2ReprojectionToken == operationToken,
-                  !isSyncV2RemoteAccountTransitionActive,
-                  snapshotSyncV2AccountScope == expectedAccountScope,
+                  matchesRemoteSyncAccount(expectedAccountScope),
                   syncV2ActiveWorkID == workID else { return }
             applySnapshotSyncV2State(state)
             switch state.remoteProgress {
             case .pending, .syncing:
-                try? await Task.sleep(nanoseconds: 50_000_000)
+                continue
             case .readyForSafeAdoption:
                 if let automaticAdoption,
                    let current = automaticAdoptionExpectation(for: workID, validatingEditorSurface: true),
-                   current.session == automaticAdoption.session,
-                   current.editGeneration == automaticAdoption.editGeneration,
-                   current.accountScope == automaticAdoption.accountScope,
+                   automaticAdoption.isCurrent(current),
                    await adoptPendingSnapshotSyncV2(
                        expectedSession: automaticAdoption.session,
                        expectedEditGeneration: automaticAdoption.editGeneration,
-                       expectedAccountScope: automaticAdoption.accountScope
+                       expectedAccountScope: automaticAdoption.account
                    ) {
                     return
                 }
@@ -203,7 +187,7 @@ extension IOSDocumentStore {
         if let workID, let state = await application.uiState(workID: workID) {
             guard !isSyncV2AccountTransitionActive,
                   libraryRefreshGeneration == refreshGeneration,
-                  snapshotSyncV2AccountScope == expectedAccountScope,
+                  matchesSyncAccount(expectedAccountScope),
                   operationToken == nil || snapshotSyncV2ReprojectionToken == operationToken else {
                 return
             }
@@ -214,7 +198,7 @@ extension IOSDocumentStore {
         guard let projection = try? await application.library() else { return }
         guard !isSyncV2AccountTransitionActive,
               libraryRefreshGeneration == refreshGeneration,
-              snapshotSyncV2AccountScope == expectedAccountScope,
+              matchesSyncAccount(expectedAccountScope),
               operationToken == nil || snapshotSyncV2ReprojectionToken == operationToken else {
             return
         }

@@ -31,7 +31,6 @@ struct AttachmentListView: View {
                 List(selection: $selection) {
                     ForEach(sessionBoundAttachments) { item in
                         AttachmentRow(attachment: item.attachment)
-                            .tag(item.attachment.fileName)
                             .contextMenu {
                                 Button(role: .destructive) {
                                     attachmentPendingDeletion = item
@@ -39,15 +38,17 @@ struct AttachmentListView: View {
                                     Label("削除", systemImage: "trash")
                                 }
                             }
+                            .tag(item.attachment.fileName)
                     }
                 }
                 .overlay {
                     if appState.referenceAttachments.isEmpty {
-                        ContentUnavailableView(
-                            "資料がありません",
-                            systemImage: "paperclip",
-                            description: Text("ツールバーまたは資料メニューから取り込めます。")
-                        )
+                        ContentUnavailableView {
+                            Label("資料がありません", systemImage: "paperclip")
+                        } actions: {
+                            Button("資料を取り込む…") { NotificationCenter.default.post(name: .presentAttachmentImporter, object: nil) }
+                                .disabled(!appState.permitsDocumentInteraction)
+                        }
                     }
                 }
                 .workbenchGlassOutlineStyle()
@@ -142,11 +143,13 @@ struct AttachmentDetailView: View {
             .frame(maxWidth: 720, maxHeight: .infinity, alignment: .topLeading)
             .workbenchGlassChromeStyle()
         } else {
-            ContentUnavailableView(
-                "資料が選択されていません",
-                systemImage: "paperclip",
-                description: Text("左の一覧から資料を選択してください。")
-            )
+            ContentUnavailableView {
+                Label("資料が選択されていません", systemImage: "paperclip")
+            } description: {
+                if !appState.referenceAttachments.isEmpty {
+                    Text("左の一覧から資料を選択してください。")
+                }
+            }
         }
     }
 

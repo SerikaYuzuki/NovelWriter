@@ -26,7 +26,8 @@ struct ManuscriptCopyAppStateTests {
 
         #expect(didCopy)
         #expect(harness.clipboard.receivedTexts.count == 1)
-        #expect(try #require(harness.clipboard.receivedTexts.first) == exactSelection)
+        let copiedSelection = try #require(harness.clipboard.receivedTexts.first)
+        #expect(copiedSelection == exactSelection)
         #expect(state.manuscriptCopyNotice?.outcome == .success)
         #expect(
             state.manuscriptCopyNotice?.message ==

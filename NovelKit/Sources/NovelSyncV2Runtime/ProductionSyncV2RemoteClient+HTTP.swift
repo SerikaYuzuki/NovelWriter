@@ -20,24 +20,21 @@ extension ProductionSyncV2RemoteClient {
         _ command: SealedCommand,
         session: FuminiwaSession
     ) async throws -> SyncV2ReceiptReadback {
-        let path: String
-        switch command.commandKind {
-        case "createWork":
-            path = "v2/works"
-        case "prepareObject":
-            path = "v2/objects/prepare"
-        case "finalizeObject":
-            path = "v2/objects/finalize"
-        case "registerSnapshot":
-            path = "v2/snapshots/register"
-        case "publish":
-            path = try "v2/works/\(remoteClientWorkID(for: command).description)/publish"
-        case "resolveDevice", "resolveServer", "cloneWork":
-            path = try "v2/works/\(remoteClientWorkID(for: command).description)/conflict/resolve"
-        case "restore":
-            path = try "v2/works/\(remoteClientWorkID(for: command).description)/restore"
-        default:
-            throw SyncV2Failure.fatal(.unsupportedCommand)
+        let path: String = switch command.kind {
+        case .createWork:
+            "v2/works"
+        case .prepareObject:
+            "v2/objects/prepare"
+        case .finalizeObject:
+            "v2/objects/finalize"
+        case .registerSnapshot:
+            "v2/snapshots/register"
+        case .publish:
+            try "v2/works/\(remoteClientWorkID(for: command).description)/publish"
+        case .resolveDevice, .resolveServer, .cloneWork:
+            try "v2/works/\(remoteClientWorkID(for: command).description)/conflict/resolve"
+        case .restore:
+            try "v2/works/\(remoteClientWorkID(for: command).description)/restore"
         }
         var request = URLRequest(url: origin.url.appendingPathComponent(path))
         request.httpMethod = "POST"
@@ -80,7 +77,7 @@ extension ProductionSyncV2RemoteClient {
               http.value(forHTTPHeaderField: "Cache-Control")?.lowercased() == "no-store",
               http.value(forHTTPHeaderField: "Pragma")?.lowercased() == "no-cache",
               contentType == mediaType,
-              let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+              let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
             throw mapStatus((response as? HTTPURLResponse)?.statusCode ?? 599)
         }
         return object
@@ -132,6 +129,7 @@ extension ProductionSyncV2RemoteClient {
                   http.value(forHTTPHeaderField: "Cache-Control")?.lowercased() == "no-store",
                   http.value(forHTTPHeaderField: "Pragma")?.lowercased() == "no-cache" else {
                 if let http = response as? HTTPURLResponse, http.statusCode == 409 {
+                    try validateSyncResponseHeaders(http)
                     throw typedUploadFailure(data: data)
                 }
                 throw mapStatus((response as? HTTPURLResponse)?.statusCode ?? 599)
@@ -152,9 +150,28 @@ extension ProductionSyncV2RemoteClient {
         _ request: URLRequest,
         session originalSession: FuminiwaSession
     ) async throws -> (Data, URLResponse) {
+        let (data, response, _) = try await requestDataWithSession(request, session: originalSession)
+        try Self.validateTransportStatus(response)
+        if let http = response as? HTTPURLResponse, [409, 422].contains(http.statusCode) {
+            try validateSyncResponseHeaders(response)
+        }
+        return (data, response)
+    }
+
+    func requestDataWithSession(
+        _ request: URLRequest,
+        session originalSession: FuminiwaSession
+    ) async throws -> (Data, URLResponse, FuminiwaSession) {
+        var request = request
+        let originalSession: FuminiwaSession = if let context = SnapshotDownloadContext.current {
+            try await context.session(matching: originalSession)
+        } else {
+            originalSession
+        }
+        request.setValue("Bearer \(originalSession.accessToken)", forHTTPHeaderField: "Authorization")
         let first = try await performRequest(request)
         guard (first.1 as? HTTPURLResponse)?.statusCode == 401 else {
-            return first
+            return (first.0, first.1, originalSession)
         }
         let refreshed: FuminiwaSession
         do {
@@ -171,17 +188,26 @@ extension ProductionSyncV2RemoteClient {
               refreshed.refreshGeneration > originalSession.refreshGeneration else {
             throw SyncV2Failure.accountFenceChanged
         }
+        await SnapshotDownloadContext.current?.update(refreshed)
         var retry = request
         retry.setValue("Bearer \(refreshed.accessToken)", forHTTPHeaderField: "Authorization")
         // Exactly one retry. Method, path, body, operation ID and digest are
         // preserved; only Authorization is replaced.
-        return try await performRequest(retry)
+        let response = try await performRequest(retry)
+        return (response.0, response.1, refreshed)
     }
 
     private func performRequest(_ request: URLRequest) async throws -> (Data, URLResponse) {
         do {
+            if let progress = ImportProgress.current {
+                let (url, response) = try await session.download(for: request, delegate: ImportByteProgress(progress: progress))
+                defer { try? FileManager.default.removeItem(at: url) }
+                progress.received()
+                return try (Data(contentsOf: url), response)
+            }
             return try await session.data(for: request)
         } catch {
+            try Task.checkCancellation()
             if (error as NSError).domain == NSURLErrorDomain,
                (error as NSError).code == NSURLErrorNotConnectedToInternet {
                 throw SyncV2Failure.offline
@@ -241,7 +267,13 @@ extension ProductionSyncV2RemoteClient {
         return object
     }
 
-    func decode(
+    func decode(data: Data, response: URLResponse, command: SealedCommand) throws -> SyncV2ReceiptReadback {
+        do { return try decodeCommandResponse(data: data, response: response, command: command) }
+        catch let failure as SyncV2Failure { throw failure }
+        catch { throw SyncV2Failure.receiptMismatch }
+    }
+
+    private func decodeCommandResponse(
         data: Data,
         response: URLResponse,
         command: SealedCommand
@@ -249,13 +281,14 @@ extension ProductionSyncV2RemoteClient {
         guard let http = response as? HTTPURLResponse else {
             throw SyncV2Failure.retryable(.lostResponse)
         }
+        try Self.validateTransportStatus(response)
         let contentType = httpContentType(response)
         guard http.value(forHTTPHeaderField: "Cache-Control")?.lowercased() == "no-store",
               http.value(forHTTPHeaderField: "Pragma")?.lowercased() == "no-cache",
               contentType == mediaType else {
-            throw SyncV2Failure.fatal(.unexpected)
+            throw SyncV2Failure.receiptMismatch
         }
-        if http.statusCode == 422, command.commandKind == "publish",
+        if http.statusCode == 422, command.kind == .publish,
            data == Data(#"{"error":"lineageViolation","result":"parked","retryable":false}"#.utf8) {
             throw SyncV2Failure.retryable(.publishLineageRejected)
         }
@@ -265,8 +298,8 @@ extension ProductionSyncV2RemoteClient {
         // A pre-commit rejection has no receipt envelope. Preserve its typed
         // upload error instead of reporting a failed receipt verification.
         if http.statusCode == 409,
-           command.commandKind == "finalizeObject",
-           let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+           command.kind == .finalizeObject,
+           let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
            object["error"] is String {
             throw typedUploadFailure(data: data)
         }
@@ -304,7 +337,7 @@ extension ProductionSyncV2RemoteClient {
         data: Data,
         command: SealedCommand
     ) throws -> ResponseEnvelope {
-        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+        guard let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
               let commandID = UUID(uuidString: object["commandId"] as? String ?? ""),
               commandID == command.commandId,
               object["commandKind"] as? String == command.commandKind,
@@ -361,24 +394,10 @@ extension ProductionSyncV2RemoteClient {
     private func publishExpectedRemoteHeadSnapshotID(
         _ command: SealedCommand
     ) throws -> SnapshotID? {
-        guard command.commandKind == "publish" else {
+        guard command.kind == .publish else {
             return nil
         }
-        guard let payload = try JSONSerialization.jsonObject(with: command.payloadBytes)
-            as? [String: Any],
-            let expected = payload["expectedRemoteHead"] else {
-            throw SyncV2Failure.receiptMismatch
-        }
-        if expected is NSNull {
-            return nil
-        }
-        guard let head = expected as? [String: Any],
-              Set(head.keys) == ["generation", "snapshotId"],
-              head["generation"] is NSNumber,
-              let rawSnapshotID = head["snapshotId"] as? String else {
-            throw SyncV2Failure.receiptMismatch
-        }
-        return try SnapshotID(rawValue: rawSnapshotID)
+        return try command.payload.head("expectedRemoteHead")?.snapshotID
     }
 
     private func addScope(
@@ -395,7 +414,7 @@ extension ProductionSyncV2RemoteClient {
         request.setValue("no-cache", forHTTPHeaderField: "Pragma")
     }
 
-    private func mapStatus(_ status: Int) -> SyncV2Failure {
+    func mapStatus(_ status: Int) -> SyncV2Failure {
         switch status {
         case 401:
             .authenticationRequired
@@ -408,7 +427,7 @@ extension ProductionSyncV2RemoteClient {
         case 408, 429, 500 ... 599:
             .retryable(.serverUnavailable)
         default:
-            .fatal(.unexpected)
+            .receiptMismatch
         }
     }
 
@@ -418,21 +437,23 @@ extension ProductionSyncV2RemoteClient {
             guard let decoded = try JSONSerialization.jsonObject(
                 with: data
             ) as? [String: Any] else {
-                return .retryable(.serverUnavailable)
+                return .receiptMismatch
             }
             object = decoded
         } catch {
-            return .retryable(.serverUnavailable)
+            return .receiptMismatch
         }
         guard let code = (object["error"] ?? object["code"]) as? String else {
-            return .retryable(.serverUnavailable)
+            return .receiptMismatch
         }
         switch code {
         case "uploadExpired":
             return .retryable(.uploadExpired)
         case "uploadCapabilityMismatch", "objectDigestMismatch":
-            return .fatal(.unexpected)
+            return .quarantined(.invalidRemoteData)
         default:
+            // Finalize can also return commandIdReused from receipt lookup.
+            // Preserve the existing retry behavior for other typed 409 codes.
             return .retryable(.serverUnavailable)
         }
     }
@@ -444,4 +465,25 @@ func httpContentType(_ response: URLResponse) -> String? {
         .split(separator: ";")
         .first
         .map(String.init)
+}
+
+final class ImportByteProgress: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
+    let progress: ImportProgress?
+    let rawObject: SnapshotEntry?
+    init(progress: ImportProgress?, rawObject: SnapshotEntry? = nil) {
+        self.progress = progress
+        self.rawObject = rawObject
+    }
+
+    func urlSession(_: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64,
+                    totalBytesWritten: Int64, totalBytesExpectedToWrite _: Int64) {
+        if bytesWritten > 0 {
+            progress?.received()
+            if let rawObject, (downloadTask.response as? HTTPURLResponse)?.statusCode == 200 {
+                progress?.receivedObject(rawObject.objectId, bytes: min(Int64(rawObject.byteCount), totalBytesWritten))
+            }
+        }
+    }
+
+    func urlSession(_: URLSession, downloadTask _: URLSessionDownloadTask, didFinishDownloadingTo _: URL) {}
 }

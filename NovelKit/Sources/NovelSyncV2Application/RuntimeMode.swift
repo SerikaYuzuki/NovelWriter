@@ -195,6 +195,7 @@ package struct SyncV2RuntimeComposition: Sendable {
     package let identity: Identity
     package let kernel: any SyncV2LocalKernel
     package let planner: any SyncV2CommandPlanner
+    package let remoteReads: any SyncV2RemoteReads
     package let remote: any SyncV2RemoteClient
     package let gate: any SyncV2DocumentGate
     package let library: any SyncV2LibraryProvider
@@ -206,13 +207,15 @@ package struct SyncV2RuntimeComposition: Sendable {
         remote: any SyncV2RemoteClient,
         gate: any SyncV2DocumentGate,
         library: any SyncV2LibraryProvider,
-        writingStore: (any WritingLocalPersistence)? = nil
+        writingStore: (any WritingLocalPersistence)? = nil,
+        remoteReads: (any SyncV2RemoteReads)? = nil
     ) {
         self.writingStore = writingStore
         self.identity = identity
         self.kernel = kernel
         self.planner = planner
         self.remote = remote
+        self.remoteReads = remoteReads ?? remote
         self.gate = gate
         self.library = library
     }

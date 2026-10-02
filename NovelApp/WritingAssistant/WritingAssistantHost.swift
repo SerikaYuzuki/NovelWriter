@@ -1,12 +1,18 @@
 import Foundation
 import NovelCore
+import NovelThumbnail
 import NovelWritingSupport
 
 struct WritingCapture {
     let workId: UUID
     let document: NovelDocument
     let episodeId: EpisodeID?
-    var attachments: [WritingAttachment] = []
+    var attachments: [WritingAttachment]
+    init(workId: UUID, document: NovelDocument, episodeId: EpisodeID?, attachments: [WritingAttachment] = []) {
+        self.workId = workId; self.document = document; self.episodeId = episodeId
+        self.attachments = attachments.filter { !ThumbnailOwner.isReserved($0.fileName) }
+    }
+
     var episodePath: [String]? {
         guard let episodeId, let chapter = document.chapters.first(where: { $0.episodes.contains { $0.id == episodeId } }) else { return nil }
         return ["chapters", chapter.id.rawValue.uuidString.lowercased(), "episodes", episodeId.rawValue.uuidString.lowercased()]

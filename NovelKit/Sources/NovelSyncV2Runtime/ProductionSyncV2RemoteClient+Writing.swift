@@ -29,6 +29,7 @@ extension ProductionSyncV2RemoteClient {
                                                                               serverInstanceId: binding.serverInstanceID))
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         let (data, response) = try await requestData(request, session: current)
+        try validateSyncResponseHeaders(response)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200,
               data.count <= 16 * 1024 * 1024 else { throw SyncV2Failure.fatal(.remoteDataUnavailable) }
         return try JSONDecoder().decode(T.self, from: data)
