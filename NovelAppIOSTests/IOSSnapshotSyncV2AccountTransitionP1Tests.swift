@@ -658,6 +658,8 @@ struct IOSAccountRequestRecoveryTests {
             IOSDocumentStore.testRuntimeConfigurations[environment.root.standardizedFileURL]
         )
         let first = await application.beginAccountTransitionRemoteSuspension()
+        // Opening the work may have sent operations before the lease cancelled its worker.
+        let operationCountBeforeSuspension = await configuration.remote.recordedOperations().count
         let second = await application.beginAccountTransitionRemoteSuspension()
         #expect(first != second)
 
@@ -668,18 +670,18 @@ struct IOSAccountRequestRecoveryTests {
             documentCreatedAt: store.documentCreatedAt
         )
         try await Task.sleep(nanoseconds: 50_000_000)
-        #expect(await configuration.remote.recordedOperations().isEmpty)
+        #expect(await configuration.remote.recordedOperations().count == operationCountBeforeSuspension)
 
         #expect(await application.endAccountTransitionRemoteSuspension(first, resume: true))
         #expect(await application.endAccountTransitionRemoteSuspension(first, resume: true) == false)
         try await Task.sleep(nanoseconds: 50_000_000)
-        #expect(await configuration.remote.recordedOperations().isEmpty)
+        #expect(await configuration.remote.recordedOperations().count == operationCountBeforeSuspension)
 
         #expect(await application.endAccountTransitionRemoteSuspension(second, resume: false))
         try await application.resumePending()
         try await waitForIOSP1RemoteOperation(
             configuration.remote,
-            expectedCount: 1
+            expectedCount: operationCountBeforeSuspension + 1
         )
     }
 
