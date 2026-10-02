@@ -16,7 +16,14 @@ extension ProductionSyncV2RemoteClient {
         }
     }
 
-    private func downloadRemoteOnly(workID: WorkID, session: FuminiwaSession) async throws -> SyncV2RemoteInbox {
+    func downloadUpdate(workID: WorkID) async throws -> SyncV2RemoteInbox {
+        let session = try await loadSession()
+        return try await SnapshotDownloadContext.$current.withValue(SnapshotDownloadContext(session: session)) {
+            try await downloadRemoteOnly(workID: workID, session: session, fullGraph: true)
+        }
+    }
+
+    private func downloadRemoteOnly(workID: WorkID, session: FuminiwaSession, fullGraph: Bool = false) async throws -> SyncV2RemoteInbox {
         let binding = SealedCommand.Binding(
             accountFence: session.accountFence,
             accountId: session.accountID,
@@ -47,8 +54,11 @@ extension ProductionSyncV2RemoteClient {
             snapshotID: SnapshotID(rawValue: raw),
             generation: generation
         )
-        let shallow = try await downloadHead(workID: workID, id: head.snapshotID, session: session)
-        let snapshots: [EncodedSnapshot] = if let shallow {
+        let shallow = try await fullGraph ? nil : downloadHead(workID: workID, id: head.snapshotID, session: session)
+        let snapshots: [EncodedSnapshot] = if fullGraph {
+            try await fetchSnapshot(workID: workID, id: head.snapshotID,
+                                    session: session, traversal: SnapshotFetchTraversal())
+        } else if let shallow {
             [shallow]
         } else {
             try await fetchRemoteOnlyGraph(

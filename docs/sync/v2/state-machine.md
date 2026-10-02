@@ -130,3 +130,20 @@ Only explicit open/prefetch creates a backfill record. Launch resumes existing
 
 Step 3 adds priority requests for restore, deep Inbox parents and conflict
 ancestry through the same lane; it does not introduce another download worker.
+
+## Content equivalence and clean remote reads (D-108)
+
+A successful publish `noChanges` can mean that candidate C is an ancestor of
+head H. Acknowledge H, but record content equivalence only when the receipt head
+is the same snapshot as the local intent source. Resolve-device uses the decision
+snapshot; restore uses the restore-result snapshot. Never replace an existing
+mapping with a different remote snapshot ID.
+
+Already received current content does not need a new checkpoint intent. Explicit
+sync schedules a read outside the save/document gate; foreground checks download
+the complete update graph only after the observed head changes. Recheck binding,
+current generation, received snapshot identity, pending intents and conflicts.
+A verified graph that descends from that received current may enter the existing
+fast-forward gate without a redundant publish receipt. Older sealed noChanges
+publishes still require their original receipt plus verified Inbox. Neither route
+installs content before the one-shot document gate and the SQLite CAS succeed.

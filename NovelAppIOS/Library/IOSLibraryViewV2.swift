@@ -31,7 +31,7 @@ struct IOSLibraryView: View {
     @State private var showingProtection = false
 
     var body: some View {
-        shelfContent
+        shelfWithOpenFailure
             .sheet(isPresented: $showingProtection) {
                 if let application = store.snapshotSyncV2Application {
                     ProtectedWorksView(application: application,
@@ -141,6 +141,17 @@ struct IOSLibraryView: View {
                     _ = await store.refreshLibrary()
                 }
             }
+    }
+
+    private var shelfWithOpenFailure: some View {
+        VStack(spacing: Spacing.small) {
+            if let failure = store.snapshotSyncV2RemoteOnlyOpenFailure {
+                StatusLabel(remoteOnlyOpenErrorMessage(failure), systemImage: "exclamationmark.circle", tone: .danger)
+                    .font(FuminiwaType.rowSecondary)
+                    .accessibilityIdentifier("library.openFailure")
+            }
+            shelfContent
+        }
     }
 
     @ViewBuilder private var shelfContent: some View {

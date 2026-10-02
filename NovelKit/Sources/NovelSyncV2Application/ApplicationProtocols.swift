@@ -150,9 +150,16 @@ public extension SyncV2CommandPlanner {
 
 /// The application has one remote read boundary, separate from local shelf projection.
 public protocol SyncV2RemoteReads: Sendable {
+    func downloadUpdate(workID: WorkID) async throws -> SyncV2RemoteInbox
     func downloadRemoteOnly(workID: WorkID) async throws -> SyncV2RemoteInbox
     func catalogPage(cursor: String?, pageSize: Int) async throws -> SyncV2RemoteCatalogPage
     func remoteHead(workID: WorkID) async throws -> SyncV2RemoteHead?
     func historyPage(workID: WorkID, cursor: String?, pageSize: Int) async throws -> SyncV2RemoteHistoryPage
     func remoteConflict(workID: WorkID) async throws -> SyncV2ConflictProjection?
+}
+
+public extension SyncV2RemoteReads {
+    func downloadUpdate(workID: WorkID) async throws -> SyncV2RemoteInbox {
+        try await downloadRemoteOnly(workID: workID)
+    }
 }

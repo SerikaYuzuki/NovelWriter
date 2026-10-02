@@ -2,11 +2,13 @@ import Foundation
 import NovelSyncV2
 
 public struct SyncV2AutomaticSyncCandidate: Sendable {
+    public let acknowledgedSnapshotID: SnapshotID?
     public let generation: Int64
     public let head: SyncV2RemoteHead
     public let binding: SyncV2AccountScopeBinding
 
-    public init(generation: Int64, head: SyncV2RemoteHead, binding: SyncV2AccountScopeBinding) {
+    public init(generation: Int64, head: SyncV2RemoteHead, binding: SyncV2AccountScopeBinding, acknowledgedSnapshotID: SnapshotID? = nil) {
+        self.acknowledgedSnapshotID = acknowledgedSnapshotID
         self.generation = generation
         self.head = head
         self.binding = binding
@@ -37,9 +39,9 @@ public extension SyncV2Application {
         }
     }
 
-    /// A cheap read detects a changed head. Only then does the normal publish
-    /// receipt/verified-Inbox path reconcile it, retaining concurrent-edit and
-    /// account protections instead of directly installing downloaded values.
+    /// A cheap read detects a changed head. Already received content follows
+    /// the verified graph read path; unreceived content keeps its publish lane.
+    /// Both retain concurrent-edit/account checks and the document gate.
     @discardableResult
     func checkForRemoteUpdates(workID: WorkID) async throws -> Bool {
         guard runtimeIdentity != .preview,
@@ -76,6 +78,10 @@ public extension SyncV2Application {
             return false
         }
         guard head.generation > candidate.head.generation else { return false }
+        if let snapshotID = candidate.acknowledgedSnapshotID {
+            return try await stageAcknowledgedRemoteUpdate(workID: workID, candidate: candidate,
+                                                           snapshotID: snapshotID, scopeGeneration: scopeGeneration)
+        }
         guard try await planner.requestAutomaticSynchronization(
             workID: workID, candidate: candidate
         ) else { return false }

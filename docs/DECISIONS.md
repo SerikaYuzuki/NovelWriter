@@ -110,3 +110,13 @@ Step 2で作品別／全体1本のworker、constrained networkでの停止、再
 ## D-107: 旧unexpected隔離の一度だけの自動復旧（2026-10-02）
 
 HTTP edge応答の旧分類で止まったコマンドは、既存の追加型SQLite migrationで`legacy_command_recovery`へ候補を記録する。更新時に存在し、`command:unexpected`かつ応答・receipt・upload transfer・証拠bytesがないコマンドだけを対象にする。新規DBや更新後の失敗は候補にしない。自動・明示の解除と候補消費を同じtransactionで確定し、再隔離は再起動後も自動解除しない。plannerはbindingごとに起動中一度だけ走査する。明示同期による従来の手動復旧と、応答未保存コマンドの明示再試行は維持する。v2名称・wire・server schemaは維持し、原稿・送信ID・bytes・intentを変更しない。[状態遷移](sync/v2/state-machine.md#recovery-of-response-less-command-quarantines)に範囲を定める。
+
+## D-108: publish祖先応答と内容同値を分離（2026-10-02）
+
+`publish/noChanges`は候補がheadの祖先でも成功する。acknowledged headは更新するが、内容同値表は受領headとintentのsnapshotが一致するときだけ記録する。`resolveDevice`はdecision snapshot、`restore`は復元結果snapshotを照合する。既存の同値対応を異なるremote snapshotへ上書きする受領はtransaction全体を拒否する。
+
+追加型SQLite migrationはcompleted・検証済みのcanonical responseを根拠に、誤った同値行を内容一致の受領世代へ戻す。一致の受領がなく祖先noChangesしかない行は削除する。本文、添付、current、acknowledged head、受領履歴は保持し、v2名称・wire・server schemaは変えない。
+
+受領済みのcurrentには明示同期・自動同期・起動時promotionで新規checkpoint intentを作らない。変更したserver headは完全なgraphの読取で取得し、内容一致の既受領current、account scope、local generation、祖先関係を検証したInboxから既存のdocument gateで適用する。明示同期の読取も非同期に開始し、保存や画面遷移をnetwork待ちにしない。旧clientが作った祖先noChangesのsealed publish／Inboxは従来の受領検証経路で回復できる。
+
+両OSでopen／安全適用の失敗を利用者へ表示し、棚を操作可能なまま保持する。受領済み表示には古い遅延時刻の「未同期の変更があります」を併記しない。実データへの適用、配布・実機受入はローカル回帰検証とは別段階とする。

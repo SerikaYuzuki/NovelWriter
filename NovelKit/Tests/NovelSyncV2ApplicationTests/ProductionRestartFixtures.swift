@@ -178,7 +178,7 @@ func installProductionResponder(
 func productionPublishCommand(
     workID: WorkID,
     checkpoint: V2CheckpointResult,
-    expectedHead: V2RemoteHead
+    expectedHead: V2RemoteHead?
 ) throws -> SealedCommand {
     let envelope: [String: Any] = [
         "binding": [
@@ -191,7 +191,7 @@ func productionPublishCommand(
         "commandKind": "publish",
         "payload": [
             "candidateSnapshotId": checkpoint.snapshotID.rawValue,
-            "expectedRemoteHead": productionHead(expectedHead),
+            "expectedRemoteHead": (expectedHead.map(productionHead) as Any?) ?? NSNull(),
             "workId": workID.description
         ],
         "schemaVersion": 2,

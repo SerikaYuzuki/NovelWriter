@@ -40,9 +40,19 @@ struct SaveEditorPositionTests {
         let originalGeneration = fixture.state.editorContentGeneration
         #expect(originalOrigin.y > 100)
         for iteration in 0 ..< 3 {
+            let previousReadCount = await fixture.configuration.remote.recordedHeadReads().count
             await fixture.state.saveAndSyncCurrentWork()
-            if synchronized, iteration == 0 {
-                try await waitForReceipt(fixture)
+            if synchronized {
+                try await eventuallyMac {
+                    await fixture.configuration.remote.recordedHeadReads().count > previousReadCount
+                }
+                if iteration == 0 {
+                    try await waitForRemoteUpdate(fixture)
+                } else {
+                    try await eventuallyMac {
+                        await fixture.application.uiState(workID: fixture.workID)?.remoteProgress == .noChanges
+                    }
+                }
             }
             try await Task.sleep(for: .milliseconds(150))
             fixture.window.contentView?.layoutSubtreeIfNeeded()
@@ -54,6 +64,18 @@ struct SaveEditorPositionTests {
             #expect(fixture.state.saveState == .saved)
             #expect(fixture.state.editorContentGeneration == originalGeneration)
             #expect(undo.canRedo)
+        }
+        #expect(await fixture.configuration.remote.recordedOperations().isEmpty)
+        if synchronized {
+            #expect(await fixture.configuration.remote.recordedHeadReads().contains(fixture.workID))
+            let store = try LocalSyncV2Store(root: fixture.configuration.localRoot.url, policy: .openExisting)
+            let scope = V2LocalWorkScope.bound(V2AccountBinding(
+                accountID: "test-account", accountFence: "test-fence", serverInstanceID: "test-server"
+            ))
+            #expect(try await store.pendingIntents(scope: scope, workID: fixture.workID).isEmpty)
+            #expect(try await store.allSealedCommands(scope: scope, workID: fixture.workID).isEmpty)
+            #expect(try await store.workSummary(workID: fixture.workID, scope: scope).acknowledgedHeadGeneration == 2)
+            await store.close()
         }
         undo.redo()
         #expect(editor.string == fixture.body + "追記")
@@ -95,12 +117,12 @@ struct SaveEditorPositionTests {
         #expect(reopened.document?.chapters.first?.episodes.first?.content == text)
     }
 
-    private func waitForReceipt(_ fixture: Fixture) async throws {
+    private func waitForRemoteUpdate(_ fixture: Fixture) async throws {
         try await eventuallyMac {
             let adoption = try await fixture.application.pendingAdoption(workID: fixture.workID)
-            let operations = await fixture.configuration.remote.recordedOperations()
+            let reads = await fixture.configuration.remote.recordedUpdateReads()
             let progress = await fixture.application.uiState(workID: fixture.workID)?.remoteProgress
-            return adoption == nil && !operations.isEmpty && (progress == .noChanges || progress == .idle)
+            return adoption == nil && reads == [fixture.workID] && (progress == .noChanges || progress == .idle)
         }
     }
 }
@@ -236,87 +258,15 @@ private extension SaveEditorPositionTests {
         try await store.verifyInbox(inboxID: inbox.inboxID, scope: scope)
         try await store.adoptInbox(inboxID: inbox.inboxID, scope: scope)
         await store.close()
-        await configuration.remote.setCommandHandler { sealed in
-            guard sealed.kind == .publish else { throw SyncV2Failure.offline }
-            return try Self.publishReceipt(sealed, workID: workID, local: local, remote: remote)
+        await configuration.remote.setHeadHandler { _ in
+            try SyncV2RemoteHead(snapshotID: remote.snapshotId, generation: 2)
         }
-    }
-
-    private nonisolated static func publishReceipt(
-        _ sealed: SyncV2SealedRemoteCommand,
-        workID: WorkID,
-        local: EncodedSnapshot,
-        remote: EncodedSnapshot
-    ) throws -> SyncV2RemoteExecution {
-        let command = sealed.command
-        let head = try SyncV2RemoteHead(snapshotID: remote.snapshotId, generation: 2)
-        return try .command(
-            receipt: SyncV2ReceiptReadback(
-                commandID: command.commandId,
-                requestDigest: command.requestDigest,
-                responseStatus: 200,
-                canonicalResponse: publishReceiptBytes(command, workID: workID, remote: remote),
-                predicates: SyncV2ReadBackPredicates(
-                    accountMatched: true,
-                    commandDigestMatched: true,
-                    resourceMatched: true,
-                    headMatched: true,
-                    stateMatched: true
-                ),
-                result: .noChanges,
-                remoteHead: head
-            ),
-            remoteInbox: SyncV2RemoteInbox(
-                inboxID: UUID(),
-                workID: workID,
-                headSnapshotID: remote.snapshotId,
-                snapshots: [local, remote],
-                expectedCurrentSnapshotID: command.sourceSnapshotId,
-                expectedLocalGeneration: command.sourceGeneration,
-                expectedRemoteHead: head
+        await configuration.remote.setUpdateHandler { _ in
+            try SyncV2RemoteInbox(
+                inboxID: UUID(), workID: workID, headSnapshotID: remote.snapshotId,
+                snapshots: [local, remote], expectedCurrentSnapshotID: nil, expectedLocalGeneration: 0,
+                expectedRemoteHead: SyncV2RemoteHead(snapshotID: remote.snapshotId, generation: 2)
             )
-        )
-    }
-
-    private nonisolated static func publishReceiptBytes(
-        _ command: SealedCommand,
-        workID: WorkID,
-        remote: EncodedSnapshot
-    ) throws -> Data {
-        let readBack = [
-            "accountMatched": true,
-            "commandDigestMatched": true,
-            "headMatched": true,
-            "resourceMatched": true,
-            "stateMatched": true
-        ]
-        let response: [String: Any] = [
-            "commandId": command.commandId.uuidString.lowercased(), "commandKind": "publish", "result": "noChanges",
-            "generation": 2, "head": ["generation": 2, "snapshotId": remote.snapshotId.rawValue],
-            "snapshotId": command.sourceSnapshotId.rawValue,
-            "receipt": [
-                "commandId": command.commandId.uuidString.lowercased(),
-                "commandKind": "publish",
-                "readBack": readBack,
-                "requestDigest": command.requestDigest.rawValue,
-                "workId": workID.description
-            ]
-        ]
-        let responseBytes = try JSONSerialization.data(
-            withJSONObject: response,
-            options: [.sortedKeys, .withoutEscapingSlashes]
-        )
-        let envelope: [String: Any] = [
-            "canonicalResponseBase64URL": responseBytes.base64EncodedString().replacingOccurrences(of: "+", with: "-")
-                .replacingOccurrences(
-                    of: "/",
-                    with: "_"
-                ).replacingOccurrences(of: "=", with: ""),
-            "commandId": command.commandId.uuidString.lowercased(), "commandKind": "publish",
-            "originalResponseStatus": 200,
-            "originalResult": "noChanges", "readBack": readBack, "requestDigest": command.requestDigest.rawValue,
-            "result": "noChanges", "workId": workID.description
-        ]
-        return try JSONSerialization.data(withJSONObject: envelope, options: [.sortedKeys, .withoutEscapingSlashes])
+        }
     }
 }

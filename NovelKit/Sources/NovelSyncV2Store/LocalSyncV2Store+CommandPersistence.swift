@@ -197,7 +197,7 @@ extension LocalSyncV2Store {
                 guard acknowledgement.remoteHead != nil else {
                     throw SyncV2StoreError.invalidAcknowledgement
                 }
-            } else if [.publish, .restore].contains(record.kind) {
+            } else if [.publish, .resolveDevice, .restore].contains(record.kind) {
                 let localSnapshot = try receiptLocalSnapshot(record)
                 guard let remoteHead = acknowledgement.remoteHead,
                       remoteHead.snapshotID == localSnapshot else {
@@ -257,14 +257,23 @@ extension LocalSyncV2Store {
             return
         }
         let localSnapshot = try receiptLocalSnapshot(record)
+        // A noChanges publish may merely prove that candidate is an ancestor.
+        // The acknowledged head advances, but those bytes are not equivalent.
+        guard head.snapshotID == localSnapshot else { return }
+        if let existing = try query(
+            "SELECT remote_snapshot_id FROM snapshot_remote_equivalents WHERE work_id=? AND local_snapshot_id=?",
+            [.text(record.workID.description), .blob(localSnapshot.bytes)]
+        ).first, existing[0].blob != head.snapshotID.bytes {
+            throw SyncV2StoreError.invalidAcknowledgement
+        }
         try exec(
             """
             INSERT INTO snapshot_remote_equivalents(
               work_id,local_snapshot_id,remote_snapshot_id,remote_generation
             ) VALUES(?,?,?,?)
             ON CONFLICT(work_id,local_snapshot_id) DO UPDATE SET
-              remote_snapshot_id=excluded.remote_snapshot_id,
-              remote_generation=excluded.remote_generation
+              remote_generation=MAX(remote_generation,excluded.remote_generation)
+            WHERE remote_snapshot_id=excluded.remote_snapshot_id
             """,
             [
                 .text(record.workID.description), .blob(localSnapshot.bytes),

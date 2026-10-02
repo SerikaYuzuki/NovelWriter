@@ -241,6 +241,8 @@ extension AppState {
             return await task.value
         }
         let accountScope = snapshotSyncV2AccountScopeToken
+        snapshotSyncLibraryOpenFailure = nil
+        operationMessage = nil
         // Selecting another shelf item explicitly retires any older remote
         // download/adoption operation before its bytes can cross the gate.
         cancelSnapshotSyncV2BackgroundOperations()
@@ -269,30 +271,30 @@ extension AppState {
                 #else
                 let opened = try await application.openLocal(workID: work.workID)
                 #endif
-                guard matchesSnapshotSyncV2AccountScope(accountScope),
-                      let openedDocument = opened.document else { return false }
+                guard matchesSnapshotSyncV2AccountScope(accountScope) else { return false }
+                guard let openedDocument = opened.document else { throw SyncV2ApplicationError.workNotFound }
                 let newSnapshotSession = await application.beginSession(workID: opened.workID)
-                guard matchesSnapshotSyncV2AccountScope(accountScope),
-                      installV2Document(
-                          openedDocument,
-                          workID: opened.workID,
-                          createdAt: opened.documentCreatedAt,
-                          attachments: opened.attachments,
-                          resources: opened.resources,
-                          expectedWorkID: work.workID
-                      ) else {
+                guard matchesSnapshotSyncV2AccountScope(accountScope) else { return false }
+                guard installV2Document(
+                    openedDocument,
+                    workID: opened.workID,
+                    createdAt: opened.documentCreatedAt,
+                    attachments: opened.attachments,
+                    resources: opened.resources,
+                    expectedWorkID: work.workID
+                ) else {
+                    snapshotSyncLibraryOpenFailure = .fatal(.invalidLocalState)
                     operationMessage = "作品データを検証できませんでした。端末の版は変更していません。"
                     return false
                 }
                 snapshotSyncV2Session = newSnapshotSession
                 startupState = .ready
+                scheduleAutomaticServerAdoption(expectedAccountScope: accountScope)
                 await refreshSnapshotSyncV2UIState()
                 return true
             } catch {
                 guard matchesSnapshotSyncV2AccountScope(accountScope) else { return false }
-                snapshotSyncLibraryOpenFailure = syncV2FailureKind(error)
-                logSyncV2PresentationFailure(error)
-                operationMessage = remoteOnlyOpenErrorMessage(error)
+                reportSnapshotSyncV2OpenFailure(error)
                 return false
             }
         }
@@ -402,9 +404,7 @@ extension AppState {
     }
 
     private func reportRemoteOnlyOpenFailure(_ error: Error) {
-        snapshotSyncLibraryOpenFailure = syncV2FailureKind(error)
-        logSyncV2PresentationFailure(error)
-        operationMessage = remoteOnlyOpenErrorMessage(error)
+        reportSnapshotSyncV2OpenFailure(error)
         AccessibilityNotification.Announcement(operationMessage ?? "作品を取り込めませんでした").post()
     }
 

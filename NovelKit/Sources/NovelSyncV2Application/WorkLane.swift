@@ -16,6 +16,7 @@ struct WorkLane {
     var wakeEpoch: UInt64 = 0
     var session: DocumentSessionToken?
     var automaticCheckInProgress = false
+    var cleanRemoteCheck: TaskState = .idle
     var allowsConstrainedBackfill = false
     var manuallyRequestedBackfill = false
     var historyWaiting = false

@@ -765,3 +765,34 @@ WHERE c.status='quarantined' AND q.reason='command:unexpected'
   AND c.canonical_response IS NULL AND c.response_status IS NULL AND c.receipt_verified=0
   AND NOT EXISTS (SELECT 1 FROM remote_receipts r WHERE r.command_id=c.command_id)
   AND NOT EXISTS (SELECT 1 FROM upload_transfers u WHERE u.command_id=c.command_id);
+
+-- Receipt equivalence repair (D-108).
+-- Only completed, verified, content-equal receipts can restore a mapping.
+-- The temporary evidence is discarded; command/receipt history is immutable.
+CREATE TEMP TABLE equivalence_repair_evidence AS
+SELECT c.work_id, COALESCE(i.source_snapshot_id,c.source_snapshot_id) AS local_id,
+       json_extract(CAST(c.canonical_response AS TEXT),'$.head.snapshotId') AS head_id,
+       json_extract(CAST(c.canonical_response AS TEXT),'$.head.generation') AS generation,
+       json_extract(CAST(c.canonical_response AS TEXT),'$.result') AS result
+FROM sealed_commands c LEFT JOIN sync_intents i ON i.intent_id=c.intent_id
+WHERE c.status='completed' AND c.receipt_verified=1
+  AND c.command_kind IN ('publish','resolveDevice','restore')
+  AND json_valid(CAST(c.canonical_response AS TEXT))
+  AND json_extract(CAST(c.canonical_response AS TEXT),'$.snapshotId') =
+      lower(hex(COALESCE(i.source_snapshot_id,c.source_snapshot_id)))
+  AND json_extract(CAST(c.canonical_response AS TEXT),'$.result') IN ('applied','noChanges');
+UPDATE snapshot_remote_equivalents AS e
+SET remote_snapshot_id=local_snapshot_id,
+    remote_generation=(SELECT MAX(r.generation) FROM equivalence_repair_evidence r
+      WHERE r.work_id=e.work_id AND r.local_id=e.local_snapshot_id AND r.head_id=lower(hex(r.local_id)))
+WHERE e.remote_snapshot_id<>e.local_snapshot_id
+  AND EXISTS (SELECT 1 FROM equivalence_repair_evidence r
+  WHERE r.work_id=e.work_id AND r.local_id=e.local_snapshot_id AND r.head_id=lower(hex(r.local_id)));
+DELETE FROM snapshot_remote_equivalents AS e
+WHERE e.remote_snapshot_id<>e.local_snapshot_id
+  AND EXISTS (SELECT 1 FROM equivalence_repair_evidence r
+  WHERE r.work_id=e.work_id AND r.local_id=e.local_snapshot_id
+    AND r.result='noChanges' AND r.head_id<>lower(hex(r.local_id)))
+  AND NOT EXISTS (SELECT 1 FROM equivalence_repair_evidence r
+    WHERE r.work_id=e.work_id AND r.local_id=e.local_snapshot_id AND r.head_id=lower(hex(r.local_id)));
+DROP TABLE equivalence_repair_evidence;

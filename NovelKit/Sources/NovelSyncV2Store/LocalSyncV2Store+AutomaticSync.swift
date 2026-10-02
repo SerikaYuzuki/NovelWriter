@@ -33,11 +33,11 @@ public extension LocalSyncV2Store {
                       $0.lifecycle == .completed || $0.sourceGeneration < expectedLocalGeneration
                   }) else { return false }
             _ = try promoteCurrentLeafTransaction(workID: workID, scope: scope)
-            _ = try upsertCheckpointIntent(
+            let intent = try upsertCheckpointIntent(
                 workID: workID, snapshotID: SnapshotID(rawValue: snapshot.hexString),
                 generation: expectedLocalGeneration, scope: scope
             )
-            return true
+            return intent != nil
         }
     }
 }

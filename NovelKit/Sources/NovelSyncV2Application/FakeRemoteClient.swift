@@ -41,6 +41,24 @@ public actor FakeSyncV2RemoteClient: SyncV2RemoteClient {
         }
     }
 
+    private var updateReads: [WorkID] = []
+
+    public func recordedUpdateReads() -> [WorkID] {
+        updateReads
+    }
+
+    private var updateHandler: (@Sendable (WorkID) async throws -> SyncV2RemoteInbox)?
+
+    public func setUpdateHandler(_ handler: @escaping @Sendable (WorkID) async throws -> SyncV2RemoteInbox) {
+        updateHandler = handler
+    }
+
+    public func downloadUpdate(workID: WorkID) async throws -> SyncV2RemoteInbox {
+        updateReads.append(workID)
+        guard let updateHandler else { throw SyncV2Failure.offline }
+        return try await updateHandler(workID)
+    }
+
     private var headHandler: (@Sendable (WorkID) async throws -> SyncV2RemoteHead?)?
     private var headReads: [WorkID] = []
 

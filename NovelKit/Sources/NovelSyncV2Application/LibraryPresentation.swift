@@ -18,7 +18,7 @@ public struct SyncV2LibraryStatus: Equatable, Sendable {
     }
 
     public func delayed(since: Date?, now: Date) -> Self {
-        guard SyncV2DelayNotice.isDelayed(since: since, now: now) else { return self }
+        guard tone != .success, SyncV2DelayNotice.isDelayed(since: since, now: now) else { return self }
         let prefix = since.map { $0 > now } == true
             ? "未同期の変更があります（時刻を確認できません）"
             : "未同期の変更があります"

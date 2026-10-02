@@ -23,6 +23,9 @@ extension SyncV2Application {
     /// is advisory for a remote implementation, so owner invalidation is the
     /// actual late-completion boundary.
     func cancelWorker(for workID: WorkID) {
+        let cleanCheck = lanes[workID]?.cleanRemoteCheck.task
+        lanes[workID]?.cleanRemoteCheck = .idle
+        cleanCheck?.cancel()
         cancelRetry(for: workID)
         lanes[workID, default: WorkLane()].retryAttempt = 0
         let previous = lanes[workID]?.worker

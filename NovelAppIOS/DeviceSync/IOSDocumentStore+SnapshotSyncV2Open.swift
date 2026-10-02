@@ -12,6 +12,8 @@ extension IOSDocumentStore {
     func openSnapshotSyncV2(workID: UUID) async -> Bool {
         guard !isSyncV2AccountTransitionActive,
               let application = snapshotSyncV2Application else { return false }
+        snapshotSyncV2RemoteOnlyOpenFailure = nil
+        operationErrorMessage = nil
         let targetWorkID = WorkID(workID)
         let expectedAccountScope = snapshotSyncV2AccountScope
         let didOpen = await documentOperationGate.perform { [weak self] in
@@ -26,13 +28,14 @@ extension IOSDocumentStore {
                     guard matchesLocalSyncAccount(expectedAccountScope),
                           opened.workID == targetWorkID else { return }
                     guard let value = opened.document else { throw SyncV2ApplicationError.workNotFound }
-                    guard installSnapshotSyncV2Opened(opened, value: value) else { return }
+                    guard installSnapshotSyncV2Opened(opened, value: value) else { throw SyncV2ApplicationError.safeBoundaryRejected }
                     let state = await application.uiState(workID: opened.workID)
                     guard matchesLocalSyncAccount(expectedAccountScope),
                           syncV2ActiveWorkID == targetWorkID else { return }
                     applySnapshotSyncV2State(state)
                     didOpen = true
                 } catch {
+                    guard matchesLocalSyncAccount(expectedAccountScope) else { return }
                     snapshotSyncV2RemoteOnlyOpenFailure = syncV2FailureKind(error)
                     logSyncV2PresentationFailure(error)
                     operationErrorMessage = remoteOnlyOpenErrorMessage(error)

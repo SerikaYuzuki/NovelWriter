@@ -80,3 +80,24 @@ extension IOSLibraryImportPresentationTests {
         #expect(store.syncV2LibraryItems.contains { $0.workID == target && $0.availability != .remoteOnly })
     }
 }
+
+extension IOSLibraryImportPresentationTests {
+    @Test("Local open failure is visible without losing the current document or blocking another open")
+    func localOpenFailureKeepsShelfUsable() async throws {
+        let configuration = try TestRuntimeConfiguration(account: nil)
+        let defaults = try #require(UserDefaults(suiteName: configuration.defaults.suiteName))
+        let store = IOSDocumentStore(userDefaults: defaults, libraryRoot: configuration.localRoot.url,
+                                     runtimeComposition: .test(configuration))
+        await store.bootstrap()
+        #expect(await store.makeNewDocument())
+        let original = store.document
+        let workID = try #require(store.syncV2ActiveWorkID)
+        #expect(await !store.openSnapshotSyncV2(workID: UUID()))
+        #expect(store.operationErrorMessage?.isEmpty == false)
+        #expect(store.snapshotSyncV2RemoteOnlyOpenFailure != nil)
+        #expect(store.document == original)
+        #expect(store.syncV2ActiveWorkID == workID)
+        #expect(await store.openSnapshotSyncV2(workID: workID.rawValue))
+        #expect(store.snapshotSyncV2RemoteOnlyOpenFailure == nil)
+    }
+}

@@ -102,8 +102,8 @@ func offlineCheckpointsRegisterParents(restartEveryStep: Bool) async throws {
     await store.close()
 }
 
-@Test("concurrent planning seals one publish intent after a verified download")
-func concurrentPlanningSealsOnePublish() async throws {
+@Test("concurrent planning does not republish a verified download")
+func concurrentPlanningDoesNotRepublishReceivedContent() async throws {
     let config = try TestRuntimeConfiguration()
     let store = try LocalSyncV2Store(root: config.localRoot.url, policy: .createNew)
     let workID = WorkID(UUID())
@@ -123,25 +123,20 @@ func concurrentPlanningSealsOnePublish() async throws {
         store: store, scope: TestScopeResolver(vault: config.vault, store: store)
     )
     try await planner.requestSynchronization(workID: workID)
-    let ids = try await withThrowingTaskGroup(of: UUID.self) { group in
+    try await withThrowingTaskGroup(of: Void.self) { group in
         for _ in 0 ..< 20 {
             group.addTask {
                 let plan = try await planner.nextCommand(workID: workID)
-                guard case let .command(command) = plan else {
-                    throw SyncV2Failure.fatal(.unexpected)
+                guard case .idle = plan else {
+                    Issue.record("received content must not create another publish")
+                    return
                 }
-                #expect(command.commandKind == "publish")
-                return command.commandId
             }
         }
-        var ids = Set<UUID>()
-        for try await id in group {
-            ids.insert(id)
-        }
-        return ids
+        try await group.waitForAll()
     }
-    #expect(ids.count == 1)
-    #expect(try await store.allSealedCommands(scope: productionScope, workID: workID).count == 1)
+    #expect(try await store.allSealedCommands(scope: productionScope, workID: workID).isEmpty)
+    #expect(try await store.pendingIntents(scope: productionScope, workID: workID).isEmpty)
     await store.close()
 }
 

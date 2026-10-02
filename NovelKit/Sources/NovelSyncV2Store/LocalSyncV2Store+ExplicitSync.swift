@@ -2,8 +2,8 @@ import Foundation
 import NovelSyncV2
 
 public extension LocalSyncV2Store {
-    /// Reconcile the current snapshot with the server even without new edits.
-    /// A fresh publish goes through the normal verified receipt/Inbox path.
+    /// Queue only unreceived content; the application reads remote updates for
+    /// already received current snapshots without creating another publish.
     /// Existing durable commands keep their identity and retry ordering.
     func requestSynchronization(workID: WorkID, scope: V2LocalWorkScope) throws {
         guard case .bound = scope else { throw SyncV2StoreError.accountMismatch }

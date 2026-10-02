@@ -8,15 +8,16 @@ public struct V2PendingFastForward: Hashable, Sendable {
 }
 
 public extension LocalSyncV2Store {
-    /// Only a verified publish receipt can authorize the corresponding Inbox.
-    /// Selection is durable across restart; no editor mutation happens here.
+    /// A verified ancestor receipt, or a verified descendant of already
+    /// received current content, can authorize this Inbox across restart.
+    /// No editor mutation happens here.
     func pendingFastForward(workID: WorkID, scope: V2LocalWorkScope) throws -> V2PendingFastForward? {
         guard case let .bound(binding) = scope,
               let current = try scopedWorkRow(workID: workID, scope: scope),
               let bytes = current[3].blob, let generation = current[2].int64,
               try activeConflict(workID: workID, scope: scope) == nil,
               try pendingIntents(scope: scope, workID: workID).isEmpty else { return nil }
-        let candidates = try query(
+        var candidates = try query(
             """
             SELECT i.inbox_id FROM inbox_batches i
             JOIN sealed_commands c ON c.work_id=i.work_id
@@ -37,6 +38,19 @@ public extension LocalSyncV2Store {
             """,
             [.text(workID.description)] + binding.values + [.blob(bytes), .int(generation)]
         )
+        // Clean read reconciliation has no redundant publish receipt. Its
+        // authenticated verified graph must descend from received local bytes.
+        if candidates.isEmpty,
+           try isAcknowledgedContent(workID: workID, snapshotID: SnapshotID(rawValue: bytes.hexString), scope: scope) {
+            candidates = try query("""
+            SELECT inbox_id FROM inbox_batches
+            WHERE work_id=? AND server_instance_id=? AND protocol_epoch=? AND account_id=? AND account_fence=?
+              AND state='verified' AND expected_current_snapshot_id=? AND expected_local_generation=?
+              AND snapshot_id<>expected_current_snapshot_id
+              AND expected_remote_head_generation>=?
+            ORDER BY expected_remote_head_generation DESC
+            """, [.text(workID.description)] + binding.values + [.blob(bytes), .int(generation), .int(current[4].int64 ?? 0)])
+        }
         guard let id = candidates.first?[0].text.flatMap(UUID.init(uuidString:)) else { return nil }
         let snapshot = try SnapshotID(rawValue: bytes.hexString)
         let graph = try loadInboxGraph(inboxID: id, binding: binding)

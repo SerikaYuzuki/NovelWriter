@@ -364,10 +364,7 @@ extension AppState {
                     await platformGate.disarm(session: session)
                     return false
                 }
-                guard opened.document != nil else {
-                    await platformGate.disarm(session: session)
-                    return false
-                }
+                guard opened.document != nil else { throw SyncV2ApplicationError.workNotFound }
                 await platformGate.disarm(session: session)
                 guard await installSnapshotSyncV2ServerAdoption(
                     opened,
@@ -383,6 +380,10 @@ extension AppState {
                 return true
             } catch {
                 await platformGate.disarm(session: session)
+                guard matchesSnapshotSyncV2Identity(workID: workID, documentSession: expectedDocumentSession,
+                                                    snapshotSession: expectedSnapshotSession),
+                    matchesSnapshotSyncV2AccountScope(expectedAccountScope) else { return false }
+                reportSnapshotSyncV2OpenFailure(error)
                 return false
             }
         }

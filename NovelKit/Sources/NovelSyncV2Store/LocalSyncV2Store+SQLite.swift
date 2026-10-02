@@ -162,7 +162,8 @@ extension LocalSyncV2Store {
         snapshotID: SnapshotID,
         generation: Int64,
         scope: V2LocalWorkScope
-    ) throws -> UUID {
+    ) throws -> UUID? {
+        guard try !isAcknowledgedContent(workID: workID, snapshotID: snapshotID, scope: scope) else { return nil }
         // Every route that queues these bytes (explicit sync, recovery,
         // account replan) promotes the leaf in the caller's transaction.
         if try isUnpromotedLeaf(workID: workID, snapshotID: snapshotID) {

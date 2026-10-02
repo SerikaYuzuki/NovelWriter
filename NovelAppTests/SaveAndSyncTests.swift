@@ -9,14 +9,15 @@ import Testing
 
 @MainActor
 struct SaveAndSyncTests {
-    @Test("save shortcut checks remote even without edits, and keeps unbound works local", arguments: [false, true])
-    func saveAndSync(isBound: Bool) async throws {
+    @Test("save shortcut checks remote even without edits, and keeps unbound works local", arguments: [false, true], [false, true])
+    func saveAndSync(isBound: Bool, serverAhead: Bool) async throws {
         let config = try TestRuntimeConfiguration(account: isBound ? TestAccount(accountID: "test-account", accountFence: "test-fence") : nil)
         let store = try LocalSyncV2Store(root: config.localRoot.url, policy: .createNew)
         let workID = WorkID(UUID())
         let document = NovelDocument.newDocument()
         let createdAt = Date(timeIntervalSince1970: 1_700_000_000)
         let scope: V2LocalWorkScope = isBound ? .bound(V2AccountBinding(accountID: "test-account", accountFence: "test-fence", serverInstanceID: "test-server")) : .unbound
+        var expectedRemoteSnapshotID: SnapshotID?
         if isBound {
             let encoded = try SnapshotCodec.encode(SnapshotModel(workId: workID, document: document, documentCreatedAt: createdAt), parents: [])
             let inbox = try V2RemoteSnapshot(workID: workID, encoded: encoded, expectedCurrentSnapshotID: nil,
@@ -25,6 +26,23 @@ struct SaveAndSyncTests {
             try await store.verifyInbox(inboxID: inbox.inboxID, scope: scope)
             try await store.adoptInbox(inboxID: inbox.inboxID, scope: scope)
             #expect(try await store.pendingIntents(scope: scope, workID: workID).isEmpty)
+            var updated = document
+            updated.title = "サーバーの更新"
+            let remote = try SnapshotCodec.encode(
+                SnapshotModel(workId: workID, document: updated, documentCreatedAt: createdAt),
+                parents: [encoded.snapshotId]
+            )
+            expectedRemoteSnapshotID = serverAhead ? remote.snapshotId : encoded.snapshotId
+            await config.remote.setHeadHandler { _ in
+                try SyncV2RemoteHead(snapshotID: serverAhead ? remote.snapshotId : encoded.snapshotId,
+                                     generation: serverAhead ? 2 : 1)
+            }
+            await config.remote.setUpdateHandler { _ in
+                try SyncV2RemoteInbox(inboxID: UUID(), workID: workID, headSnapshotID: remote.snapshotId,
+                                      snapshots: [encoded, remote], expectedCurrentSnapshotID: nil,
+                                      expectedLocalGeneration: 0,
+                                      expectedRemoteHead: SyncV2RemoteHead(snapshotID: remote.snapshotId, generation: 2))
+            }
         } else {
             _ = try await store.checkpoint(V2CheckpointRequest(workID: workID, document: document,
                                                                documentCreatedAt: createdAt, expectedGeneration: 0), scope: scope)
@@ -41,16 +59,36 @@ struct SaveAndSyncTests {
         state.saveState = .saved
         let observation = Task { await state.observeSnapshotSyncV2Status() }
         defer { observation.cancel() }
+        let expectedSnapshotID = expectedRemoteSnapshotID
         await state.saveAndSyncCurrentWork()
         if isBound {
-            try await eventuallyMac { await !(config.remote.recordedOperations()).isEmpty }
-            #expect(try await store.pendingIntents(scope: scope, workID: workID).count == 1)
+            try await eventuallyMac { await config.remote.recordedHeadReads().contains(workID) }
+            if serverAhead {
+                try await eventuallyMac {
+                    if let pending = try await app.pendingAdoption(workID: workID),
+                       await app.uiState(workID: workID)?.remoteProgress == .readyForSafeAdoption(inboxID: pending.inboxID) {
+                        return true
+                    }
+                    return try await store.open(workID: workID, scope: scope).summary.currentSnapshotID == expectedSnapshotID
+                }
+                #expect(await config.remote.recordedUpdateReads() == [workID])
+            } else {
+                try await eventuallyMac { await app.uiState(workID: workID)?.remoteProgress == .noChanges }
+                #expect(await config.remote.recordedUpdateReads().isEmpty)
+            }
+            #expect(try await store.pendingIntents(scope: scope, workID: workID).isEmpty)
+            #expect(try await store.allSealedCommands(scope: scope, workID: workID).isEmpty)
+            #expect(await config.remote.recordedOperations().isEmpty)
         } else {
+            #expect(await config.remote.recordedHeadReads().isEmpty)
+            #expect(await config.remote.recordedUpdateReads().isEmpty)
             #expect(state.operationMessage == nil)
             #expect(await config.remote.recordedOperations().isEmpty)
             #expect(try await store.allSealedCommands(scope: .bound(V2AccountBinding(accountID: "test-account", accountFence: "test-fence", serverInstanceID: "test-server")), workID: workID).isEmpty)
         }
-        #expect(try await store.open(workID: workID, scope: scope).document == document)
+        if !isBound || !serverAhead {
+            #expect(try await store.open(workID: workID, scope: scope).document == document)
+        }
         state.cancelSnapshotSyncV2BackgroundOperations()
         await store.close()
     }

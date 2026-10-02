@@ -143,3 +143,34 @@ struct SharedShallowFixture {
         let bytesBase64URL: String
     }
 }
+
+extension RemoteHTTPLineageTests {
+    @Test("Clean update reads use cached ancestry and do not request a shallow head")
+    func cleanUpdateReusesReceivedSnapshot() async throws {
+        let fixture = LineageFixture()
+        let base = try fixture.snapshot(title: "received")
+        let head = try fixture.snapshot(title: "updated", parents: [base.snapshotId])
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = try LocalSyncV2Store(root: root, policy: .createNew)
+        let scope = V2LocalWorkScope.bound(fixture.binding)
+        let seed = try V2RemoteSnapshot(workID: fixture.workID, encoded: base,
+                                        expectedCurrentSnapshotID: nil, expectedLocalGeneration: 0,
+                                        expectedRemoteHead: V2RemoteHead(snapshotID: base.snapshotId, generation: 1))
+        try await store.stageRemote(seed, scope: scope)
+        try await store.verifyInbox(inboxID: seed.inboxID, scope: scope)
+        try await store.adoptInbox(inboxID: seed.inboxID, scope: scope)
+        let state = LineageHTTPState(workID: fixture.workID, snapshots: [base, head], publishResponse: nil)
+        let client = try fixture.client(snapshots: [], overrideState: state, localStore: store)
+        let inbox = try await client.downloadUpdate(workID: fixture.workID)
+        #expect(!inbox.shallow)
+        #expect(inbox.headSnapshotID == head.snapshotId)
+        #expect(inbox.snapshots.map(\.snapshotId) == [base.snapshotId, head.snapshotId])
+        #expect(inbox.binding?.accountId == fixture.binding.accountID)
+        #expect(state.count(path: "/v2/snapshots/\(base.snapshotId.rawValue)/manifest") == 0)
+        #expect(state.count(path: "/v2/snapshots/\(head.snapshotId.rawValue)/manifest") == 1)
+        #expect(state.requestedQueries(path: "/v2/works/\(fixture.workID)/download").isEmpty)
+        #expect(try await store.open(workID: fixture.workID, scope: scope).summary.currentSnapshotID == base.snapshotId)
+        await store.close()
+    }
+}

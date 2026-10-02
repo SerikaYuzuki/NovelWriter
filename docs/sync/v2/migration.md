@@ -10,3 +10,7 @@
 - migration ledger／staging tableは既存schemaの一部として保持する。backupの作成、staging、検証、adoptionは別の状態であり、backupができただけでlive作品へ取り込まない。
 - 外部データの取り込みは新しい作品として検証し、現行作品を上書き・resetしない。本文・object・manifest・account scopeの検証を迂回しない。
 - server更新は固定role・server instanceを照合し、backupと隔離復元を先に確認する。手順は[deployment](deployment.md)、復旧は[運用](../../ACCOUNT_RETENTION_OPERATIONS.md)。
+
+## D-108: 内容同値表の修復
+
+`-- Receipt equivalence repair (D-108).`を既存SQLの末尾へ追加し、旧checksumから同じtransactionで進める。`snapshot_remote_equivalents`の異なるremote idを、検証済みcompleted `publish`／`resolveDevice`／`restore`のcanonical responseでheadとintent snapshotが一致する受領世代へ戻す。その証拠がなく祖先noChangesだけがある誤対応は削除する。temporary evidence tableはmigration内で破棄し、変更後のchecksumをattestする。再起動で修復を再実行せず、本文・添付・current・acknowledged head・command／receipt履歴は書き換えない。

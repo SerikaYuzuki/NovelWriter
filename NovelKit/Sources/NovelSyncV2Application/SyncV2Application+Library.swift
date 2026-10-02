@@ -266,6 +266,14 @@ public extension SyncV2Application {
             }
             diagnosticStage = "request-sync"
             try await planner.requestSynchronization(workID: workID)
+            if let candidate = try await planner.automaticSyncCandidate(workID: workID),
+               candidate.acknowledgedSnapshotID != nil {
+                let state = setState(workID: workID,
+                                     localDurability: lanes[workID, default: WorkLane()].state?.localDurability ?? .unsaved,
+                                     remoteProgress: .pending, result: .queued)
+                scheduleCleanRemoteCheck(workID: workID)
+                return SyncV2OperationResult(state: state, typedResult: .queued)
+            }
             cancelLeafPromotion(workID: workID)
             diagnosticStage = "plan-command"
             return try await synchronizePendingCommand(workID: workID)

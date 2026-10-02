@@ -83,6 +83,12 @@ struct LibraryPane: View {
                     .font(FuminiwaType.rowSecondary)
                     .padding(.horizontal, Spacing.medium)
             }
+            if let failure = appState.snapshotSyncLibraryOpenFailure {
+                StatusLabel(remoteOnlyOpenErrorMessage(failure), systemImage: "exclamationmark.circle", tone: .danger)
+                    .font(FuminiwaType.rowSecondary)
+                    .padding(.horizontal, Spacing.medium)
+                    .accessibilityIdentifier("library.openFailure")
+            }
             Group {
                 if usesGrid {
                     shelfGrid

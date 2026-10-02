@@ -17,7 +17,11 @@ func editingBeforeRemoteAdoptionUsesAncestralHeadAndRecoversLegacyRejection() as
     let first = try publishCommand(workID: workID, checkpoint: base)
     try await store.seal(first, intentID: base.intentID, scope: scopeA)
     try await store.acknowledge(commandAcknowledgement(first, head: baseHead), scope: scopeA)
-    try await store.requestSynchronization(workID: workID, scope: scopeA)
+    // Old releases queued a probe publish for already received content.
+    // Preserve that legacy recovery scenario without reintroducing the bug.
+    let intentID = UUID()
+    try await store.insertIntent(intentID: intentID, workID: workID, snapshotID: base.snapshotID,
+                                 generation: base.generation, kind: "checkpoint", scope: scopeA)
     let pending = try #require(await store.pendingIntents(scope: scopeA).first)
     let probe = try publishCommand(workID: workID, checkpoint: base, expectedHead: baseHead)
     try await store.seal(probe, intentID: pending.intentID, scope: scopeA)

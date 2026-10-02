@@ -354,6 +354,12 @@ extension ProductionSyncV2Kernel {
     func stageRemote(_ inbox: SyncV2RemoteInbox) async throws {
         do {
             let localScope = try await scope.existingScope(workID: inbox.workID)
+            if let downloaded = inbox.binding {
+                guard case let .bound(binding) = localScope,
+                      downloaded.accountId == binding.accountID, downloaded.accountFence == binding.accountFence,
+                      downloaded.serverInstanceId == binding.serverInstanceID,
+                      downloaded.protocolEpoch == binding.protocolEpoch else { throw SyncV2Failure.accountFenceChanged }
+            }
             try await store.stageRemoteGraph(inbox.storeGraph, scope: localScope)
         } catch {
             throw mapStoreError(error)

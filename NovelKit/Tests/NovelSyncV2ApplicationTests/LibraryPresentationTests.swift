@@ -96,3 +96,19 @@ struct LibraryPresentationTests {
         #expect(remoteOnlyOpenErrorMessage(SyncV2Failure.receiptMismatch).contains("検証"))
     }
 }
+
+extension LibraryPresentationTests {
+    @Test("A received work cannot combine a stale delay clock with synced text")
+    func syncedStatusIgnoresStaleDelayClock() {
+        let now = Date()
+        for progress in [SyncV2RemoteProgress.idle, .noChanges] {
+            let status = SyncV2LibraryStatus.resolve(availability: .cached, accountState: .active,
+                                                     remoteHeadConfirmed: true, progress: progress)
+            #expect(status.delayed(since: now.addingTimeInterval(-86400), now: now).text == "同期済み")
+            #expect(status.delayed(since: now.addingTimeInterval(86400), now: now).text == "同期済み")
+        }
+        let pending = SyncV2LibraryStatus.resolve(availability: .cached, accountState: .active,
+                                                  remoteHeadConfirmed: true, progress: .pending)
+        #expect(pending.delayed(since: now.addingTimeInterval(-86400), now: now).text.contains("未同期の変更"))
+    }
+}

@@ -114,6 +114,9 @@ extension IOSDocumentStore {
                 } catch {
                     guard matchesSyncAccount(expectedAccountScope) else { return }
                     snapshotSyncOutcome = .failure(.fatal(.invalidLocalState))
+                    snapshotSyncV2RemoteOnlyOpenFailure = syncV2FailureKind(error)
+                    logSyncV2PresentationFailure(error)
+                    operationErrorMessage = remoteOnlyOpenErrorMessage(error)
                 }
             }
             return transitioned && adopted

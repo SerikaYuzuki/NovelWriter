@@ -61,6 +61,12 @@ extension AppState {
         }
     }
 
+    func reportSnapshotSyncV2OpenFailure(_ error: Error) {
+        snapshotSyncLibraryOpenFailure = syncV2FailureKind(error)
+        logSyncV2PresentationFailure(error)
+        operationMessage = remoteOnlyOpenErrorMessage(error)
+    }
+
     func dismissOperationMessage() {
         operationMessage = nil
     }
