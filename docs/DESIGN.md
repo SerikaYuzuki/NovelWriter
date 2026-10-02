@@ -66,6 +66,10 @@
 
 v2 storeはcurrent state、immutable Snapshotとobjects、head / generation、account scope、durable remote workをatomic checkpointで確定する。networkをSQLite transactionに含めない。schema不整合や読込失敗では既存原稿を保持し、空の新規DBへのfallbackで成功に見せない。
 
+`LocalSyncV2Store`だけを公開actorとし、内部の`OutboxRepository`（intent・command・receipt・upload・復旧）、`InboxRepository`（staging・attestation・adoption・shallow/backfill）、`ConflictRepository`（候補・keepBoth・restore）、`AccountRepository`（binding・scope遷移）、`DeletionRepository`（削除intentと順序付きpurge）、`WorkRepository`（work・snapshot・object・履歴・remote対応）へ委譲する。repositoryは同期的なstructで、同じ`SQLiteExecutor`を保持する。個別のactorやconnectionは作らない。
+
+Storeがcheckpoint、install/adopt、publish acknowledgement、account transition、deletion等のtransactionを開始する。repositoryの`...Transaction` / `...InTransaction`と永続化helperはそのtransaction内で呼び、SQLの実行順序を保つ。executorはconnection・statement cache・query/exec/changes・transaction内のobject検証cacheを所有し、ネストは従来どおり拒否する。schemaの移行判断とSQL順序は`Schema.swift`、低水準のCSQLite操作は`SQLiteExecutor.swift` / `SQLiteExecutor+Schema.swift`に置く。
+
 NovelStorageはpackageの詳細を所有する。Importは外部原本を変えずnew WorkIDへ取り込み、Exportは既存のWorkID / session / binding / Undoを変えない。v2との接続は`NovelSyncV2PortableBridge`を使う。
 
 manifestが参照する本文・世界観payloadは必須valid UTF-8。メモは欠損のみ省略可能で、存在するファイルの読込失敗を空文字にしない。未知resourceの保持、symlink、上限、ID / 参照整合を含む互換・検証条件は[CROSS_PLATFORM](CROSS_PLATFORM.md)に集約する。個別validationの存在はPackage Validator全体の受入を意味しない。

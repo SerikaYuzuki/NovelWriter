@@ -30,7 +30,7 @@ func remoteOnlyInstallChecksEveryBoundary(boundary: Int, changeAccount: Bool) as
     }
     try await eventually { await scope.paused }
     #expect(progress.value.stage == (boundary == 1 ? .checking : .saving))
-    #expect(try await store.query("SELECT COUNT(*) FROM inbox_batches").first?[0].int64 == 0)
+    #expect(try await store.query("SELECT COUNT(*) FROM inbox_batches").first?.scalar.int64 == 0)
 
     if changeAccount {
         await scope.release(binding: V2AccountBinding(accountID: "other", accountFence: "other", serverInstanceID: "test-server"))

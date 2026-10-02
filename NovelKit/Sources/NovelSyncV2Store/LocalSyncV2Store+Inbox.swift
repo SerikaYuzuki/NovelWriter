@@ -7,7 +7,7 @@ public extension LocalSyncV2Store {
         _ remote: V2RemoteSnapshot,
         scope: V2LocalWorkScope
     ) throws {
-        let anchor = try Self.validateGraphContent(remote.graph, full: true)
+        let anchor = try InboxRepository.validateGraphContent(remote.graph, full: true)
         try stageValidatedGraph(remote.graph, scope: scope, anchor: anchor)
     }
 
@@ -15,7 +15,7 @@ public extension LocalSyncV2Store {
         _ graph: V2RemoteSnapshotGraph,
         scope: V2LocalWorkScope
     ) async throws {
-        let validation = Task.detached { try Self.validateGraphContent(graph, full: true) }
+        let validation = Task.detached { try InboxRepository.validateGraphContent(graph, full: true) }
         let anchor = try await withTaskCancellationHandler {
             try await validation.value
         } onCancel: { validation.cancel() }
@@ -23,24 +23,24 @@ public extension LocalSyncV2Store {
     }
 
     private func stageValidatedGraph(
-        _ graph: V2RemoteSnapshotGraph, scope: V2LocalWorkScope, anchor: GraphAnchor
+        _ graph: V2RemoteSnapshotGraph, scope: V2LocalWorkScope, anchor: InboxRepository.GraphAnchor
     ) throws {
         try Task.checkCancellation()
-        try requireNotDeleting(graph.workID)
+        try deletionRepository.requireNotDeleting(graph.workID)
         guard case let .bound(binding) = scope else {
             throw SyncV2StoreError.accountMismatch
         }
         try Task.checkCancellation()
         try inTransaction {
-            if let work = try scopedWorkRow(workID: graph.workID, scope: scope) {
-                guard work[1].text == anchor.documentID.description,
-                      work[5].text == anchor.createdAt else {
+            if let work = try workRepository.scopedWorkRow(workID: graph.workID, scope: scope) {
+                guard work.documentID == anchor.documentID.description,
+                      work.documentCreatedAt == anchor.createdAt else {
                     throw SyncV2StoreError.invalidSnapshot
                 }
-            } else if try workExists(workID: graph.workID) {
+            } else if try workRepository.workExists(workID: graph.workID) {
                 throw SyncV2StoreError.workNotFound
             } else {
-                try insertWork(
+                try workRepository.insertWork(
                     workID: graph.workID,
                     documentID: anchor.documentID,
                     documentCreatedAt: anchor.createdAt,
@@ -48,82 +48,13 @@ public extension LocalSyncV2Store {
                     scope: scope
                 )
             }
-            try validateGraphParents(graph)
-            if try inboxExists(inboxID: graph.inboxID) {
-                try attestInboxReplay(graph, binding: binding, anchor: anchor)
+            try inboxRepository.validateGraphParents(graph)
+            if try inboxRepository.inboxExists(inboxID: graph.inboxID) {
+                try inboxRepository.attestInboxReplay(graph, binding: binding, anchor: anchor)
                 return
             }
-            let inboxID = graph.inboxID.uuidString.lowercased()
-            let head = try graphSnapshot(graph.headSnapshotID, in: graph)
-            try exec(
-                """
-                INSERT INTO inbox_batches(
-                  inbox_id,work_id,document_id,document_created_at,
-                  server_instance_id,protocol_epoch,account_id,account_fence,
-                  snapshot_id,manifest_bytes,expected_current_snapshot_id,
-                  expected_local_generation,expected_remote_head_snapshot_id,
-                  expected_remote_head_generation,state
-                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'staged')
-                """,
-                [
-                    .text(inboxID), .text(graph.workID.description),
-                    .text(anchor.documentID.description), .text(anchor.createdAt)
-                ] + binding.values + [
-                    .blob(graph.headSnapshotID.bytes), .blob(head.manifestBytes),
-                    graph.expectedCurrentSnapshotID.map { .blob($0.bytes) } ?? .null,
-                    .int(graph.expectedLocalGeneration),
-                    graph.expectedRemoteHead.map { .blob($0.snapshotID.bytes) } ?? .null,
-                    graph.expectedRemoteHead.map { .int($0.generation) } ?? .null
-                ]
-            )
-            for snapshot in graph.snapshots {
-                try Task.checkCancellation()
-                try exec(
-                    """
-                    INSERT INTO inbox_snapshots(
-                      inbox_id,snapshot_id,work_id,manifest_bytes,is_head,verified
-                    ) VALUES(?,?,?,?,?,0)
-                    """,
-                    [
-                        .text(inboxID), .blob(snapshot.snapshotIDBytes),
-                        .text(graph.workID.description), .blob(snapshot.manifestBytes),
-                        .int(snapshot.snapshotId == graph.headSnapshotID ? 1 : 0)
-                    ]
-                )
-            }
-            for (objectID, bytes) in try graphObjectUnion(graph) {
-                try exec(
-                    """
-                    INSERT INTO inbox_objects(
-                      inbox_id,object_id,byte_count,bytes,verified
-                    ) VALUES(?,?,?,?,0)
-                    """,
-                    [
-                        .text(inboxID), .blob(objectID.bytes),
-                        .int(Int64(bytes.count)), .blob(bytes)
-                    ]
-                )
-            }
-            for snapshot in graph.snapshots {
-                try Task.checkCancellation()
-                for entry in snapshot.manifest.entries {
-                    try exec(
-                        """
-                        INSERT INTO inbox_closure(
-                          inbox_id,snapshot_id,entity_key,object_id,
-                          byte_count,content_type
-                        ) VALUES(?,?,?,?,?,?)
-                        """,
-                        [
-                            .text(inboxID), .blob(snapshot.snapshotIDBytes),
-                            .text(entry.entityKey), .blob(entry.objectId.bytes),
-                            .int(Int64(entry.byteCount)),
-                            .text(entry.contentType.rawValue)
-                        ]
-                    )
-                }
-            }
-            try recordInboxValidation(graph)
+            try inboxRepository.persistStagedGraphInTransaction(graph, binding: binding, anchor: anchor)
+            try inboxRepository.recordInboxValidation(graph)
         }
     }
 
@@ -135,34 +66,18 @@ public extension LocalSyncV2Store {
             throw SyncV2StoreError.accountMismatch
         }
         try Task.checkCancellation()
-        let state = try inboxState(inboxID: inboxID, binding: binding)
+        let state = try inboxRepository.inboxState(inboxID: inboxID, binding: binding)
         guard state == "staged" || state == "verified" || state == "adopted" else {
             throw SyncV2StoreError.inboxNotFound
         }
-        let graph = try loadInboxGraph(inboxID: inboxID, binding: binding)
-        _ = try validateGraph(graph)
-        try validateGraphParents(graph)
+        let graph = try inboxRepository.loadInboxGraph(inboxID: inboxID, binding: binding)
+        _ = try inboxRepository.validateGraph(graph)
+        try inboxRepository.validateGraphParents(graph)
         if state == "verified" || state == "adopted" {
             return
         }
         try inTransaction {
-            let text = inboxID.uuidString.lowercased()
-            try exec(
-                "UPDATE inbox_objects SET verified=1 WHERE inbox_id=?",
-                [.text(text)]
-            )
-            try exec(
-                "UPDATE inbox_snapshots SET verified=1 WHERE inbox_id=?",
-                [.text(text)]
-            )
-            try exec(
-                """
-                UPDATE inbox_batches SET state='verified'
-                WHERE inbox_id=? AND state='staged'
-                """,
-                [.text(text)]
-            )
-            guard try changes() == 1 else { throw SyncV2StoreError.inboxNotFound }
+            try inboxRepository.markVerifiedInTransaction(inboxID: inboxID)
         }
     }
 
@@ -174,384 +89,369 @@ public extension LocalSyncV2Store {
             throw SyncV2StoreError.accountMismatch
         }
         try Task.checkCancellation()
-        let state = try inboxState(inboxID: inboxID, binding: binding)
+        let state = try inboxRepository.inboxState(inboxID: inboxID, binding: binding)
         if state == "adopted" {
             return
         }
         guard state == "verified" else { throw SyncV2StoreError.inboxNotFound }
-        let graph = try loadInboxGraph(inboxID: inboxID, binding: binding)
+        let graph = try inboxRepository.loadInboxGraph(inboxID: inboxID, binding: binding)
         try inTransaction {
-            try adoptGraphTransaction(graph, expectedConflict: nil, binding: binding)
+            try inboxRepository.adoptGraphTransaction(graph, expectedConflict: nil, binding: binding)
         }
     }
 }
 
-extension LocalSyncV2Store {
-    func inboxExists(inboxID: UUID) throws -> Bool {
-        try !query(
-            "SELECT 1 FROM inbox_batches WHERE inbox_id=?",
-            [.text(inboxID.uuidString.lowercased())]
-        ).isEmpty
+/// Created only by full graph validation; callers cannot forge an unchecked token.
+public struct V2ValidatedInitialGraph: Sendable {
+    let graph: V2RemoteSnapshotGraph
+    let anchor: InboxRepository.GraphAnchor
+}
+
+public extension LocalSyncV2Store {
+    /// Called only by remote-only open, before any document/editor session exists.
+    /// CPU validation is detached; all mutable scope/CAS checks repeat after it.
+    func installInitialGraph(_ graph: V2RemoteSnapshotGraph, scope: V2LocalWorkScope) async throws {
+        let prepared = try await Self.prepareInitialGraph(graph)
+        try installInitialGraph(prepared, scope: scope)
     }
 
-    func inboxState(inboxID: UUID, binding: V2AccountBinding) throws -> String {
-        guard let state = try query(
-            """
-            SELECT state FROM inbox_batches
-            WHERE inbox_id=? AND server_instance_id=? AND protocol_epoch=?
-              AND account_id=? AND account_fence=?
-            """,
-            [.text(inboxID.uuidString.lowercased())] + binding.values
-        ).first?[0].text else { throw SyncV2StoreError.inboxNotFound }
-        return state
+    /// Runtime checks the live account again after this await and before install.
+    static func prepareInitialGraph(_ graph: V2RemoteSnapshotGraph) async throws -> V2ValidatedInitialGraph {
+        let validation = Task.detached { try InboxRepository.validateGraphContent(graph, full: true) }
+        let anchor = try await withTaskCancellationHandler {
+            try await validation.value
+        } onCancel: { validation.cancel() }
+        try Task.checkCancellation()
+        return V2ValidatedInitialGraph(graph: graph, anchor: anchor)
     }
 
-    func attestInboxReplay(
-        _ graph: V2RemoteSnapshotGraph,
-        binding: V2AccountBinding,
-        anchor: GraphAnchor
+    func installInitialGraph(_ prepared: V2ValidatedInitialGraph, scope: V2LocalWorkScope) throws {
+        try installPreparedGraph(prepared, scope: scope, shallow: false)
+    }
+
+    func installShallowHead(_ prepared: V2ValidatedInitialGraph, scope: V2LocalWorkScope) throws {
+        guard prepared.graph.snapshots.count == 1 else { throw SyncV2StoreError.invalidSnapshot }
+        try installPreparedGraph(prepared, scope: scope, shallow: true)
+    }
+
+    func installShallowHead(_ graph: V2RemoteSnapshotGraph, scope: V2LocalWorkScope) async throws {
+        let prepared = try await Self.prepareInitialGraph(graph)
+        try installShallowHead(prepared, scope: scope)
+    }
+
+    private func installPreparedGraph(
+        _ prepared: V2ValidatedInitialGraph,
+        scope: V2LocalWorkScope,
+        shallow: Bool
     ) throws {
-        let inboxID = graph.inboxID.uuidString.lowercased()
-        guard let batch = try query(
-            """
-            SELECT work_id,document_id,document_created_at,server_instance_id,
-                   protocol_epoch,account_id,account_fence,snapshot_id,
-                   expected_current_snapshot_id,expected_local_generation,
-                   expected_remote_head_snapshot_id,expected_remote_head_generation,
-                   state,manifest_bytes
-            FROM inbox_batches WHERE inbox_id=?
-            """,
-            [.text(inboxID)]
-        ).first,
-            batch[0].text == graph.workID.description,
-            batch[1].text == anchor.documentID.description,
-            batch[2].text == anchor.createdAt,
-            batch[3].text == binding.serverInstanceID,
-            batch[4].int64 == binding.protocolEpoch,
-            batch[5].text == binding.accountID,
-            batch[6].text == binding.accountFence,
-            batch[7].blob == graph.headSnapshotID.bytes,
-            batch[8].blob == graph.expectedCurrentSnapshotID?.bytes,
-            batch[9].int64 == graph.expectedLocalGeneration,
-            batch[10].blob == graph.expectedRemoteHead?.snapshotID.bytes,
-            batch[11].int64 == graph.expectedRemoteHead?.generation,
-            ["staged", "verified", "adopted"].contains(batch[12].text ?? ""),
-            try batch[13].blob == graphSnapshot(
-                graph.headSnapshotID,
-                in: graph
-            ).manifestBytes else {
-            throw SyncV2StoreError.invalidSnapshot
-        }
-        let storedSnapshots = try query(
-            """
-            SELECT snapshot_id,manifest_bytes,is_head FROM inbox_snapshots
-            WHERE inbox_id=? ORDER BY snapshot_id
-            """,
-            [.text(inboxID)]
-        )
-        let expectedSnapshots = graph.snapshots.sorted {
-            $0.snapshotId.rawValue < $1.snapshotId.rawValue
-        }
-        guard storedSnapshots.count == expectedSnapshots.count else {
-            throw SyncV2StoreError.invalidSnapshot
-        }
-        for (row, snapshot) in zip(storedSnapshots, expectedSnapshots) {
-            guard row[0].blob == snapshot.snapshotIDBytes,
-                  row[1].blob == snapshot.manifestBytes,
-                  row[2].int64 == (snapshot.snapshotId == graph.headSnapshotID ? 1 : 0) else {
-                throw SyncV2StoreError.invalidSnapshot
-            }
-        }
-        let objects = try graphObjectUnion(graph)
-        let storedObjects = try query(
-            """
-            SELECT object_id,byte_count,bytes FROM inbox_objects
-            WHERE inbox_id=? ORDER BY object_id
-            """,
-            [.text(inboxID)]
-        )
-        let expectedObjects = objects.sorted { $0.key.rawValue < $1.key.rawValue }
-        guard storedObjects.count == expectedObjects.count else {
-            throw SyncV2StoreError.invalidSnapshot
-        }
-        for (row, object) in zip(storedObjects, expectedObjects) {
-            guard row[0].blob == object.key.bytes,
-                  row[1].int64 == Int64(object.value.count),
-                  row[2].blob == object.value else {
-                throw SyncV2StoreError.invalidSnapshot
-            }
-        }
-        try attestInboxClosure(graph)
-    }
-
-    func attestInboxClosure(_ graph: V2RemoteSnapshotGraph) throws {
-        let rows = try query(
-            """
-            SELECT snapshot_id,entity_key,object_id,byte_count,content_type
-            FROM inbox_closure WHERE inbox_id=?
-            ORDER BY snapshot_id,entity_key
-            """,
-            [.text(graph.inboxID.uuidString.lowercased())]
-        )
-        let entries = graph.snapshots.flatMap { snapshot in
-            snapshot.manifest.entries.map { (snapshot.snapshotId, $0) }
-        }.sorted {
-            ($0.0.rawValue, $0.1.entityKey) < ($1.0.rawValue, $1.1.entityKey)
-        }
-        guard rows.count == entries.count else { throw SyncV2StoreError.invalidSnapshot }
-        for (row, pair) in zip(rows, entries) {
-            guard row[0].blob == pair.0.bytes,
-                  row[1].text == pair.1.entityKey,
-                  row[2].blob == pair.1.objectId.bytes,
-                  row[3].int64 == Int64(pair.1.byteCount),
-                  row[4].text == pair.1.contentType.rawValue else {
-                throw SyncV2StoreError.invalidSnapshot
-            }
-        }
-    }
-
-    // Atomic graph installation keeps its validation and writes in one routine.
-    // swiftlint:disable:next function_body_length
-    func adoptGraphTransaction(
-        _ graph: V2RemoteSnapshotGraph,
-        expectedConflict: V2ServerResolutionRequest?,
-        binding: V2AccountBinding
-    ) throws {
-        try requireNotDeleting(graph.workID)
-        let anchor = try validateGraph(graph)
-        try validateGraphParents(graph)
-        let inboxID = graph.inboxID.uuidString.lowercased()
-        guard try inboxState(inboxID: graph.inboxID, binding: binding) == "verified",
-              let current = try scopedWorkRow(
-                  workID: graph.workID,
-                  scope: .bound(binding)
-              ),
-              current[1].text == anchor.documentID.description,
-              current[5].text == anchor.createdAt,
-              current[3].blob == graph.expectedCurrentSnapshotID?.bytes,
-              current[2].int64 == graph.expectedLocalGeneration else {
+        let graph = prepared.graph
+        let anchor = prepared.anchor
+        guard case let .bound(binding) = scope,
+              graph.expectedCurrentSnapshotID == nil, graph.expectedLocalGeneration == 0 else {
             throw SyncV2StoreError.staleCAS
-        }
-        if let expectedConflict {
-            try validateExactConflict(expectedConflict, binding: binding)
-        } else {
-            try validateOrdinaryAdoption(
-                workID: graph.workID,
-                current: current,
-                binding: binding
-            )
-        }
-        if let previous = current[3].blob {
-            let previousID: SnapshotID
-            do { previousID = try SnapshotID(rawValue: previous.hexString) }
-            catch { throw SyncV2StoreError.invalidSnapshot }
-            try insertHistory(
-                workID: graph.workID,
-                snapshotID: previousID,
-                reason: "preRemoteAdoption",
-                pinned: true,
-                generation: graph.expectedLocalGeneration
-            )
-        }
-        for snapshot in try topologicalSnapshots(graph) {
-            try Task.checkCancellation()
-            try insertValidatedEncoded(snapshot, workID: graph.workID, verifiedRemote: true)
         }
         try Task.checkCancellation()
-        let next = graph.expectedLocalGeneration + 1
-        try exec(
-            """
-            UPDATE works SET current_snapshot_id=?,local_generation=?
-            WHERE work_id=? AND local_generation=?
-              AND current_snapshot_id IS ?
-            """,
-            [
-                .blob(graph.headSnapshotID.bytes), .int(next),
-                .text(graph.workID.description), .int(graph.expectedLocalGeneration),
-                graph.expectedCurrentSnapshotID.map { .blob($0.bytes) } ?? .null
-            ]
-        )
-        guard try changes() == 1 else { throw SyncV2StoreError.staleCAS }
-        try insertHistory(
-            workID: graph.workID,
-            snapshotID: graph.headSnapshotID,
-            reason: "remoteAdoption",
-            pinned: false,
-            generation: next
-        )
-        if let head = graph.expectedRemoteHead {
-            try validateMonotonicHead(workID: graph.workID, newHead: head)
-            try applyRemoteHead(head, workID: graph.workID)
-        }
-        if let expectedConflict {
-            try exec(
-                """
-                UPDATE sync_intents SET status='parked'
-                WHERE work_id=? AND source_snapshot_id=?
-                  AND source_generation=? AND status='pending'
-                  AND server_instance_id=? AND protocol_epoch=?
-                  AND account_id=? AND account_fence=?
-                """,
-                [
-                    .text(graph.workID.description),
-                    .blob(expectedConflict.localSnapshotID.bytes),
-                    .int(expectedConflict.sourceGeneration)
-                ] + binding.values
-            )
-            try exec(
-                """
-                UPDATE conflicts SET state='resolved'
-                WHERE work_id=? AND conflict_id=? AND current_revision=?
-                  AND source_generation=? AND state='active'
-                  AND server_instance_id=? AND protocol_epoch=?
-                  AND account_id=? AND account_fence=?
-                """,
-                [
-                    .text(graph.workID.description),
-                    .text(expectedConflict.conflictID.uuidString.lowercased()),
-                    .int(expectedConflict.revision),
-                    .int(expectedConflict.sourceGeneration)
-                ] + binding.values
-            )
-            guard try changes() == 1 else {
-                throw SyncV2StoreError.staleConflictAction
+        try inTransaction {
+            try deletionRepository.requireNotDeleting(graph.workID)
+            if let work = try workRepository.scopedWorkRow(workID: graph.workID, scope: scope) {
+                guard work.localGeneration == 0, work.currentSnapshotID == nil,
+                      work.documentID == anchor.documentID.description,
+                      work.documentCreatedAt == anchor.createdAt,
+                      work.syncLane == V2SyncLane.normal.rawValue else { throw SyncV2StoreError.staleCAS }
+            } else {
+                guard try !workRepository.workExists(workID: graph.workID) else {
+                    throw SyncV2StoreError.accountMismatch
+                }
+                try workRepository.insertWork(workID: graph.workID, documentID: anchor.documentID,
+                                              documentCreatedAt: anchor.createdAt, lane: .normal, scope: scope)
             }
-            try parkBlockedPublishIntent(workID: graph.workID, binding: binding)
+            guard try conflictRepository.activeConflictRow(workID: graph.workID, binding: binding) == nil,
+                  try outboxRepository.hasNoPendingOrSealedIntents(workID: graph.workID) else {
+                throw SyncV2StoreError.staleCAS
+            }
+            if !shallow {
+                try inboxRepository.validateGraphParents(graph)
+            }
+            for snapshot in try inboxRepository.topologicalSnapshots(graph) {
+                try Task.checkCancellation()
+                try workRepository.insertValidatedEncoded(snapshot, workID: graph.workID, verifiedRemote: shallow)
+            }
+            try Task.checkCancellation()
+            try workRepository.installInitialHeadInTransaction(graph: graph)
+            try workRepository.insertHistory(workID: graph.workID, snapshotID: graph.headSnapshotID,
+                                             reason: "remoteAdoption", pinned: false, generation: 1)
+            if let head = graph.expectedRemoteHead {
+                try outboxRepository.validateMonotonicHead(workID: graph.workID, newHead: head)
+                try outboxRepository.applyRemoteHead(head, workID: graph.workID)
+            }
+            if shallow {
+                try inboxRepository.beginBackfillInTransaction(graph: graph, binding: binding)
+            }
+            guard try accountRepository.bindingIsActive(workID: graph.workID, binding: binding) else {
+                throw SyncV2StoreError.accountMismatch
+            }
+            // Cancellation during the final metadata writes must still roll back.
+            try Task.checkCancellation()
         }
-        try exec(
-            "UPDATE inbox_batches SET state='adopted' WHERE inbox_id=? AND state='verified'",
-            [.text(inboxID)]
-        )
-        guard try changes() == 1 else { throw SyncV2StoreError.inboxNotFound }
+    }
+}
+
+public extension LocalSyncV2Store {
+    func remoteHeadForConflict(
+        _ conflict: V2ConflictCandidate,
+        scope: V2LocalWorkScope
+    ) throws -> V2RemoteHead {
+        try inboxRepository.remoteHeadForConflict(conflict, scope: scope)
     }
 
-    private func validateOrdinaryAdoption(
+    func conflictInboxID(_ conflict: V2ConflictCandidate) throws -> UUID {
+        try inboxRepository.conflictInboxID(conflict)
+    }
+
+    func pendingServerAdoption(
         workID: WorkID,
-        current: [SQLiteValue],
-        binding: V2AccountBinding
-    ) throws {
-        guard try activeConflictRow(workID: workID, binding: binding) == nil else {
-            throw SyncV2StoreError.staleConflictAction
-        }
-        if let bytes = current[3].blob,
-           try isUnpromotedLeaf(workID: workID, snapshotID: SnapshotID(rawValue: bytes.hexString)) {
-            throw SyncV2StoreError.staleCAS
-        }
-        guard current[6].text == V2SyncLane.normal.rawValue,
-              try query(
-                  """
-                  SELECT 1 FROM sync_intents
-                  WHERE work_id=? AND status IN ('pending','sealed') LIMIT 1
-                  """,
-                  [.text(workID.description)]
-              ).isEmpty else {
-            throw SyncV2StoreError.staleCAS
-        }
+        scope: V2LocalWorkScope
+    ) throws -> V2PendingServerAdoption? {
+        try inboxRepository.pendingServerAdoption(workID: workID, scope: scope)
     }
 
-    func finalizeConflictRemoteGraphTransaction(
-        _ graph: V2RemoteSnapshotGraph,
-        request: V2ServerResolutionRequest,
-        binding: V2AccountBinding
-    ) throws {
-        _ = try validateGraph(graph)
-        try validateGraphParents(graph)
-        guard graph.workID == request.workID,
-              graph.headSnapshotID == request.remoteSnapshotID,
-              graph.expectedCurrentSnapshotID == request.localSnapshotID,
-              graph.expectedLocalGeneration == request.sourceGeneration,
-              graph.expectedRemoteHead == request.expectedRemoteHead,
-              request.expectedRemoteHead.snapshotID == request.remoteSnapshotID,
-              try inboxState(inboxID: graph.inboxID, binding: binding) == "verified" else { throw SyncV2StoreError.staleConflictAction }
-        let active = try requireConflict(
-            workID: request.workID,
-            conflictID: request.conflictID,
-            revision: request.revision,
-            generation: request.sourceGeneration,
-            local: request.localSnapshotID,
-            remote: request.remoteSnapshotID,
-            scope: .bound(binding)
-        )
-        guard try conflictInbox(active) == graph.inboxID,
-              let current = try scopedWorkRow(
-                  workID: request.workID,
-                  scope: .bound(binding)
-              ),
-              let currentGeneration = current[2].int64 else {
+    func adoptPendingServerResolution(
+        workID: WorkID,
+        inboxID: UUID,
+        scope: V2LocalWorkScope
+    ) throws -> V2OpenResult {
+        guard case let .bound(binding) = scope,
+              let pending = try inboxRepository.pendingServerAdoption(workID: workID, scope: scope),
+              pending.inboxID == inboxID else {
+            throw SyncV2StoreError.staleCAS
+        }
+        let graph = try inboxRepository.loadInboxGraph(inboxID: inboxID, binding: binding)
+        guard let remoteHead = graph.expectedRemoteHead else {
+            throw SyncV2StoreError.invalidRemoteHead
+        }
+        guard let active = try conflictRepository.activeConflict(
+            workID: workID,
+            scope: scope
+        ) else {
             throw SyncV2StoreError.staleConflictAction
         }
-        let exactSource = currentGeneration == request.sourceGeneration &&
-            current[3].blob == request.localSnapshotID.bytes
-        if exactSource {
-            try adoptGraphTransaction(
-                graph,
-                expectedConflict: request,
+        let request = V2ServerResolutionRequest(
+            workID: workID,
+            conflictID: pending.conflictID,
+            revision: pending.conflictRevision,
+            sourceGeneration: active.sourceGeneration,
+            localSnapshotID: active.localSnapshotID,
+            remoteSnapshotID: graph.headSnapshotID,
+            inboxID: inboxID,
+            expectedRemoteHead: remoteHead
+        )
+        try inTransaction {
+            let exactSource = pending.expectedLocalGeneration == active.sourceGeneration &&
+                pending.expectedCurrentSnapshotID == active.localSnapshotID
+            if exactSource {
+                try inboxRepository.adoptGraphTransaction(graph, expectedConflict: request, binding: binding)
+            } else {
+                try inboxRepository.finalizeConflictRemoteGraphTransaction(
+                    graph,
+                    request: request,
+                    binding: binding
+                )
+            }
+        }
+        return try workRepository.open(workID: workID, scope: scope)
+    }
+}
+
+public extension LocalSyncV2Store {
+    /// Adopts a verified remote descendant after proving that it already
+    /// contains the exact still-pending local checkpoint.
+    func adoptInboxSubsumingPendingIntent(
+        inboxID: UUID,
+        intentID: UUID,
+        scope: V2LocalWorkScope
+    ) throws {
+        guard case let .bound(binding) = scope else {
+            throw SyncV2StoreError.accountMismatch
+        }
+        try inTransaction {
+            if try inboxRepository.subsumptionWasApplied(
+                inboxID: inboxID,
+                intentID: intentID,
+                binding: binding
+            ) {
+                return
+            }
+            let graph = try inboxRepository.loadInboxGraph(inboxID: inboxID, binding: binding)
+            guard try inboxRepository.inboxState(inboxID: inboxID, binding: binding) == "verified" else {
+                throw SyncV2StoreError.inboxNotFound
+            }
+            _ = try inboxRepository.validateGraph(graph)
+            try inboxRepository.validateGraphParents(graph)
+            let intent = try inboxRepository.pendingSubsumptionIntent(
+                intentID: intentID,
+                graph: graph,
                 binding: binding
             )
-            return
+            guard intent.snapshotID != graph.headSnapshotID,
+                  try conflictRepository.graphHead(graph, containsAncestor: intent.snapshotID) else {
+                throw SyncV2StoreError.staleCAS
+            }
+            try inboxRepository.acknowledgeSubsumedIntent(intent, binding: binding)
+            try inboxRepository.adoptGraphTransaction(graph, expectedConflict: nil, binding: binding)
+            try inboxRepository.recordSubsumption(
+                intent,
+                inboxID: inboxID,
+                remoteHead: inboxRepository.requiredRemoteHead(graph),
+                binding: binding
+            )
         }
-        guard currentGeneration > request.sourceGeneration else {
-            throw SyncV2StoreError.staleConflictAction
-        }
+    }
+}
 
-        for snapshot in try topologicalSnapshots(graph) {
-            try insertEncoded(snapshot, workID: request.workID)
+public struct V2PendingFastForward: Hashable, Sendable {
+    public let inboxID: UUID
+    public let snapshotID: SnapshotID
+    public let generation: Int64
+}
+
+public extension LocalSyncV2Store {
+    /// A verified ancestor receipt, or a verified descendant of already
+    /// received current content, can authorize this Inbox across restart.
+    /// No editor mutation happens here.
+    func pendingFastForward(workID: WorkID, scope: V2LocalWorkScope) throws -> V2PendingFastForward? {
+        try inboxRepository.pendingFastForward(workID: workID, scope: scope)
+    }
+
+    /// Called only through the application's consumed document gate. The DB
+    /// transaction repeats the generation/pending-intent checks before install.
+    func adoptPendingFastForward(workID: WorkID, inboxID: UUID, scope: V2LocalWorkScope) throws -> V2OpenResult {
+        try inTransaction {
+            guard let pending = try inboxRepository.pendingFastForward(workID: workID, scope: scope),
+                  pending.inboxID == inboxID,
+                  case let .bound(binding) = scope else { throw SyncV2StoreError.staleCAS }
+            let graph = try inboxRepository.loadInboxGraph(inboxID: inboxID, binding: binding)
+            try inboxRepository.adoptGraphTransaction(graph, expectedConflict: nil, binding: binding)
         }
-        try insertHistory(
-            workID: request.workID,
-            snapshotID: request.localSnapshotID,
-            reason: "preRemoteAdoption",
-            pinned: true,
-            generation: request.sourceGeneration
-        )
-        try insertHistory(
-            workID: request.workID,
-            snapshotID: request.remoteSnapshotID,
-            reason: "remoteBaseline",
-            pinned: false,
-            generation: request.sourceGeneration
-        )
-        try exec(
-            """
-            UPDATE sync_intents SET status='parked'
-            WHERE work_id=? AND source_snapshot_id=? AND source_generation=?
-              AND status='pending'
-              AND server_instance_id=? AND protocol_epoch=?
-              AND account_id=? AND account_fence=?
-            """,
-            [
-                .text(request.workID.description),
-                .blob(request.localSnapshotID.bytes),
-                .int(request.sourceGeneration)
-            ] + binding.values
-        )
-        try exec(
-            """
-            UPDATE conflicts SET state='resolved'
-            WHERE work_id=? AND conflict_id=? AND current_revision=?
-              AND source_generation=? AND state='active'
-              AND server_instance_id=? AND protocol_epoch=?
-              AND account_id=? AND account_fence=?
-            """,
-            [
-                .text(request.workID.description),
-                .text(request.conflictID.uuidString.lowercased()),
-                .int(request.revision), .int(request.sourceGeneration)
-            ] + binding.values
-        )
-        guard try changes() == 1 else {
-            throw SyncV2StoreError.staleConflictAction
+        return try workRepository.open(workID: workID, scope: scope)
+    }
+}
+
+public extension LocalSyncV2Store {
+    func backfillState(workID: WorkID) throws -> V2BackfillState? {
+        try inboxRepository.backfillState(workID: workID)
+    }
+
+    func backfillWorkIDs() throws -> [WorkID] {
+        try inboxRepository.backfillWorkIDs()
+    }
+
+    func snapshotAvailability(workID: WorkID, snapshotID: SnapshotID,
+                              scope: V2LocalWorkScope) throws -> V2SnapshotAvailability {
+        try inboxRepository.snapshotAvailability(workID: workID, snapshotID: snapshotID, scope: scope)
+    }
+
+    /// Same account/fence restart is idempotent. Foreign accounts remain parked
+    /// through the existing account binding; they cannot mutate this journal.
+    func resumeBackfill(workID: WorkID, binding: V2AccountBinding, manual: Bool = false) throws -> V2BackfillState? {
+        try inTransaction {
+            try deletionRepository.requireNotDeleting(workID)
+            guard let state = try inboxRepository.backfillState(workID: workID) else { return nil }
+            guard state.binding.accountID == binding.accountID,
+                  state.binding.serverInstanceID == binding.serverInstanceID,
+                  state.binding.protocolEpoch == binding.protocolEpoch,
+                  try accountRepository.bindingIsActive(workID: workID, binding: binding) else {
+                throw SyncV2StoreError.accountMismatch
+            }
+            guard state.status == .running || state.status == .paused || (manual && state.status == .failed) else {
+                return nil
+            }
+            if state.binding != binding {
+                try inboxRepository.resetBackfillFenceInTransaction(workID: workID, binding: binding)
+            }
+            try inboxRepository.setBackfillStatus(workID: workID, binding: binding, status: .running)
+            return try inboxRepository.backfillState(workID: workID)
         }
-        try parkBlockedPublishIntent(workID: request.workID, binding: binding)
-        try exec(
-            "UPDATE inbox_batches SET state='adopted' WHERE inbox_id=? AND state='verified'",
-            [.text(graph.inboxID.uuidString.lowercased())]
+    }
+
+    func setBackfillStatus(
+        workID: WorkID,
+        binding: V2AccountBinding,
+        status: V2BackfillStatus,
+        failureCode: String? = nil
+    ) throws {
+        try inboxRepository.setBackfillStatus(
+            workID: workID,
+            binding: binding,
+            status: status,
+            failureCode: failureCode
         )
-        guard try changes() == 1 else { throw SyncV2StoreError.inboxNotFound }
-        try validateMonotonicHead(
-            workID: request.workID,
-            newHead: request.expectedRemoteHead
-        )
-        try applyRemoteHead(request.expectedRemoteHead, workID: request.workID)
+    }
+
+    func applyBackfillPage(_ page: V2BackfillPage, workID: WorkID, binding: V2AccountBinding,
+                           root: SnapshotID, expectedCursor: String?) async throws {
+        try Task.checkCancellation()
+        let validation = Task.detached { try SnapshotValidator.validateGraphObjects(page.snapshots) }
+        try await withTaskCancellationHandler {
+            try await validation.value
+        } onCancel: { validation.cancel() }
+        try Task.checkCancellation()
+        let began = ContinuousClock.now
+        try inTransaction {
+            try deletionRepository.requireNotDeleting(workID)
+            guard try accountRepository.bindingIsActive(workID: workID, binding: binding),
+                  let state = try inboxRepository.backfillState(workID: workID), state.binding == binding,
+                  state.rootSnapshotID == root, state.resumeCursor == expectedCursor,
+                  state.status == .running else { throw SyncV2StoreError.staleCAS }
+            let anchor = try workRepository.backfillRootDocumentObject(root: root)
+            try inboxRepository.validateBackfillBudget(page.snapshots, workID: workID)
+            var received: Int64 = 0
+            var seen = Set<SnapshotID>()
+            for snapshot in page.snapshots {
+                try Task.checkCancellation()
+                guard seen.insert(snapshot.snapshotId).inserted,
+                      snapshot.snapshotId == SnapshotID(data: snapshot.manifestBytes),
+                      snapshot.manifest.workId == workID,
+                      !snapshot.manifest.parentSnapshotIds.contains(snapshot.snapshotId),
+                      Set(snapshot.objects.keys) == Set(snapshot.manifest.entries.map(\.objectId)),
+                      snapshot.manifest.entries.first(where: { $0.entityKey == "work/document" })?.objectId
+                      .bytes == anchor else {
+                    throw SyncV2StoreError.invalidSnapshot
+                }
+                let existing = try inboxRepository.hasSnapshot(workID: workID, snapshotID: snapshot.snapshotId)
+                // Children precede parents. Existing ancestors can replay after a
+                // fence change, but unrelated existing local snapshots cannot.
+                guard try inboxRepository.isBoundary(workID: workID, snapshotID: snapshot.snapshotId) ||
+                    (existing && inboxRepository.isAncestorOfBackfillRoot(
+                        snapshot.snapshotId,
+                        workID: workID,
+                        root: root
+                    )) else {
+                    throw SyncV2StoreError.invalidSnapshot
+                }
+                try workRepository.insertValidatedEncoded(snapshot, workID: workID, verifiedRemote: true)
+                if !existing {
+                    received += 1
+                }
+            }
+            guard try !page.terminal || !inboxRepository.hasBoundaries(workID: workID) else {
+                throw SyncV2StoreError.invalidSnapshot
+            }
+            try inboxRepository.recordBackfillPageInTransaction(page, workID: workID, received: received)
+            try Task.checkCancellation()
+        }
+        lastBackfillWriteDuration = began.duration(to: .now)
+        executor.registeredAncestorCache = nil
+    }
+}
+
+public extension LocalSyncV2Store {
+    func backfillObject(_ entry: SnapshotEntry, workID: WorkID, binding: V2AccountBinding) throws -> Data? {
+        try inboxRepository.backfillObject(entry, workID: workID, binding: binding)
+    }
+}
+
+public extension LocalSyncV2Store {
+    func backfillProgressNote(workID: WorkID) throws -> String? {
+        try inboxRepository.backfillProgressNote(workID: workID)
     }
 }

@@ -51,7 +51,9 @@ struct BoundedCommandRecoveryTests {
         #expect(calls.allSatisfy { sealedCommand($0)?.command.canonicalBytes == command.canonicalBytes })
         let store = try LocalSyncV2Store(root: config.localRoot.url, policy: .openExisting)
         #expect(try await store.quarantinedCommandReason(workID: workID, scope: productionScope) == "unexpected")
-        #expect(try await store.query("SELECT COUNT(*) FROM legacy_command_recovery WHERE consumed=0").first?[0].int64 == 0)
+        #expect(try await store.query(
+            "SELECT COUNT(*) FROM legacy_command_recovery WHERE consumed=0"
+        ).first?.scalar.int64 == 0)
         await store.close()
     }
 

@@ -223,7 +223,24 @@ NovelCore ← NovelSyncV2（canonical JSON / SealedCommand / Snapshot検証） �
 | R-05 | done（gateは意味差を保持） | 共有`SyncSessionController`が`OperationContext.isCurrent`、open/prefetch/reprojectionの所有権、認証leaseとscope照合を担当。iOS独自outcome enumを共有typed resultへ置換。両gateには実際のmarked-text状態を渡す。下記の意味差があるためgate本体は統合しない |
 | R-06 | done（pass A） | `wake(reason:)`とApplication所有のforeground確認を使用 |
 | R-07 | done | remote readは`SyncV2RemoteReads`へ直接接続し、Kernelの5つの中継を削除。`LibraryProvider`は`library()`のみ。HTTP clientは読取専用`SnapshotCache`と別の`HistoryBackfillPersistence`を受け取り、具体的Storeを保持しない。backfillのpage/cursor transactionは維持 |
-| R-08 | deferred | R-03〜R-07の境界検証を優先。共有connection/transaction上のrepository分割とCommandValidationの型付きrow化は次のpassへ。checkpoint/installのtransaction・SQL・schemaは今回変更しない |
+| R-08 | done（pass A / B） | pass Aの型付きrowを維持し、pass Bで内部Outbox / Inbox / Conflict / Account / Deletion / Work repositoryへ分割。公開actorは`LocalSyncV2Store`のまま。全repositoryが単一`SQLiteExecutor`を共有し、checkpoint・install/adopt・acknowledgement・account transition・deletionのtransaction開始はStoreが所有。SQL・schema/migration・wire/receiptは変更なし |
+
+**R-08の境界**：Storeは公開APIとtransactionの調整を担当し、repositoryはactor・connectionを追加しない。`SQLiteExecutor.swift`がconnection、statement cache、query/exec/changes、既存の`BEGIN IMMEDIATE`→COMMIT/ROLLBACKを所有する。ネストは従来どおりBEGINで失敗し、rollback失敗も隠さない。schemaの移行判断と順序は`Schema.swift`に残し、CSQLite呼出しだけを`SQLiteExecutor+Schema.swift`へ移した。削除のFK順序・trigger復元とaccount退役の複数table更新は、順序を保ったhelperとして残す。repositoryのtransaction helperはStoreの開いたtransactionを使い、単独更新の既存autocommitを変えない。
+
+**R-08の検証（ローカルCLI）**：repositoryごとのStoreテスト137件に加え、共有rollback・ネスト拒否の2件を追加し最終139件成功。Applicationは179件中178件成功、空Keychainの1件が`.status(-50)`で失敗し、pass Aでも同じ失敗を確認した。公開メソッド署名105個、transaction開始箇所41個、SQLを含む文字列リテラルの比較は一致。SwiftFormat・D-076・D-090は成功、SwiftLintは同じ規則で109件→66件の未解消指摘。`check.sh`はSwiftマクロ実行のsandbox制限で停止したため、全検証・iOS build・実機受入の完了は主張しない。
+
+R-08でStoreが保持する複数repository／複数tableのtransaction境界（helper経由を含む）：
+
+| 操作 | Store側の入口・transaction所有者 |
+| --- | --- |
+| ローカル確定・複製 | `bootstrap`、`checkpoint`→`commitCheckpointTransaction` / `commitNoChangeCheckpoint`、`prepareExplicitAccountClone`、`promoteCurrentLeaf` |
+| remote取込・adoption | `stageRemote` / `stageRemoteGraph`→`stageValidatedGraph`、`installInitialGraph` / `installShallowHead`→`installPreparedGraph`、`adoptInbox`、`adoptPendingServerResolution`、`adoptInboxSubsumingPendingIntent`、`adoptPendingFastForward`、`resumeBackfill`、`applyBackfillPage` |
+| Outbox・receipt・復旧 | `seal`→`persistSealedCommand`、`acknowledge`、`retryUnacknowledgedCommands`、`requestSynchronization`、`requestAutomaticSynchronization`、`replanRejectedPublish`、`persistUploadTransfer`、`quarantineUpload` |
+| 競合・restore | `appendConflict`、`appendConflictFromVerifiedInbox`、`prepareUseDevice`、`prepareKeepBoth`→`persistKeepBothReservation`、`prepareRestore`→`persistRestore` / `persistLocalRestore` |
+| account・削除 | `rebindWork`、`transitionAccountScopes`、`parkWork`、`prepareWorkDeletion`、`completeWorkDeletion` |
+| 明示import | `commitMigration`、`quarantineMigration`。ledgerの発見・backup・stage・verifyも従来の個別transactionを維持 |
+
+`appendConflict`のstage→verify→appendや、`prepareKeepBothResolution`の予約確定後のintent作成など、元から別段階だったtransaction／autocommitは統合しない。事前検証をtransaction内へ移す変更も行わない。
 
 **保持したplatform差**：Mac gateは1つのarmed boundaryを持ち、明示disarmと検証失敗でもarmを解除する。Production gateはWorkIDごとのarmを持ち、token消費時にarm存在を条件にせず、失敗時のarm保持も異なる。これを同一化すると拒否・再試行の挙動が変わるため両実装を維持する。またremote-only取消はMacが即時所有権解除、iOSが非協調taskの終了待ちという既存の差を、共有controllerの明示policyとして残した。account tokenの比較項目も各platformの既存型を維持する。
 

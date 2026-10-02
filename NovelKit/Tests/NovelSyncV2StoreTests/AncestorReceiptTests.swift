@@ -12,8 +12,8 @@ struct AncestorReceiptTests {
         let store = fixture.store
         let rows = try await store.query("SELECT remote_snapshot_id,remote_generation FROM snapshot_remote_equivalents")
         if previouslyApplied {
-            #expect(rows.first?[0].blob == fixture.local.snapshotID.bytes)
-            #expect(rows.first?[1].int64 == 839)
+            #expect(try rows.first?.blob("remote_snapshot_id") == fixture.local.snapshotID.bytes)
+            #expect(try rows.first?.int64("remote_generation") == 839)
         } else {
             #expect(rows.isEmpty)
         }
@@ -44,12 +44,14 @@ struct AncestorReceiptTests {
                 .query("SELECT remote_snapshot_id,remote_generation FROM snapshot_remote_equivalents")
             #expect(rows.count == (previouslyApplied ? 1 : 0))
             if previouslyApplied {
-                #expect(rows.first?[0].blob == fixture.local.snapshotID.bytes)
-                #expect(rows.first?[1].int64 == 839)
+                #expect(try rows.first?.blob("remote_snapshot_id") == fixture.local.snapshotID.bytes)
+                #expect(try rows.first?.int64("remote_generation") == 839)
             }
             #expect(try await reopened.workSummary(workID: fixture.workID, scope: scopeA)
                 .acknowledgedHeadGeneration == 842)
-            #expect(try await reopened.query("SELECT COUNT(*) FROM sealed_commands WHERE status='completed'").first?[0]
+            #expect(try await reopened.query(
+                "SELECT COUNT(*) FROM sealed_commands WHERE status='completed'"
+            ).first?.scalar
                 .int64 == (previouslyApplied ? 2 : 1))
             await reopened.close()
         }
@@ -58,13 +60,17 @@ struct AncestorReceiptTests {
     @Test func acknowledgedCurrentDoesNotQueueAnotherIntent() async throws {
         let fixture = try await makeAncestorReceiptFixture(previouslyApplied: true)
         defer { try? FileManager.default.removeItem(at: fixture.root) }
-        let before = try await fixture.store.query("SELECT COUNT(*) FROM sync_intents").first?[0].int64
+        let before = try await fixture.store.query(
+            "SELECT COUNT(*) FROM sync_intents"
+        ).first?.scalar.int64
         try await fixture.store.requestSynchronization(workID: fixture.workID, scope: scopeA)
         #expect(try await !fixture.store.requestAutomaticSynchronization(
             workID: fixture.workID, scope: scopeA, expectedLocalGeneration: fixture.local.generation
         ))
         try await fixture.store.promoteUnpromotedLeaves(scope: scopeA)
-        #expect(try await fixture.store.query("SELECT COUNT(*) FROM sync_intents").first?[0].int64 == before)
+        #expect(try await fixture.store.query(
+            "SELECT COUNT(*) FROM sync_intents"
+        ).first?.scalar.int64 == before)
         #expect(try await fixture.store.pendingIntents(scope: scopeA).isEmpty)
         await fixture.store.close()
     }
@@ -164,7 +170,7 @@ extension AncestorReceiptTests {
         #expect(try await store.receiptReadback(commandID: command.commandId, scope: scopeA) == nil)
         #expect(try await store.workSummary(workID: fixture.workID, scope: scopeA).acknowledgedHeadGeneration == 842)
         #expect(try await store.pendingIntents(scope: scopeA).first?.status == "sealed")
-        #expect(try await store.query("SELECT remote_snapshot_id FROM snapshot_remote_equivalents").first?[0]
+        #expect(try await store.query("SELECT remote_snapshot_id FROM snapshot_remote_equivalents").first?.scalar
             .blob == fixture.head.snapshotID.bytes)
         await store.close()
     }
@@ -176,8 +182,8 @@ extension AncestorReceiptTests {
         defer { try? FileManager.default.removeItem(at: fixture.root) }
         let rows = try await fixture.store
             .query("SELECT remote_snapshot_id,remote_generation FROM snapshot_remote_equivalents")
-        #expect(rows.first?[0].blob == fixture.local.snapshotID.bytes)
-        #expect(rows.first?[1].int64 == 842)
+        #expect(try rows.first?.blob("remote_snapshot_id") == fixture.local.snapshotID.bytes)
+        #expect(try rows.first?.int64("remote_generation") == 842)
         await fixture.store.close()
     }
 }
