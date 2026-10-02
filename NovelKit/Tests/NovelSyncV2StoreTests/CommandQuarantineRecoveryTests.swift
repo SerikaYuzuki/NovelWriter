@@ -54,7 +54,7 @@ func upgradeRecoversEveryCommandWithoutChangingBytes(name: String, manualFirst: 
     let restarted = try LocalSyncV2Store(root: root, policy: .openExisting)
     try await restarted.retryUnacknowledgedCommands(scope: scope)
     #expect(try await restarted.allSealedCommands(scope: scope, workID: workID).first?.lifecycle == .quarantined)
-    #expect(try await restarted.query("SELECT consumed FROM legacy_command_recovery").first?[0].int64 == 1)
+    #expect(try await restarted.query("SELECT consumed FROM legacy_command_recovery").first?.scalar.int64 == 1)
     for _ in 0 ..< 2 {
         try await restarted.requestSynchronization(workID: workID, scope: scope)
         let manual = try #require(await restarted.allSealedCommands(scope: scope, workID: workID).first)

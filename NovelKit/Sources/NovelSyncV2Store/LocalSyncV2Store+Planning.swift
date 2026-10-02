@@ -8,7 +8,7 @@ public extension LocalSyncV2Store {
         guard let row = try scopedWorkRow(workID: workID, scope: scope) else {
             throw SyncV2StoreError.workNotFound
         }
-        guard let anchor = row[5].text,
+        guard let anchor = row.documentCreatedAt,
               ISO8601DateFormatter().date(from: anchor) != nil else {
             throw SyncV2StoreError.invalidSnapshot
         }
@@ -23,7 +23,8 @@ public extension LocalSyncV2Store {
         workID: WorkID
     ) throws -> [V2SealedCommandRecord] {
         guard case let .bound(binding) = scope else { throw SyncV2StoreError.accountMismatch }
-        return try query(
+        return try queryRows(
+            SealedCommandRow.self,
             Self.commandSelect + """
              WHERE work_id=? AND server_instance_id=? AND protocol_epoch=?
                AND account_id=? AND account_fence=?
@@ -42,7 +43,8 @@ public extension LocalSyncV2Store {
         generation: Int64
     ) throws -> [V2SealedCommandRecord] {
         guard case let .bound(binding) = scope else { throw SyncV2StoreError.accountMismatch }
-        return try query(
+        return try queryRows(
+            SealedCommandRow.self,
             Self.commandSelect + """
              WHERE work_id=? AND server_instance_id=? AND protocol_epoch=?
                AND account_id=? AND account_fence=? AND status='completed'

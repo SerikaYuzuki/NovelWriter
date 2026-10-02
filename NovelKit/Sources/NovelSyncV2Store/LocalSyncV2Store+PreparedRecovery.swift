@@ -8,19 +8,20 @@ extension LocalSyncV2Store {
         scope: V2LocalWorkScope
     ) throws -> V2CheckpointResult? {
         var sql = """
-        SELECT intent_id,source_snapshot_id,source_generation
+        SELECT \(PreparedIntentRow.columns)
         FROM sync_intents
         WHERE work_id=? AND kind='conflictResolution' AND status='pending'
         """
         sql += scope.intentPredicateSQL
         sql += " ORDER BY source_generation DESC LIMIT 1"
-        guard let row = try query(
+        guard let row = try queryRows(
+            PreparedIntentRow.self,
             sql,
             [.text(request.workID.description)] + scope.intentPredicateValues
         ).first,
-            let intentID = row[0].text.flatMap(UUID.init(uuidString:)),
-            let decisionBytes = row[1].blob,
-            let generation = row[2].int64,
+            let intentID = row.intentID.flatMap(UUID.init(uuidString:)),
+            let decisionBytes = row.sourceSnapshotID,
+            let generation = row.sourceGeneration,
             generation == request.sourceGeneration + 1 else { return nil }
         let decision = try SnapshotID(rawValue: decisionBytes.hexString)
         let parents = try snapshotParents(
@@ -50,11 +51,10 @@ extension LocalSyncV2Store {
         WHERE work_id=? AND kind='restore' AND status='pending'
         """
         scopeSQL += scope.intentPredicateSQL
-        guard let row = try query(
+        guard let row = try queryRows(
+            PreparedRestoreRow.self,
             """
-            SELECT r.restore_id,r.result_snapshot_id,r.intent_id,
-                   i.source_generation,r.expected_remote_head_snapshot_id,
-                   r.expected_remote_head_generation
+            SELECT \(PreparedRestoreRow.columns)
             FROM restore_records r JOIN sync_intents i ON i.intent_id=r.intent_id
             WHERE r.work_id=? AND r.selected_snapshot_id=?
               AND i.source_snapshot_id=r.result_snapshot_id
@@ -73,10 +73,10 @@ extension LocalSyncV2Store {
                 .text(request.workID.description)
             ] + scope.intentPredicateValues
         ).first,
-            let restoreID = row[0].text.flatMap(UUID.init(uuidString:)),
-            let resultBytes = row[1].blob,
-            let intentID = row[2].text.flatMap(UUID.init(uuidString:)),
-            let generation = row[3].int64,
+            let restoreID = row.restoreID.flatMap(UUID.init(uuidString:)),
+            let resultBytes = row.resultSnapshotID,
+            let intentID = row.intentID.flatMap(UUID.init(uuidString:)),
+            let generation = row.sourceGeneration,
             generation == request.expectedLocalGeneration + 1 else { return nil }
         return try V2RestorePreparationResult(
             restoreID: restoreID,
@@ -87,20 +87,24 @@ extension LocalSyncV2Store {
                 noChanges: false
             ),
             expectedRemoteHead: Self.head(
-                snapshot: row[4].blob,
-                generation: row[5].int64
+                snapshot: row.expectedRemoteHeadSnapshotID,
+                generation: row.expectedRemoteHeadGeneration
             )
         )
     }
 
     func acknowledgedHead(workID: WorkID) throws -> V2RemoteHead? {
-        guard let row = try query(
+        guard let row = try queryRows(
+            AcknowledgedHeadRow.self,
             """
-            SELECT acknowledged_head_snapshot_id,acknowledged_head_generation
+            SELECT \(AcknowledgedHeadRow.columns)
             FROM works WHERE work_id=?
             """,
             [.text(workID.description)]
         ).first else { throw SyncV2StoreError.workNotFound }
-        return try Self.head(snapshot: row[0].blob, generation: row[1].int64)
+        return try Self.head(
+            snapshot: row.acknowledgedHeadSnapshotID,
+            generation: row.acknowledgedHeadGeneration
+        )
     }
 }

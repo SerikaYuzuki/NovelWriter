@@ -4,7 +4,7 @@ import NovelSyncV2
 public extension LocalSyncV2Store {
     func hasUnpromotedLeaf(workID: WorkID, scope: V2LocalWorkScope) throws -> Bool {
         guard let row = try scopedWorkRow(workID: workID, scope: scope),
-              let bytes = row[3].blob else { return false }
+              let bytes = row.currentSnapshotID else { return false }
         return try isUnpromotedLeaf(workID: workID, snapshotID: SnapshotID(rawValue: bytes.hexString))
     }
 
@@ -28,14 +28,15 @@ extension LocalSyncV2Store {
     /// The distinct local reason also provides an upgrade boundary: every old
     /// occurrence (including legacy autosaves) remains a stable checkpoint.
     func isUnpromotedLeaf(workID: WorkID, snapshotID: SnapshotID) throws -> Bool {
-        let rows = try query(
+        let rows = try queryRows(
+            HistoryPromotionRow.self,
             """
-            SELECT reason,pinned FROM history_occurrences
+            SELECT \(HistoryPromotionRow.columns) FROM history_occurrences
             WHERE work_id=? AND snapshot_id=?
             """, [.text(workID.description), .blob(snapshotID.bytes)]
         )
         return !rows.isEmpty && rows.allSatisfy {
-            $0[0].text == "autosaveLeaf" && $0[1].int64 == 0
+            $0.reason == "autosaveLeaf" && $0.pinned == 0
         }
     }
 
@@ -45,7 +46,7 @@ extension LocalSyncV2Store {
             "SELECT parent_snapshot_id FROM snapshot_parents WHERE work_id=? AND snapshot_id=?",
             [.text(workID.description), .blob(current.bytes)]
         ).map { row in
-            guard let bytes = row[0].blob else { throw SyncV2StoreError.invalidSnapshot }
+            guard let bytes = try row.scalar.blob else { throw SyncV2StoreError.invalidSnapshot }
             return try SnapshotID(rawValue: bytes.hexString)
         }
     }
@@ -56,8 +57,8 @@ extension LocalSyncV2Store {
     ) throws -> Bool {
         try requireNotDeleting(workID)
         guard let row = try scopedWorkRow(workID: workID, scope: scope),
-              let bytes = row[3].blob, let generation = row[2].int64,
-              row[6].text == V2SyncLane.normal.rawValue else { return false }
+              let bytes = row.currentSnapshotID, let generation = row.localGeneration,
+              row.syncLane == V2SyncLane.normal.rawValue else { return false }
         let current = try SnapshotID(rawValue: bytes.hexString)
         guard try isUnpromotedLeaf(workID: workID, snapshotID: current),
               try !isAcknowledgedContent(workID: workID, snapshotID: current, scope: scope) else { return false }
@@ -79,9 +80,9 @@ extension LocalSyncV2Store {
     /// The intent still has to match exactly in validatePublish; arbitrary old
     /// snapshots and a newer protected checkpoint are not accepted here.
     func publishSourceIsCurrentOrStableParent(
-        command: SealedCommand, workID: WorkID, work: [SQLiteValue]
+        command: SealedCommand, workID: WorkID, work: WorkRow
     ) throws -> Bool {
-        guard let bytes = work[3].blob, let generation = work[2].int64 else { return false }
+        guard let bytes = work.currentSnapshotID, let generation = work.localGeneration else { return false }
         let current = try SnapshotID(rawValue: bytes.hexString)
         if generation == command.sourceGeneration, current == command.sourceSnapshotId {
             return true
@@ -97,7 +98,7 @@ public extension LocalSyncV2Store {
     func isAcknowledgedContent(workID: WorkID, snapshotID: SnapshotID, scope: V2LocalWorkScope) throws -> Bool {
         guard case let .bound(binding) = scope,
               let row = try scopedWorkRow(workID: workID, scope: scope),
-              let headGeneration = row[4].int64 else { return false }
+              let headGeneration = row.acknowledgedHeadGeneration else { return false }
         return try !query("""
             SELECT 1 FROM snapshot_remote_equivalents e
             WHERE e.work_id=? AND e.local_snapshot_id=? AND e.remote_snapshot_id=e.local_snapshot_id

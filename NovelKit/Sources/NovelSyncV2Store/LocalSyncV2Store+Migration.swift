@@ -112,11 +112,10 @@ public struct V2MigrationCommitResult: Sendable {
 
 public extension LocalSyncV2Store {
     func migrationLedgerEntry(migrationID: UUID) throws -> V2MigrationLedgerEntry? {
-        try query(
+        try queryRows(
+            MigrationLedgerRow.self,
             """
-            SELECT migration_id,account_id,source_kind,source_digest,
-                   export_backup_marker,adoption_marker,quarantined_from_state,
-                   evidence_bytes,state
+            SELECT \(MigrationLedgerRow.columns)
             FROM migration_ledger WHERE migration_id=?
             """,
             [.text(migrationID.uuidString.lowercased())]
@@ -127,11 +126,10 @@ public extension LocalSyncV2Store {
         sourceKind: String,
         sourceDigest: Data
     ) throws -> V2MigrationLedgerEntry? {
-        try query(
+        try queryRows(
+            MigrationLedgerRow.self,
             """
-            SELECT migration_id,account_id,source_kind,source_digest,
-                   export_backup_marker,adoption_marker,quarantined_from_state,
-                   evidence_bytes,state
+            SELECT \(MigrationLedgerRow.columns)
             FROM migration_ledger WHERE source_kind=? AND source_digest=?
             """,
             [.text(sourceKind), .blob(sourceDigest)]
@@ -231,10 +229,10 @@ public extension LocalSyncV2Store {
                 throw SyncV2StoreError.staleCAS
             }
             if let existing = try migrationStagingBatch(migrationID: input.migrationID) {
-                guard existing[0].text == input.proposedWorkID.description,
-                      existing[1].text == input.proposedDocumentID.description,
-                      existing[2].blob == input.snapshotID.bytes,
-                      existing[3].blob == input.manifestBytes else {
+                guard existing.proposedWorkID == input.proposedWorkID.description,
+                      existing.proposedDocumentID == input.proposedDocumentID.description,
+                      existing.snapshotID == input.snapshotID.bytes,
+                      existing.manifestBytes == input.manifestBytes else {
                     throw SyncV2StoreError.invalidSnapshot
                 }
                 try attestMigrationStagingObjects(migrationID: input.migrationID, objects: input.objects)
@@ -266,10 +264,11 @@ public extension LocalSyncV2Store {
                   current.state == .staged || current.state == .verified else {
                 throw SyncV2StoreError.staleCAS
             }
-            guard let batch = try query(
-                "SELECT state,verified_account_id FROM migration_staging_batches WHERE migration_id=?",
+            guard let batch = try queryRows(
+                MigrationVerificationRow.self,
+                "SELECT \(MigrationVerificationRow.columns) FROM migration_staging_batches WHERE migration_id=?",
                 [.text(migrationID.uuidString.lowercased())]
-            ).first, batch[0].text == "staged" || batch[0].text == "verified" else {
+            ).first, batch.state == "staged" || batch.state == "verified" else {
                 throw SyncV2StoreError.staleCAS
             }
             let storedObjects = try migrationStagingObjects(migrationID: migrationID)
@@ -303,10 +302,11 @@ public extension LocalSyncV2Store {
 }
 
 extension LocalSyncV2Store {
-    private func migrationStagingBatch(migrationID: UUID) throws -> [SQLiteValue]? {
-        try query(
+    private func migrationStagingBatch(migrationID: UUID) throws -> MigrationStagingRow? {
+        try queryRows(
+            MigrationStagingRow.self,
             """
-            SELECT proposed_work_id,proposed_document_id,snapshot_id,manifest_bytes,state
+            SELECT \(MigrationStagingRow.columns)
             FROM migration_staging_batches WHERE migration_id=?
             """,
             [.text(migrationID.uuidString.lowercased())]
@@ -344,14 +344,15 @@ extension LocalSyncV2Store {
     }
 
     func migrationStagingObjects(migrationID: UUID) throws -> [ObjectID: Data] {
-        let rows = try query(
-            "SELECT object_id,byte_count,bytes FROM migration_staging_objects WHERE migration_id=? ORDER BY object_id",
+        let rows = try queryRows(
+            ObjectBytesRow.self,
+            "SELECT \(ObjectBytesRow.columns) FROM migration_staging_objects WHERE migration_id=? ORDER BY object_id",
             [.text(migrationID.uuidString.lowercased())]
         )
         var result: [ObjectID: Data] = [:]
         for row in rows {
-            guard let idBytes = row[0].blob, let bytes = row[2].blob,
-                  row[1].int64 == Int64(bytes.count),
+            guard let idBytes = row.objectID, let bytes = row.bytes,
+                  row.byteCount == Int64(bytes.count),
                   let objectID = try? ObjectID(rawValue: idBytes.hexString),
                   objectID.bytes == idBytes else {
                 throw SyncV2StoreError.invalidSnapshot
@@ -370,17 +371,17 @@ extension LocalSyncV2Store {
         }
     }
 
-    private static func migrationLedgerEntry(_ row: [SQLiteValue]) -> V2MigrationLedgerEntry {
-        let state = V2MigrationLedgerState(rawValue: row[8].text ?? "")!
+    private static func migrationLedgerEntry(_ row: MigrationLedgerRow) -> V2MigrationLedgerEntry {
+        let state = V2MigrationLedgerState(rawValue: row.state ?? "")!
         return V2MigrationLedgerEntry(
-            migrationID: UUID(uuidString: row[0].text ?? "")!,
-            accountID: row[1].text,
-            sourceKind: row[2].text ?? "",
-            sourceDigest: row[3].blob ?? Data(),
-            exportBackupMarker: row[4].text,
-            adoptionMarker: row[5].text,
-            quarantinedFromState: row[6].text.flatMap(V2MigrationLedgerState.init(rawValue:)),
-            evidenceBytes: row[7].blob ?? Data(),
+            migrationID: UUID(uuidString: row.migrationID ?? "")!,
+            accountID: row.accountID,
+            sourceKind: row.sourceKind ?? "",
+            sourceDigest: row.sourceDigest ?? Data(),
+            exportBackupMarker: row.exportBackupMarker,
+            adoptionMarker: row.adoptionMarker,
+            quarantinedFromState: row.quarantinedFromState.flatMap(V2MigrationLedgerState.init(rawValue:)),
+            evidenceBytes: row.evidenceBytes ?? Data(),
             state: state
         )
     }

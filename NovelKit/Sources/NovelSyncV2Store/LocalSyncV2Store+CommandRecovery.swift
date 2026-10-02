@@ -24,7 +24,7 @@ extension LocalSyncV2Store {
               let work = try scopedWorkRow(workID: workID, scope: scope) else {
             throw SyncV2StoreError.accountMismatch
         }
-        guard work[6].text == V2SyncLane.normal.rawValue,
+        guard work.syncLane == V2SyncLane.normal.rawValue,
               try workDeletion(workID: workID) == nil else { return }
         // Automatic recovery also requires an unconsumed upgrade candidate.
         // Manual sync may retry a new response-less unexpected failure.
@@ -45,7 +45,9 @@ extension LocalSyncV2Store {
           AND NOT EXISTS (SELECT 1 FROM upload_transfers u WHERE u.command_id=c.command_id)
         """, [.text(workID.description)] + binding.values + [.int(legacyOnly ? 1 : 0)])
         for row in rows {
-            guard let raw = row[0].text, let id = UUID(uuidString: raw) else { throw SyncV2StoreError.invalidCommand }
+            guard let raw = try row.scalar.text, let id = UUID(uuidString: raw) else {
+                throw SyncV2StoreError.invalidCommand
+            }
             try transitionCommand(commandID: id, scope: scope, from: ["quarantined"], to: "sealed")
         }
     }

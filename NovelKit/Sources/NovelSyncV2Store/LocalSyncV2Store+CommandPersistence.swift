@@ -263,7 +263,7 @@ extension LocalSyncV2Store {
         if let existing = try query(
             "SELECT remote_snapshot_id FROM snapshot_remote_equivalents WHERE work_id=? AND local_snapshot_id=?",
             [.text(record.workID.description), .blob(localSnapshot.bytes)]
-        ).first, existing[0].blob != head.snapshotID.bytes {
+        ).first, try existing.scalar.blob != head.snapshotID.bytes {
             throw SyncV2StoreError.invalidAcknowledgement
         }
         try exec(
@@ -313,9 +313,10 @@ extension LocalSyncV2Store {
     private func acknowledgeLinkedIntent(_ record: V2SealedCommandRecord) throws {
         guard [.publish, .resolveDevice, .resolveServer, .cloneWork, .restore].contains(record.kind),
               let intentID = record.intentID else { return }
-        guard let intent = try query(
+        guard let intent = try queryRows(
+            IntentSourceRow.self,
             """
-            SELECT source_snapshot_id,source_generation,status
+            SELECT \(IntentSourceRow.columns)
             FROM sync_intents
             WHERE intent_id=? AND work_id=? AND server_instance_id=?
               AND protocol_epoch=? AND account_id=? AND account_fence=?
@@ -325,9 +326,9 @@ extension LocalSyncV2Store {
                 .text(record.workID.description)
             ] + record.binding.values
         ).first,
-            let intentSnapshot = intent[0].blob,
-            let intentGeneration = intent[1].int64,
-            intent[2].text == "sealed" else {
+            let intentSnapshot = intent.sourceSnapshotID,
+            let intentGeneration = intent.sourceGeneration,
+            intent.status == "sealed" else {
             throw SyncV2StoreError.invalidAcknowledgement
         }
         try exec(

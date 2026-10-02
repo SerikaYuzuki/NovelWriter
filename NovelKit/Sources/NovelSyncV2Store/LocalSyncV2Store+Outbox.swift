@@ -7,7 +7,8 @@ public extension LocalSyncV2Store {
         workID: WorkID
     ) throws -> [V2SealedCommandRecord] {
         guard case let .bound(binding) = scope else { throw SyncV2StoreError.accountMismatch }
-        return try query(
+        return try queryRows(
+            SealedCommandRow.self,
             Self.commandSelect + """
              WHERE work_id=? AND server_instance_id=? AND protocol_epoch=?
                AND account_id=? AND account_fence=? ORDER BY rowid
@@ -83,7 +84,10 @@ public extension LocalSyncV2Store {
             values.append(.text(workID.description))
         }
         sql += " ORDER BY rowid"
-        return try query(sql, values).map(Self.commandRecord)
+        return try queryRows(
+            SealedCommandRow.self,
+            sql, values
+        ).map(Self.commandRecord)
     }
 
     @discardableResult
@@ -168,13 +172,10 @@ public extension LocalSyncV2Store {
         guard try commandBindingIsActive(commandID: commandID, binding: binding) else {
             throw SyncV2StoreError.accountMismatch
         }
-        guard let row = try query(
+        guard let row = try queryRows(
+            ReceiptRow.self,
             """
-            SELECT terminal_result,response_status,canonical_response,
-                   account_matched,command_digest_matched,resource_matched,
-                   head_matched,state_matched,
-                   remote_head_snapshot_id,remote_head_generation,
-                   clone_head_snapshot_id,clone_head_generation
+            SELECT \(ReceiptRow.columns)
             FROM remote_receipts
             WHERE account_id=? AND command_id=? AND work_id IN (
               SELECT work_id FROM sealed_commands

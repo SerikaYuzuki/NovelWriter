@@ -60,9 +60,10 @@ extension LocalSyncV2Store {
         graph: V2RemoteSnapshotGraph,
         binding: V2AccountBinding
     ) throws -> PendingSubsumptionIntent {
-        guard let row = try query(
+        guard let row = try queryRows(
+            IntentValidationRow.self,
             """
-            SELECT work_id,source_snapshot_id,source_generation,kind,status
+            SELECT \(IntentValidationRow.columns)
             FROM sync_intents
             WHERE intent_id=? AND scope_kind='bound'
               AND server_instance_id=? AND protocol_epoch=?
@@ -70,11 +71,11 @@ extension LocalSyncV2Store {
             """,
             [.text(intentID.uuidString.lowercased())] + binding.values
         ).first,
-            row[0].text == graph.workID.description,
-            let snapshotBytes = row[1].blob,
-            let generation = row[2].int64,
-            ["checkpoint", "latest"].contains(row[3].text ?? ""),
-            row[4].text == "pending",
+            row.workID == graph.workID.description,
+            let snapshotBytes = row.sourceSnapshotID,
+            let generation = row.sourceGeneration,
+            ["checkpoint", "latest"].contains(row.kind ?? ""),
+            row.status == "pending",
             graph.expectedCurrentSnapshotID?.bytes == snapshotBytes,
             graph.expectedLocalGeneration == generation,
             try query(

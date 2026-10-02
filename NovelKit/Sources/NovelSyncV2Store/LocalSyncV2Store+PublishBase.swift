@@ -21,23 +21,29 @@ extension LocalSyncV2Store {
             return acknowledged
         }
         let binding = try activeBinding(workID: workID)
-        let rows = try query(ancestry + """
-            SELECT r.remote_head_snapshot_id,r.remote_head_generation
+        let rows = try queryRows(
+            ReceiptHeadRow.self,
+            ancestry + """
+            SELECT \(ReceiptHeadRow.qualifiedColumns("r"))
             FROM remote_receipts r
             JOIN sealed_commands c ON c.account_id=r.account_id AND c.command_id=r.command_id
             JOIN ancestry a ON a.snapshot_id=r.remote_head_snapshot_id
             WHERE r.work_id=? AND c.server_instance_id=? AND c.protocol_epoch=?
               AND c.account_id=? AND c.account_fence=? AND c.receipt_verified=1
             UNION
-            SELECT i.snapshot_id,i.expected_remote_head_generation
+            SELECT \(InboxHeadRow.qualifiedColumns("i"))
             FROM inbox_batches i JOIN ancestry a ON a.snapshot_id=i.snapshot_id
             WHERE i.work_id=? AND i.server_instance_id=? AND i.protocol_epoch=?
               AND i.account_id=? AND i.account_fence=? AND i.state IN ('verified','adopted')
             ORDER BY 2 DESC LIMIT 1
             """, prefix + [.text(workID.description)] + binding.values +
-                [.text(workID.description)] + binding.values)
+                [.text(workID.description)] + binding.values
+        )
         guard let row = rows.first,
-              let head = try Self.head(snapshot: row[0].blob, generation: row[1].int64) else {
+              let head = try Self.head(
+                  snapshot: row.remoteHeadSnapshotID,
+                  generation: row.remoteHeadGeneration
+              ) else {
             if acknowledged == nil {
                 return nil
             }
@@ -58,7 +64,7 @@ public extension LocalSyncV2Store {
                   let intentID = record.intentID,
                   try receiptReadback(commandID: commandID, scope: scope) == nil,
                   let row = try scopedWorkRow(workID: record.workID, scope: scope),
-                  let current = row[3].blob, let generation = row[2].int64 else {
+                  let current = row.currentSnapshotID, let generation = row.localGeneration else {
                 throw SyncV2StoreError.invalidCommand
             }
             let command = try SealedCommand.decodeCanonical(record.canonicalRequest)

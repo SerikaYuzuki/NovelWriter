@@ -10,7 +10,7 @@ public extension LocalSyncV2Store {
           AND status IN ('pending','sealed','quarantined','parked')
           AND NOT EXISTS (SELECT 1 FROM intent_subsumptions s WHERE s.intent_id=sync_intents.intent_id)
         """ + scope.intentPredicateSQL, [.text(workID.description)] + scope.intentPredicateValues)
-        guard let text = rows.first?[0].text else { return nil }
+        guard let text = try rows.first?.scalar.text else { return nil }
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         if let value = formatter.date(from: text) {

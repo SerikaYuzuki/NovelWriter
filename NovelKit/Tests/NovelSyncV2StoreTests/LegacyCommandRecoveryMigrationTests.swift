@@ -30,7 +30,7 @@ extension LocalSyncV2Store {
     await store.close()
     for _ in 0 ..< 3 {
         let reopened = try LocalSyncV2Store(root: root, policy: .openExisting)
-        #expect(try await reopened.query("SELECT COUNT(*) FROM legacy_command_recovery").first?[0].int64 == 0)
+        #expect(try await reopened.query("SELECT COUNT(*) FROM legacy_command_recovery").first?.scalar.int64 == 0)
         try await reopened.retryUnacknowledgedCommands(scope: scopeA)
         #expect(try await reopened.allSealedCommands(scope: scopeA, workID: workID).first?.lifecycle == .quarantined)
         await reopened.close()

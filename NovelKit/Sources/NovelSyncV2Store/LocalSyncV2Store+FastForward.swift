@@ -14,7 +14,7 @@ public extension LocalSyncV2Store {
     func pendingFastForward(workID: WorkID, scope: V2LocalWorkScope) throws -> V2PendingFastForward? {
         guard case let .bound(binding) = scope,
               let current = try scopedWorkRow(workID: workID, scope: scope),
-              let bytes = current[3].blob, let generation = current[2].int64,
+              let bytes = current.currentSnapshotID, let generation = current.localGeneration,
               try activeConflict(workID: workID, scope: scope) == nil,
               try pendingIntents(scope: scope, workID: workID).isEmpty else { return nil }
         var candidates = try query(
@@ -49,9 +49,11 @@ public extension LocalSyncV2Store {
               AND snapshot_id<>expected_current_snapshot_id
               AND expected_remote_head_generation>=?
             ORDER BY expected_remote_head_generation DESC
-            """, [.text(workID.description)] + binding.values + [.blob(bytes), .int(generation), .int(current[4].int64 ?? 0)])
+            """, [.text(workID.description)] + binding.values + [
+                .blob(bytes), .int(generation), .int(current.acknowledgedHeadGeneration ?? 0)
+            ])
         }
-        guard let id = candidates.first?[0].text.flatMap(UUID.init(uuidString:)) else { return nil }
+        guard let id = try candidates.first?.scalar.text.flatMap(UUID.init(uuidString:)) else { return nil }
         let snapshot = try SnapshotID(rawValue: bytes.hexString)
         let graph = try loadInboxGraph(inboxID: id, binding: binding)
         guard try graphHead(graph, containsAncestor: snapshot) else { throw SyncV2StoreError.invalidSnapshot }

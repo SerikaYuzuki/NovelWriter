@@ -24,10 +24,10 @@ extension LocalSyncV2Store {
                 workID: request.workID,
                 scope: scope
             ),
-                latest[1].text == DocumentID(request.document.id).description,
-                latest[2].int64 == request.expectedGeneration,
-                latest[3].blob == current.bytes,
-                latest[5].text == anchor else {
+                latest.documentID == DocumentID(request.document.id).description,
+                latest.localGeneration == request.expectedGeneration,
+                latest.currentSnapshotID == current.bytes,
+                latest.documentCreatedAt == anchor else {
                 throw SyncV2StoreError.generationMismatch
             }
             let promoted = if request.reason != .autosave {

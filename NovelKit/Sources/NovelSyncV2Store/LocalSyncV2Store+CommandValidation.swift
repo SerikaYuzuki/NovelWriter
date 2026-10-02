@@ -6,14 +6,12 @@ private struct CommandValidationContext {
     let payload: SyncV2CommandPayload
     let workID: WorkID
     let intentID: UUID?
-    let work: [SQLiteValue]
+    let work: WorkRow
 }
 
 extension LocalSyncV2Store {
     static let commandSelect = """
-    SELECT command_id,work_id,intent_id,account_id,account_fence,
-           server_instance_id,protocol_epoch,command_kind,canonical_request,
-           request_digest,source_snapshot_id,source_generation,status
+    SELECT \(SealedCommandRow.columns)
     FROM sealed_commands
     """
 
@@ -21,7 +19,8 @@ extension LocalSyncV2Store {
         commandID: UUID,
         binding: V2AccountBinding
     ) throws -> V2SealedCommandRecord? {
-        try query(
+        try queryRows(
+            SealedCommandRow.self,
             Self.commandSelect + """
              WHERE command_id=? AND server_instance_id=? AND protocol_epoch=?
                AND account_id=? AND account_fence=?
@@ -30,26 +29,26 @@ extension LocalSyncV2Store {
         ).first.map(Self.commandRecord)
     }
 
-    static func commandRecord(_ row: [SQLiteValue]) throws -> V2SealedCommandRecord {
-        guard let commandID = row[0].text.flatMap(UUID.init(uuidString:)),
-              let work = row[1].text,
-              let account = row[3].text,
-              let fence = row[4].text,
-              let server = row[5].text,
-              let epoch = row[6].int64,
-              let kind = row[7].text,
-              let request = row[8].blob,
-              let digest = row[9].blob,
-              let snapshot = row[10].blob,
-              let generation = row[11].int64,
-              let statusText = row[12].text,
+    static func commandRecord(_ row: SealedCommandRow) throws -> V2SealedCommandRecord {
+        guard let commandID = row.commandID.flatMap(UUID.init(uuidString:)),
+              let work = row.workID,
+              let account = row.accountID,
+              let fence = row.accountFence,
+              let server = row.serverInstanceID,
+              let epoch = row.protocolEpoch,
+              let kind = row.commandKind,
+              let request = row.canonicalRequest,
+              let digest = row.requestDigest,
+              let snapshot = row.sourceSnapshotID,
+              let generation = row.sourceGeneration,
+              let statusText = row.status,
               let status = V2SealedCommandLifecycle(rawValue: statusText) else {
             throw SyncV2StoreError.sqlite("command")
         }
         return try V2SealedCommandRecord(
             commandID: commandID,
             workID: WorkID(uuidString: work),
-            intentID: row[2].text.flatMap(UUID.init(uuidString:)),
+            intentID: row.intentID.flatMap(UUID.init(uuidString:)),
             binding: V2AccountBinding(
                 accountID: account,
                 accountFence: fence,
@@ -148,8 +147,8 @@ extension LocalSyncV2Store {
         snapshotID: SnapshotID,
         generation: Int64
     ) throws {
-        guard context.work[2].int64 == generation,
-              context.work[3].blob == snapshotID.bytes else {
+        guard context.work.localGeneration == generation,
+              context.work.currentSnapshotID == snapshotID.bytes else {
             throw SyncV2StoreError.invalidCommand
         }
     }
@@ -158,7 +157,7 @@ extension LocalSyncV2Store {
         _ context: CommandValidationContext,
         generation: Int64
     ) throws {
-        guard context.work[2].int64.map({ $0 >= generation }) == true else {
+        guard context.work.localGeneration.map({ $0 >= generation }) == true else {
             throw SyncV2StoreError.invalidCommand
         }
     }
@@ -176,20 +175,21 @@ extension LocalSyncV2Store {
             protocolEpoch: context.command.binding.protocolEpoch
         )
         guard let intentID = context.intentID,
-              let intent = try query(
+              let intent = try queryRows(
+                  IntentValidationRow.self,
                   """
-                  SELECT work_id,source_snapshot_id,source_generation,kind,status
+                  SELECT \(IntentValidationRow.columns)
                   FROM sync_intents
                   WHERE intent_id=? AND server_instance_id=? AND protocol_epoch=?
                     AND account_id=? AND account_fence=?
                   """,
                   [.text(intentID.uuidString.lowercased())] + binding.values
               ).first,
-              intent[0].text == context.workID.description,
-              intent[1].blob == snapshotID.bytes,
-              intent[2].int64 == generation,
-              intent[3].text == kind,
-              intent[4].text == "pending" else {
+              intent.workID == context.workID.description,
+              intent.sourceSnapshotID == snapshotID.bytes,
+              intent.sourceGeneration == generation,
+              intent.kind == kind,
+              intent.status == "pending" else {
             throw SyncV2StoreError.invalidCommand
         }
     }
@@ -200,7 +200,7 @@ extension LocalSyncV2Store {
             snapshotID: context.command.sourceSnapshotId,
             generation: context.command.sourceGeneration
         )
-        guard try context.payload.uuid("documentId") == context.work[1].text else {
+        guard try context.payload.uuid("documentId") == context.work.documentID else {
             throw SyncV2StoreError.invalidCommand
         }
     }
@@ -219,7 +219,7 @@ extension LocalSyncV2Store {
             """,
             [.blob(context.command.sourceSnapshotId.bytes), .blob(object.bytes)]
         ).first,
-            row[0].int64 == context.payload.integer("byteCount") else {
+            try row.scalar.int64 == context.payload.integer("byteCount") else {
             throw SyncV2StoreError.invalidCommand
         }
     }
@@ -383,10 +383,10 @@ extension LocalSyncV2Store {
             context.payload.integer("expectedLocalGeneration") ==
             context.command.sourceGeneration,
             let intentID = context.intentID,
-            let restore = try query(
+            let restore = try queryRows(
+                RestoreExpectedHeadRow.self,
                 """
-                SELECT expected_remote_head_snapshot_id,
-                       expected_remote_head_generation
+                SELECT \(RestoreExpectedHeadRow.columns)
                 FROM restore_records
                 WHERE intent_id=? AND result_snapshot_id=?
                   AND pre_restore_snapshot_id=? AND selected_snapshot_id=?
@@ -399,8 +399,8 @@ extension LocalSyncV2Store {
                 ]
             ).first,
             try Self.head(
-                snapshot: restore[0].blob,
-                generation: restore[1].int64
+                snapshot: restore.expectedRemoteHeadSnapshotID,
+                generation: restore.expectedRemoteHeadGeneration
             ) == context.payload.remoteHead("expectedRemoteHead") else {
             throw SyncV2StoreError.invalidCommand
         }
@@ -442,7 +442,7 @@ extension LocalSyncV2Store {
                   workID: workID,
                   binding: activeBinding(workID: workID)
               ),
-              let inbox = row[6].text.flatMap(UUID.init(uuidString:)),
+              let inbox = row.remoteInboxID.flatMap(UUID.init(uuidString:)),
               try loadInboxGraph(
                   inboxID: inbox,
                   binding: activeBinding(workID: workID)
@@ -457,44 +457,52 @@ extension LocalSyncV2Store {
         workID: WorkID
     ) throws -> Bool {
         let expected = try payload.remoteHead(key)
-        guard let row = try query(
+        guard let row = try queryRows(
+            AcknowledgedHeadRow.self,
             """
-            SELECT acknowledged_head_snapshot_id,acknowledged_head_generation
+            SELECT \(AcknowledgedHeadRow.columns)
             FROM works WHERE work_id=?
             """,
             [.text(workID.description)]
         ).first else { return false }
-        return try Self.head(snapshot: row[0].blob, generation: row[1].int64) == expected
+        return try Self.head(
+            snapshot: row.acknowledgedHeadSnapshotID,
+            generation: row.acknowledgedHeadGeneration
+        ) == expected
     }
 
     func reservationExpectedHead(
         sourceWorkID: WorkID,
         newWorkID: WorkID
     ) throws -> V2RemoteHead? {
-        guard let row = try query(
+        guard let row = try queryRows(
+            ReservationExpectedHeadRow.self,
             """
-            SELECT expected_original_head_snapshot_id,
-                   expected_original_head_generation
+            SELECT \(ReservationExpectedHeadRow.columns)
             FROM pending_keep_both
             WHERE source_work_id=? AND new_work_id=?
             """,
             [.text(sourceWorkID.description), .text(newWorkID.description)]
         ).first else { return nil }
-        return try Self.head(snapshot: row[0].blob, generation: row[1].int64)
+        return try Self.head(
+            snapshot: row.expectedOriginalHeadSnapshotID,
+            generation: row.expectedOriginalHeadGeneration
+        )
     }
 
     func activeBinding(workID: WorkID) throws -> V2AccountBinding {
-        guard let row = try query(
+        guard let row = try queryRows(
+            ActiveAccountBindingRow.self,
             """
-            SELECT account_id,account_fence,server_instance_id,protocol_epoch
+            SELECT \(ActiveAccountBindingRow.columns)
             FROM account_bindings WHERE work_id=? AND state='bound'
             """,
             [.text(workID.description)]
         ).first,
-            let account = row[0].text,
-            let fence = row[1].text,
-            let server = row[2].text,
-            let epoch = row[3].int64 else {
+            let account = row.accountID,
+            let fence = row.accountFence,
+            let server = row.serverInstanceID,
+            let epoch = row.protocolEpoch else {
             throw SyncV2StoreError.accountMismatch
         }
         return V2AccountBinding(
@@ -507,20 +515,21 @@ extension LocalSyncV2Store {
 
     func validateMonotonicHead(workID: WorkID, newHead: V2RemoteHead?) throws {
         guard let newHead,
-              let row = try query(
+              let row = try queryRows(
+                  AcknowledgedHeadRow.self,
                   """
-                  SELECT acknowledged_head_snapshot_id,acknowledged_head_generation
+                  SELECT \(AcknowledgedHeadRow.columns)
                   FROM works WHERE work_id=?
                   """,
                   [.text(workID.description)]
               ).first,
-              let oldGeneration = row[1].int64 else { return }
+              let oldGeneration = row.acknowledgedHeadGeneration else { return }
         // A delayed receipt may be older than the already acknowledged head.
         // It remains valid for its exact command/intent, but must not regress
         // the stored remote head. Equal-generation forks are still rejected.
         guard newHead.generation >= oldGeneration else { return }
         if newHead.generation == oldGeneration,
-           row[0].blob != newHead.snapshotID.bytes {
+           row.acknowledgedHeadSnapshotID != newHead.snapshotID.bytes {
             throw SyncV2StoreError.invalidRemoteHead
         }
     }
@@ -537,24 +546,25 @@ extension LocalSyncV2Store {
                 .text(intentID.uuidString.lowercased()),
                 .text(record.workID.description)
             ] + record.binding.values
-        ).first?[0].blob else { throw SyncV2StoreError.invalidAcknowledgement }
+        ).first?.scalar.blob else { throw SyncV2StoreError.invalidAcknowledgement }
         return try SnapshotID(rawValue: bytes.hexString)
     }
 
     func applyRemoteHead(_ head: V2RemoteHead, workID: WorkID) throws {
-        if let row = try query(
+        if let row = try queryRows(
+            AcknowledgedHeadRow.self,
             """
-            SELECT acknowledged_head_snapshot_id,acknowledged_head_generation
+            SELECT \(AcknowledgedHeadRow.columns)
             FROM works WHERE work_id=?
             """,
             [.text(workID.description)]
         ).first {
-            if let oldGeneration = row[1].int64 {
+            if let oldGeneration = row.acknowledgedHeadGeneration {
                 if head.generation < oldGeneration {
                     return
                 }
                 if head.generation == oldGeneration {
-                    guard row[0].blob == head.snapshotID.bytes else {
+                    guard row.acknowledgedHeadSnapshotID == head.snapshotID.bytes else {
                         throw SyncV2StoreError.invalidRemoteHead
                     }
                     return
@@ -618,11 +628,11 @@ extension LocalSyncV2Store {
         )
     }
 
-    static func receipt(commandID: UUID, row: [SQLiteValue]) throws -> V2ReceiptReadback {
-        guard let resultText = row[0].text,
+    static func receipt(commandID: UUID, row: ReceiptRow) throws -> V2ReceiptReadback {
+        guard let resultText = row.terminalResult,
               let result = V2CommandTerminalResult(rawValue: resultText),
-              let status = row[1].int64,
-              let response = row[2].blob else {
+              let status = row.responseStatus,
+              let response = row.canonicalResponse else {
             throw SyncV2StoreError.sqlite("receipt")
         }
         return try V2ReceiptReadback(
@@ -631,14 +641,14 @@ extension LocalSyncV2Store {
             responseStatus: Int(status),
             canonicalResponse: response,
             predicates: V2ReadBackPredicates(
-                accountMatched: row[3].int64 == 1,
-                commandDigestMatched: row[4].int64 == 1,
-                resourceMatched: row[5].int64 == 1,
-                headMatched: row[6].int64 == 1,
-                stateMatched: row[7].int64 == 1
+                accountMatched: row.accountMatched == 1,
+                commandDigestMatched: row.commandDigestMatched == 1,
+                resourceMatched: row.resourceMatched == 1,
+                headMatched: row.headMatched == 1,
+                stateMatched: row.stateMatched == 1
             ),
-            remoteHead: head(snapshot: row[8].blob, generation: row[9].int64),
-            cloneRemoteHead: head(snapshot: row[10].blob, generation: row[11].int64)
+            remoteHead: head(snapshot: row.remoteHeadSnapshotID, generation: row.remoteHeadGeneration),
+            cloneRemoteHead: head(snapshot: row.cloneHeadSnapshotID, generation: row.cloneHeadGeneration)
         )
     }
 

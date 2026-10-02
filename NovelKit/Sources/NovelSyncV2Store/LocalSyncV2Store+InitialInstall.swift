@@ -50,10 +50,10 @@ public extension LocalSyncV2Store {
         try inTransaction {
             try requireNotDeleting(graph.workID)
             if let work = try scopedWorkRow(workID: graph.workID, scope: scope) {
-                guard work[2].int64 == 0, work[3].blob == nil,
-                      work[1].text == anchor.documentID.description,
-                      work[5].text == anchor.createdAt,
-                      work[6].text == V2SyncLane.normal.rawValue else { throw SyncV2StoreError.staleCAS }
+                guard work.localGeneration == 0, work.currentSnapshotID == nil,
+                      work.documentID == anchor.documentID.description,
+                      work.documentCreatedAt == anchor.createdAt,
+                      work.syncLane == V2SyncLane.normal.rawValue else { throw SyncV2StoreError.staleCAS }
             } else {
                 guard try !workExists(workID: graph.workID) else { throw SyncV2StoreError.accountMismatch }
                 try insertWork(workID: graph.workID, documentID: anchor.documentID,

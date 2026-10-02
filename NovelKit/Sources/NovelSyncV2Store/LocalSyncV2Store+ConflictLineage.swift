@@ -107,7 +107,7 @@ extension LocalSyncV2Store {
                     throw SyncV2StoreError.invalidSnapshot
                 }
                 for row in parents {
-                    guard let bytes = row[0].blob else {
+                    guard let bytes = try row.scalar.blob else {
                         throw SyncV2StoreError.invalidSnapshot
                     }
                     try stack.append(SnapshotID(rawValue: bytes.hexString))

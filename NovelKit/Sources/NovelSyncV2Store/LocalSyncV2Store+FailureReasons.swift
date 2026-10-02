@@ -21,7 +21,7 @@ public extension LocalSyncV2Store {
         WHERE c.work_id=? AND c.server_instance_id=? AND c.protocol_epoch=?
           AND c.account_id=? AND c.account_fence=? AND c.status='quarantined'
           AND q.reason LIKE 'command:%' ORDER BY q.created_at LIMIT 1
-        """, [.text(workID.description)] + binding.values).first?[0].text
+        """, [.text(workID.description)] + binding.values).first?.scalar.text
         return reason.map { String($0.dropFirst("command:".count)) }
     }
 }

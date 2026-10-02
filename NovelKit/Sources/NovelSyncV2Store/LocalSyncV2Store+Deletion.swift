@@ -59,23 +59,24 @@ public extension LocalSyncV2Store {
     }
 
     func workDeletion(workID: WorkID) throws -> V2WorkDeletion? {
-        guard let row = try query(
-            "SELECT server_instance_id,protocol_epoch,account_id,account_fence,phase FROM work_deletions WHERE work_id=?",
+        guard let row = try queryRows(
+            WorkDeletionRow.self,
+            "SELECT \(WorkDeletionRow.columns) FROM work_deletions WHERE work_id=?",
             [.text(workID.description)]
         ).first else { return nil }
-        let binding: V2AccountBinding? = if let instance = row[0].text, let epoch = row[1].int64,
-                                            let account = row[2].text, let fence = row[3].text {
+        let binding: V2AccountBinding? = if let instance = row.serverInstanceID, let epoch = row.protocolEpoch,
+                                            let account = row.accountID, let fence = row.accountFence {
             V2AccountBinding(accountID: account, accountFence: fence, serverInstanceID: instance, protocolEpoch: epoch)
         } else {
             nil
         }
-        return V2WorkDeletion(workID: workID, binding: binding, completed: row[4].text == "completed")
+        return V2WorkDeletion(workID: workID, binding: binding, completed: row.phase == "completed")
     }
 
     func workDeletionIDs(completedOnly: Bool = false) throws -> Set<WorkID> {
         let rows = try query("SELECT work_id FROM work_deletions" + (completedOnly ? " WHERE phase='completed'" : ""))
         return try Set(rows.map { row in
-            guard let raw = row[0].text else { throw SyncV2StoreError.invalidLifecycle }
+            guard let raw = try row.scalar.text else { throw SyncV2StoreError.invalidLifecycle }
             return try WorkID(uuidString: raw)
         })
     }
@@ -101,19 +102,22 @@ public extension LocalSyncV2Store {
             }
             // Only this atomic purge may remove immutable graph rows. Restore
             // every trigger before commit; rollback also restores their DDL.
-            let triggers = try query("""
-            SELECT name,sql
-            FROM sqlite_schema
-            WHERE type='trigger'
-              AND name IN ('objects_immutable_delete',
-            'snapshots_immutable_delete',
-            'snapshot_parents_immutable_delete',
-            'snapshot_entries_immutable_delete',
-            'conflict_candidates_immutable_delete',
-            'intent_subsumptions_immutable_delete', 'shallow_boundaries_guard_delete')
-            """)
+            let triggers = try queryRows(
+                SQLiteSchemaRow.self,
+                """
+                SELECT \(SQLiteSchemaRow.columns)
+                FROM sqlite_schema
+                WHERE type='trigger'
+                  AND name IN ('objects_immutable_delete',
+                'snapshots_immutable_delete',
+                'snapshot_parents_immutable_delete',
+                'snapshot_entries_immutable_delete',
+                'conflict_candidates_immutable_delete',
+                'intent_subsumptions_immutable_delete', 'shallow_boundaries_guard_delete')
+                """
+            )
             for trigger in triggers {
-                guard let name = trigger[0].text else { throw SyncV2StoreError.schemaMismatch }
+                guard let name = trigger.name else { throw SyncV2StoreError.schemaMismatch }
                 try exec("DROP TRIGGER \(name)")
             }
             let id: [SQLiteValue] = [.text(deletion.workID.description)]
@@ -124,11 +128,11 @@ public extension LocalSyncV2Store {
             WHERE snapshot_id IN (SELECT snapshot_id
             FROM snapshots
             WHERE work_id=?)
-            """, id).compactMap { $0[0].blob }
+            """, id).compactMap { try $0.scalar.blob }
             let resources = try query(
                 "SELECT DISTINCT object_id FROM work_resources WHERE work_id=? AND object_id IS NOT NULL",
                 id
-            ).compactMap { $0[0].blob }
+            ).compactMap { try $0.scalar.blob }
             try exec("DELETE FROM pending_keep_both WHERE source_work_id=? OR new_work_id=?", id + id)
             for table in ["inbox_closure", "inbox_objects", "inbox_snapshots"] {
                 try exec(
@@ -169,7 +173,7 @@ public extension LocalSyncV2Store {
                 """, [.blob(resource)])
             }
             for trigger in triggers {
-                guard let sql = trigger[1].text else { throw SyncV2StoreError.schemaMismatch }
+                guard let sql = trigger.sql else { throw SyncV2StoreError.schemaMismatch }
                 try exec(sql)
             }
             try exec("UPDATE work_deletions SET phase='completed' WHERE work_id=?", id)
@@ -184,7 +188,7 @@ extension LocalSyncV2Store {
             [.text(workID.description)]
         )
         for row in migrations {
-            guard let migrationID = row[0].text else { throw SyncV2StoreError.invalidLifecycle }
+            guard let migrationID = try row.scalar.text else { throw SyncV2StoreError.invalidLifecycle }
             let args: [SQLiteValue] = [.text(migrationID)]
             try exec("DELETE FROM migration_staging_objects WHERE migration_id=?", args)
             try exec("DELETE FROM migration_staging_batches WHERE migration_id=?", args)

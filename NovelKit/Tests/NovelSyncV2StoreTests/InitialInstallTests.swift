@@ -21,7 +21,9 @@ private func initialGraph() throws -> V2RemoteSnapshotGraph {
     try await store.exec("CREATE TEMP TRIGGER fail_install BEFORE UPDATE OF current_snapshot_id ON works BEGIN SELECT RAISE(ABORT,'injected'); END")
     await #expect(throws: (any Error).self) { try await store.installInitialGraph(graph, scope: scopeA) }
     for table in ["works", "objects", "snapshots", "history_occurrences", "inbox_batches"] {
-        #expect(try await store.query("SELECT COUNT(*) FROM \(table)").first?[0].int64 == 0)
+        #expect(try await store.query(
+            "SELECT COUNT(*) FROM \(table)"
+        ).first?.scalar.int64 == 0)
     }
     try await store.exec("DROP TRIGGER fail_install")
     try await store.installInitialGraph(graph, scope: scopeA)
@@ -79,7 +81,9 @@ func persistedInboxStillRejectsCorruption(version: String) async throws {
     await #expect(throws: SyncV2StoreError.invalidSnapshot) {
         try await store.insertValidatedEncoded(graph.snapshots[0], workID: graph.workID)
     }
-    #expect(try await store.query("SELECT COUNT(*) FROM snapshot_entries WHERE entity_key='work/title'").first?[0].int64 == 0)
+    #expect(try await store.query(
+        "SELECT COUNT(*) FROM snapshot_entries WHERE entity_key='work/title'"
+    ).first?.scalar.int64 == 0)
     await store.close()
 }
 
@@ -103,7 +107,9 @@ func initialInstallCancellationRollsBack() async throws {
     let task = Task { try await store.installInitialGraph(graph, scope: scopeA) }
     await #expect(throws: CancellationError.self) { try await task.value }
     for table in ["works", "objects", "snapshots", "history_occurrences", "inbox_batches"] {
-        #expect(try await store.query("SELECT COUNT(*) FROM \(table)").first?[0].int64 == 0)
+        #expect(try await store.query(
+            "SELECT COUNT(*) FROM \(table)"
+        ).first?.scalar.int64 == 0)
     }
     try await store.exec("DROP TRIGGER cancel_initial_install")
     try await store.installInitialGraph(graph, scope: scopeA)

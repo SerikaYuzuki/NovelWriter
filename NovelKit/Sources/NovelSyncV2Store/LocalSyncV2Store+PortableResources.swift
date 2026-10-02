@@ -68,36 +68,38 @@ extension LocalSyncV2Store {
     }
 
     func loadPortableResources(workID: WorkID) throws -> [PortableResource] {
-        let rows = try query(
+        let rows = try queryRows(
+            WorkResourceRow.self,
             """
-            SELECT path_components,kind,object_id,byte_count
+            SELECT \(WorkResourceRow.columns)
             FROM work_resources WHERE work_id=?
             ORDER BY original_path COLLATE BINARY, kind COLLATE BINARY
             """,
             [.text(workID.description)]
         )
         return try rows.map { row in
-            guard let pathJSON = row[0].text,
-                  let kindText = row[1].text,
+            guard let pathJSON = row.pathComponents,
+                  let kindText = row.kind,
                   let kind = PortableResource.Kind(rawValue: kindText),
                   let path = try? decodePathComponents(pathJSON) else {
                 throw SyncV2StoreError.invalidSnapshot
             }
             switch kind {
             case .directory:
-                guard row[2].blob == nil, row[3].int64 == 0 else {
+                guard row.objectID == nil, row.byteCount == 0 else {
                     throw SyncV2StoreError.invalidSnapshot
                 }
                 return PortableResource(pathComponents: path, kind: kind)
             case .regularFile:
-                guard let objectID = row[2].blob,
-                      let byteCount = row[3].int64,
-                      let bytes = try query(
-                          "SELECT bytes,byte_count FROM resources WHERE object_id=?",
+                guard let objectID = row.objectID,
+                      let byteCount = row.byteCount,
+                      let bytes = try queryRows(
+                          ResourceBytesRow.self,
+                          "SELECT \(ResourceBytesRow.columns) FROM resources WHERE object_id=?",
                           [.blob(objectID)]
                       ).first,
-                      let data = bytes[0].blob,
-                      bytes[1].int64 == byteCount,
+                      let data = bytes.bytes,
+                      bytes.byteCount == byteCount,
                       ObjectID(data: data).bytes == objectID else {
                     throw SyncV2StoreError.invalidSnapshot
                 }
@@ -113,11 +115,12 @@ extension LocalSyncV2Store {
     }
 
     private func upsertPortableResourceObject(objectID: ObjectID, bytes: Data) throws {
-        if let existing = try query(
-            "SELECT byte_count,bytes FROM resources WHERE object_id=?",
+        if let existing = try queryRows(
+            ObjectContentRow.self,
+            "SELECT \(ObjectContentRow.columns) FROM resources WHERE object_id=?",
             [.blob(objectID.bytes)]
         ).first {
-            guard existing[0].int64 == Int64(bytes.count), existing[1].blob == bytes else {
+            guard existing.byteCount == Int64(bytes.count), existing.bytes == bytes else {
                 throw SyncV2StoreError.invalidSnapshot
             }
             return

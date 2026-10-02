@@ -3,25 +3,27 @@ import NovelSyncV2
 
 public extension LocalSyncV2Store {
     func backfillState(workID: WorkID) throws -> V2BackfillState? {
-        guard let row = try query("""
-        SELECT root_snapshot_id,server_instance_id,protocol_epoch,account_id,account_fence,
-          resume_cursor,state,received_snapshots,total_snapshots,failure_code
-        FROM history_backfills WHERE work_id=?
-        """, [.text(workID.description)]).first,
-        let root = row[0].blob, let server = row[1].text, let epoch = row[2].int64,
-        let account = row[3].text, let fence = row[4].text,
-        let status = row[6].text.flatMap(V2BackfillStatus.init(rawValue:)),
-        let received = row[7].int64 else { return nil }
+        guard let row = try queryRows(
+            HistoryBackfillRow.self,
+            """
+            SELECT \(HistoryBackfillRow.columns)
+            FROM history_backfills WHERE work_id=?
+            """, [.text(workID.description)]
+        ).first,
+            let root = row.rootSnapshotID, let server = row.serverInstanceID, let epoch = row.protocolEpoch,
+            let account = row.accountID, let fence = row.accountFence,
+            let status = row.state.flatMap(V2BackfillStatus.init(rawValue:)),
+            let received = row.receivedSnapshots else { return nil }
         return try V2BackfillState(workID: workID, rootSnapshotID: SnapshotID(rawValue: root.hexString),
                                    binding: V2AccountBinding(accountID: account, accountFence: fence,
                                                              serverInstanceID: server, protocolEpoch: epoch),
-                                   resumeCursor: row[5].text, status: status, receivedSnapshots: received,
-                                   totalSnapshots: row[8].int64, failureCode: row[9].text)
+                                   resumeCursor: row.resumeCursor, status: status, receivedSnapshots: received,
+                                   totalSnapshots: row.totalSnapshots, failureCode: row.failureCode)
     }
 
     func backfillWorkIDs() throws -> [WorkID] {
         try query("SELECT work_id FROM history_backfills WHERE state IN ('running','paused') ORDER BY updated_at").map {
-            guard let id = $0[0].text else { throw SyncV2StoreError.invalidLifecycle }
+            guard let id = try $0.scalar.text else { throw SyncV2StoreError.invalidLifecycle }
             return try WorkID(uuidString: id)
         }
     }
@@ -78,7 +80,7 @@ public extension LocalSyncV2Store {
                   state.rootSnapshotID == root, state.resumeCursor == expectedCursor,
                   state.status == .running else { throw SyncV2StoreError.staleCAS }
             let anchor = try query("SELECT object_id FROM snapshot_entries WHERE snapshot_id=? AND entity_key='work/document'",
-                                   [.blob(root.bytes)]).first?[0].blob
+                                   [.blob(root.bytes)]).first?.scalar.blob
             try validateBackfillBudget(page.snapshots, workID: workID)
             var received: Int64 = 0
             var seen = Set<SnapshotID>()
@@ -131,12 +133,15 @@ extension LocalSyncV2Store {
 public extension LocalSyncV2Store {
     func backfillObject(_ entry: SnapshotEntry, workID: WorkID, binding: V2AccountBinding) throws -> Data? {
         guard try bindingIsActive(workID: workID, binding: binding) else { throw SyncV2StoreError.accountMismatch }
-        guard let row = try query("""
-        SELECT o.bytes,o.byte_count FROM objects o WHERE o.object_id=? AND EXISTS (
-          SELECT 1 FROM snapshot_entries e JOIN snapshots s ON s.snapshot_id=e.snapshot_id
-          WHERE s.work_id=? AND e.object_id=o.object_id)
-        """, [.blob(entry.objectId.bytes), .text(workID.description)]).first else { return nil }
-        guard let bytes = row[0].blob, row[1].int64 == Int64(entry.byteCount),
+        guard let row = try queryRows(
+            ResourceBytesRow.self,
+            """
+            SELECT \(ResourceBytesRow.qualifiedColumns("o")) FROM objects o WHERE o.object_id=? AND EXISTS (
+              SELECT 1 FROM snapshot_entries e JOIN snapshots s ON s.snapshot_id=e.snapshot_id
+              WHERE s.work_id=? AND e.object_id=o.object_id)
+            """, [.blob(entry.objectId.bytes), .text(workID.description)]
+        ).first else { return nil }
+        guard let bytes = row.bytes, row.byteCount == Int64(entry.byteCount),
               bytes.count == entry.byteCount, ObjectID(data: bytes) == entry.objectId else { throw SyncV2StoreError.invalidSnapshot }
         return bytes
     }
@@ -163,7 +168,7 @@ public extension LocalSyncV2Store {
           ) AND object_id NOT IN (SELECT object_id FROM snapshot_entries WHERE snapshot_id=?)
         )
         """, [.text(workID.description), .blob(state.rootSnapshotID.bytes), .text(workID.description),
-              .blob(state.rootSnapshotID.bytes)]).first?[0].int64 ?? 0
+              .blob(state.rootSnapshotID.bytes)]).first?.scalar.int64 ?? 0
         return String(format: "古い履歴を取得中 %.1f MB", Double(bytes) / 1_000_000)
     }
 }
@@ -172,7 +177,7 @@ extension LocalSyncV2Store {
     private func validateBackfillBudget(_ snapshots: [EncodedSnapshot], workID: WorkID) throws {
         let existing = try query("""
         SELECT DISTINCT e.object_id FROM snapshot_entries e JOIN snapshots s ON s.snapshot_id=e.snapshot_id WHERE s.work_id=?
-        """, [.text(workID.description)]).compactMap { $0[0].blob }
+        """, [.text(workID.description)]).compactMap { try $0.scalar.blob }
         var objects = Set(existing)
         for snapshot in snapshots {
             for entry in snapshot.manifest.entries {

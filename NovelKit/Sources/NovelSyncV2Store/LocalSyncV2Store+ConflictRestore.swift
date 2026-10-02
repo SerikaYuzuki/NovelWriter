@@ -25,8 +25,8 @@ public extension LocalSyncV2Store {
               let remoteHead = remote.expectedRemoteHead,
               remoteHead.snapshotID == remote.encoded.snapshotId,
               let work = try scopedWorkRow(workID: workID, scope: scope),
-              work[2].int64 == sourceGeneration,
-              work[3].blob == localSnapshotID.bytes else {
+              work.localGeneration == sourceGeneration,
+              work.currentSnapshotID == localSnapshotID.bytes else {
             throw SyncV2StoreError.staleConflictAction
         }
         try stageRemote(remote, scope: scope)
@@ -53,16 +53,16 @@ public extension LocalSyncV2Store {
             throw SyncV2StoreError.workNotFound
         }
         guard let row = try activeConflictRow(workID: workID, binding: binding),
-              let conflict = row[0].text.flatMap(UUID.init(uuidString:)),
-              let revision = row[1].int64,
-              let local = row[3].blob,
-              let remote = row[4].blob,
-              let generation = row[5].int64 else { return nil }
+              let conflict = row.conflictID.flatMap(UUID.init(uuidString:)),
+              let revision = row.currentRevision,
+              let local = row.localSnapshotID,
+              let remote = row.remoteSnapshotID,
+              let generation = row.sourceGeneration else { return nil }
         return try V2ConflictCandidate(
             conflictID: conflict,
             revision: revision,
             workID: workID,
-            baseSnapshotID: row[2].blob.map {
+            baseSnapshotID: row.baseSnapshotID.map {
                 try SnapshotID(rawValue: $0.hexString)
             },
             localSnapshotID: SnapshotID(rawValue: local.hexString),
@@ -116,12 +116,12 @@ public extension LocalSyncV2Store {
             }
             try insertEncoded(decision, workID: request.workID)
             let current = try scopedWorkRow(workID: request.workID, scope: scope)
-            guard let currentGeneration = current?[2].int64,
+            guard let currentGeneration = current?.localGeneration,
                   currentGeneration >= request.sourceGeneration else {
                 throw SyncV2StoreError.staleCAS
             }
             if currentGeneration == request.sourceGeneration {
-                guard current?[3].blob == request.localSnapshotID.bytes else {
+                guard current?.currentSnapshotID == request.localSnapshotID.bytes else {
                     throw SyncV2StoreError.staleCAS
                 }
                 try exec(
@@ -173,7 +173,7 @@ public extension LocalSyncV2Store {
         try validateExactConflict(request, binding: binding)
         guard try inboxState(inboxID: request.inboxID, binding: binding) == "verified",
               let current = try scopedWorkRow(workID: request.workID, scope: scope),
-              (current[2].int64.map { $0 >= request.sourceGeneration } == true) else {
+              (current.localGeneration.map { $0 >= request.sourceGeneration } == true) else {
             throw SyncV2StoreError.staleConflictAction
         }
         let existing = try pendingIntents(scope: scope, workID: request.workID)
@@ -231,7 +231,7 @@ public extension LocalSyncV2Store {
         }
         guard try !workExists(workID: request.newWorkID),
               let work = try scopedWorkRow(workID: request.workID, scope: scope),
-              (work[2].int64.map { $0 >= request.sourceGeneration } == true) else {
+              (work.localGeneration.map { $0 >= request.sourceGeneration } == true) else {
             throw SyncV2StoreError.staleConflictAction
         }
         let inbox = try conflictInbox(active)
@@ -303,8 +303,8 @@ public extension LocalSyncV2Store {
         let reservation = try prepareKeepBoth(request, scope: scope)
         guard case .bound = scope,
               let current = try scopedWorkRow(workID: request.workID, scope: scope),
-              let snapshot = current[3].blob,
-              let generation = current[2].int64 else { throw SyncV2StoreError.staleCAS }
+              let snapshot = current.currentSnapshotID,
+              let generation = current.localGeneration else { throw SyncV2StoreError.staleCAS }
         let snapshotID = try SnapshotID(rawValue: snapshot.hexString)
         if let existing = try pendingIntents(scope: scope, workID: request.workID)
             .first(where: { $0.kind == "conflictResolution" && $0.sourceSnapshotID == snapshotID && $0.sourceGeneration == generation }) {
@@ -319,22 +319,24 @@ public extension LocalSyncV2Store {
         sourceWorkID: WorkID,
         newWorkID: WorkID
     ) throws -> V2KeepBothReservation? {
-        guard let row = try query(
+        guard let row = try queryRows(
+            KeepBothReservationRow.self,
             """
-            SELECT reservation_id,new_document_id,new_root_snapshot_id,
-                   source_generation,expected_original_head_snapshot_id,
-                   expected_original_head_generation,state
+            SELECT \(KeepBothReservationRow.columns)
             FROM pending_keep_both
             WHERE source_work_id=? AND new_work_id=?
             """,
             [.text(sourceWorkID.description), .text(newWorkID.description)]
         ).first,
-            let reservation = row[0].text.flatMap(UUID.init(uuidString:)),
-            let document = row[1].text,
-            let root = row[2].blob,
-            let generation = row[3].int64,
-            let expected = try Self.head(snapshot: row[4].blob, generation: row[5].int64),
-            let state = row[6].text else { return nil }
+            let reservation = row.reservationID.flatMap(UUID.init(uuidString:)),
+            let document = row.newDocumentID,
+            let root = row.newRootSnapshotID,
+            let generation = row.sourceGeneration,
+            let expected = try Self.head(
+                snapshot: row.expectedOriginalHeadSnapshotID,
+                generation: row.expectedOriginalHeadGeneration
+            ),
+            let state = row.state else { return nil }
         return try V2KeepBothReservation(
             reservationID: reservation,
             sourceWorkID: sourceWorkID,
@@ -360,7 +362,7 @@ public extension LocalSyncV2Store {
                 .text(sourceWorkID.description),
                 .text(conflictID.uuidString.lowercased())
             ]
-        ).first?[0].text else { return nil }
+        ).first?.scalar.text else { return nil }
         return try loadKeepBothReservation(
             sourceWorkID: sourceWorkID,
             newWorkID: WorkID(uuidString: newWork)
@@ -384,8 +386,8 @@ public extension LocalSyncV2Store {
             return prepared
         }
         guard let current = try scopedWorkRow(workID: request.workID, scope: scope),
-              current[2].int64 == request.expectedLocalGeneration,
-              let currentBytes = current[3].blob else {
+              current.localGeneration == request.expectedLocalGeneration,
+              let currentBytes = current.currentSnapshotID else {
             throw SyncV2StoreError.staleCAS
         }
         let currentID = try SnapshotID(rawValue: currentBytes.hexString)
@@ -452,8 +454,8 @@ private extension LocalSyncV2Store {
                 workID: request.workID,
                 scope: scope
             ),
-                latest[2].int64 == request.expectedLocalGeneration,
-                latest[3].blob == prepared.currentBytes else {
+                latest.localGeneration == request.expectedLocalGeneration,
+                latest.currentSnapshotID == prepared.currentBytes else {
                 throw SyncV2StoreError.staleCAS
             }
             guard try acknowledgedHead(workID: request.workID) ==
