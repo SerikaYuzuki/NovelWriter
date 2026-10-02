@@ -1,23 +1,12 @@
-import CSQLite
 import Foundation
 import NovelCore
 import NovelSyncV2
 
 public actor LocalSyncV2Store {
     public let databaseURL: URL
-    var db: OpaquePointer?
-    var statements: [String: OpaquePointer] = [:]
-    struct RegisteredAncestorCache {
-        let work: WorkID
-        let binding: V2AccountBinding
-        let head: SnapshotID
-        let ids: Set<SnapshotID>
-    }
+    let executor: SQLiteExecutor
 
-    // One immutable head closure, bounded to the last work/binding requested.
     var lastBackfillWriteDuration: Duration?
-    var registeredAncestorCache: RegisteredAncestorCache?
-    var transactionObjects: Set<ObjectID>?
 
     public init(root: URL, policy: V2StoreOpenPolicy) throws {
         try Self.validateRoot(root)
@@ -35,47 +24,17 @@ public actor LocalSyncV2Store {
             throw SyncV2StoreError.invalidRoot
         }
 
-        var handle: OpaquePointer?
-        var flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX
-        if policy == .createNew {
-            flags |= SQLITE_OPEN_CREATE
-        }
-        let result = sqlite3_open_v2(databaseURL.path, &handle, flags, nil)
-        guard result == SQLITE_OK, let handle else {
-            throw SyncV2StoreError.sqlite("open \(result)")
-        }
-        db = handle
-        sqlite3_busy_timeout(handle, 5000)
-        do {
-            try V2StoreSchema.open(handle, create: policy == .createNew)
-        } catch {
-            sqlite3_close(handle)
-            db = nil
-            throw error
-        }
+        executor = try SQLiteExecutor(databaseURL: databaseURL, policy: policy)
     }
 
     public func close() {
-        if let db {
-            for statement in statements.values {
-                sqlite3_finalize(statement)
-            }
-            statements.removeAll()
-            sqlite3_close(db)
-            self.db = nil
-        }
+        executor.close()
     }
 }
 
 public extension LocalSyncV2Store {
     func schemaVersionAndChecksum() throws -> (String, Data) {
-        guard let row = try queryRows(
-            SchemaMarkerRow.self,
-            "SELECT \(SchemaMarkerRow.columns) FROM schema_meta WHERE key='schema'"
-        ).first,
-            let version = row.value,
-            let checksum = row.checksum else { throw SyncV2StoreError.schemaMismatch }
-        return (version, checksum)
+        try workRepository.schemaVersionAndChecksum()
     }
 
     func bootstrap(
@@ -84,20 +43,20 @@ public extension LocalSyncV2Store {
         documentCreatedAt: Date,
         scope: V2LocalWorkScope
     ) throws {
-        try requireNotDeleting(workID)
+        try deletionRepository.requireNotDeleting(workID)
         try inTransaction {
-            let anchor = try Self.iso8601(documentCreatedAt)
-            if let row = try scopedWorkRow(workID: workID, scope: scope) {
+            let anchor = try StoreValueCoding.iso8601(documentCreatedAt)
+            if let row = try workRepository.scopedWorkRow(workID: workID, scope: scope) {
                 guard row.documentID == documentID.description,
                       row.documentCreatedAt == anchor else {
                     throw SyncV2StoreError.invalidSnapshot
                 }
                 return
             }
-            guard try !workExists(workID: workID) else {
+            guard try !workRepository.workExists(workID: workID) else {
                 throw SyncV2StoreError.workNotFound
             }
-            try insertWork(
+            try workRepository.insertWork(
                 workID: workID,
                 documentID: documentID,
                 documentCreatedAt: anchor,
@@ -108,103 +67,30 @@ public extension LocalSyncV2Store {
     }
 
     func listWorks(scope: V2LocalWorkScope) throws -> [V2WorkSummary] {
-        let rows: [WorkRow] = switch scope {
-        case .unbound:
-            try queryRows(
-                WorkRow.self,
-                """
-                SELECT \(WorkRow.columns)
-                FROM works w
-                WHERE NOT EXISTS (
-                  SELECT 1 FROM account_bindings b
-                  WHERE b.work_id=w.work_id AND b.state IN ('bound','parked')
-                )
-                ORDER BY lower(w.work_id)
-                """
-            )
-        case .parked:
-            try queryRows(
-                WorkRow.self,
-                """
-                SELECT \(WorkRow.columns)
-                FROM works w
-                WHERE EXISTS (
-                  SELECT 1 FROM account_bindings b
-                  WHERE b.work_id=w.work_id AND b.state='parked'
-                ) AND NOT EXISTS (
-                  SELECT 1 FROM account_bindings b
-                  WHERE b.work_id=w.work_id AND b.state='bound'
-                )
-                ORDER BY lower(w.work_id)
-                """
-            )
-        case let .bound(binding):
-            try queryRows(
-                WorkRow.self,
-                """
-                SELECT \(WorkRow.columns)
-                FROM works w JOIN account_bindings b ON b.work_id=w.work_id
-                WHERE b.server_instance_id=? AND b.protocol_epoch=?
-                  AND b.account_id=? AND b.account_fence=? AND b.state='bound'
-                ORDER BY lower(w.work_id)
-                """,
-                binding.values
-            )
-        }
-        return try rows.map(Self.summary)
+        try workRepository.listWorks(scope: scope)
     }
 
     /// Parked works are intentionally a separate projection from ordinary
     /// unbound works. They remain locally editable, but must never look like
     /// an adoptable unbound work to an account-scoped shelf.
     func listParkedWorks() throws -> [V2WorkSummary] {
-        try listWorks(scope: .parked)
+        try workRepository.listParkedWorks()
     }
 
     func open(workID: WorkID, scope: V2LocalWorkScope) throws -> V2OpenResult {
-        guard let row = try scopedWorkRow(workID: workID, scope: scope) else {
-            throw SyncV2StoreError.workNotFound
-        }
-        let summary = try Self.summary(row)
-        guard let anchor = row.documentCreatedAt,
-              let documentCreatedAt = ISO8601DateFormatter().date(from: anchor) else {
-            throw SyncV2StoreError.invalidSnapshot
-        }
-        guard let snapshotID = summary.currentSnapshotID else {
-            return V2OpenResult(
-                summary: summary,
-                document: nil,
-                documentCreatedAt: documentCreatedAt,
-                attachments: [],
-                resources: []
-            )
-        }
-        let encoded = try loadEncoded(workID: workID, snapshotID: snapshotID)
-        let model = try SnapshotCodec.decode(
-            manifestBytes: encoded.manifestBytes,
-            objects: encoded.objects
-        )
-        try validateAnchor(model, workRow: row)
-        let resources = try loadPortableResources(workID: workID)
-        return V2OpenResult(
-            summary: summary,
-            document: model.document,
-            documentCreatedAt: model.documentCreatedAt,
-            attachments: model.attachments,
-            resources: resources
-        )
+        try workRepository.open(workID: workID, scope: scope)
     }
 
     func checkpoint(
         _ request: V2CheckpointRequest,
         scope: V2LocalWorkScope
     ) throws -> V2CheckpointResult {
-        try requireNotDeleting(request.workID)
-        let existing = try scopedWorkRow(workID: request.workID, scope: scope)
-        if existing == nil, try workExists(workID: request.workID) {
+        try deletionRepository.requireNotDeleting(request.workID)
+        let existing = try workRepository.scopedWorkRow(workID: request.workID, scope: scope)
+        if existing == nil, try workRepository.workExists(workID: request.workID) {
             throw SyncV2StoreError.workNotFound
         }
-        let anchor = try Self.iso8601(request.documentCreatedAt)
+        let anchor = try StoreValueCoding.iso8601(request.documentCreatedAt)
         var parents: [SnapshotID] = []
         var currentSnapshot: SnapshotID?
         if let existing {
@@ -216,7 +102,7 @@ public extension LocalSyncV2Store {
             if let bytes = existing.currentSnapshotID {
                 let current = try SnapshotID(rawValue: bytes.hexString)
                 currentSnapshot = current
-                parents = try checkpointParents(workID: request.workID, current: current)
+                parents = try workRepository.checkpointParents(workID: request.workID, current: current)
             }
         }
         let encoded = try SnapshotCodec.encode(
@@ -229,12 +115,12 @@ public extension LocalSyncV2Store {
             parents: parents
         )
         let resourcesMatch = if let resources = request.resources {
-            try portableResourcesEqual(workID: request.workID, resources: resources)
+            try workRepository.portableResourcesEqual(workID: request.workID, resources: resources)
         } else {
             true
         }
         if let current = currentSnapshot,
-           try checkpointContentMatches(
+           try workRepository.checkpointContentMatches(
                workID: request.workID,
                current: current,
                candidate: encoded
@@ -260,31 +146,7 @@ public extension LocalSyncV2Store {
         scope: V2LocalWorkScope,
         workID: WorkID? = nil
     ) throws -> [V2PendingIntent] {
-        var sql = """
-        SELECT \(IntentRow.columns)
-        FROM sync_intents
-        WHERE status IN ('pending','sealed')
-          -- A publish that already received conflictPending is immutable
-          -- evidence, not an actionable retry. Its resolution intent (a
-          -- different row) remains visible and is selected explicitly.
-          AND NOT EXISTS (
-            SELECT 1 FROM sealed_commands blocked
-            WHERE blocked.intent_id=sync_intents.intent_id
-              AND blocked.command_kind='publish'
-              AND blocked.status='conflictPending'
-          )
-        """
-        sql += scope.intentPredicateSQL
-        var values = scope.intentPredicateValues
-        if let workID {
-            sql += " AND work_id=?"
-            values.append(.text(workID.description))
-        }
-        sql += " ORDER BY CASE WHEN kind='conflictResolution' THEN 0 ELSE 1 END, work_id,source_generation, rowid"
-        return try queryRows(
-            IntentRow.self,
-            sql, values
-        ).map(Self.pendingIntent)
+        try outboxRepository.pendingIntents(scope: scope, workID: workID)
     }
 
     func prepareExplicitAccountClone(
@@ -294,20 +156,20 @@ public extension LocalSyncV2Store {
         newDocumentID: DocumentID,
         destination: V2AccountBinding
     ) throws -> V2CheckpointResult {
-        try requireNotDeleting(sourceWorkID)
-        try requireNotDeleting(newWorkID)
+        try deletionRepository.requireNotDeleting(sourceWorkID)
+        try deletionRepository.requireNotDeleting(newWorkID)
         guard sourceWorkID != newWorkID,
-              let source = try scopedWorkRow(
+              let source = try workRepository.scopedWorkRow(
                   workID: sourceWorkID,
                   scope: sourceScope
               ),
               let sourceSnapshotBytes = source.currentSnapshotID,
-              try !workExists(workID: newWorkID) else {
+              try !workRepository.workExists(workID: newWorkID) else {
             throw SyncV2StoreError.workNotFound
         }
         let sourceSnapshot = try SnapshotID(rawValue: sourceSnapshotBytes.hexString)
-        let encoded = try loadEncoded(workID: sourceWorkID, snapshotID: sourceSnapshot)
-        let sourceResources = try loadPortableResources(workID: sourceWorkID)
+        let encoded = try workRepository.loadEncoded(workID: sourceWorkID, snapshotID: sourceSnapshot)
+        let sourceResources = try workRepository.loadPortableResources(workID: sourceWorkID)
         let sourceModel = try SnapshotCodec.decode(
             manifestBytes: encoded.manifestBytes,
             objects: encoded.objects
@@ -325,48 +187,41 @@ public extension LocalSyncV2Store {
         )
         let intentID = UUID()
         return try inTransaction {
-            guard try scopedWorkRow(
+            guard try workRepository.scopedWorkRow(
                 workID: sourceWorkID,
                 scope: sourceScope
             )?.currentSnapshotID == sourceSnapshotBytes,
-                try !workExists(workID: newWorkID) else {
+                try !workRepository.workExists(workID: newWorkID) else {
                 throw SyncV2StoreError.staleCAS
             }
-            try insertWork(
+            try workRepository.insertWork(
                 workID: newWorkID,
                 documentID: newDocumentID,
-                documentCreatedAt: Self.iso8601(sourceModel.documentCreatedAt),
+                documentCreatedAt: StoreValueCoding.iso8601(sourceModel.documentCreatedAt),
                 lane: .normal,
                 scope: .bound(destination)
             )
-            try insertEncoded(clone, workID: newWorkID)
-            try replacePortableResources(
+            try workRepository.insertEncoded(clone, workID: newWorkID)
+            try workRepository.replacePortableResources(
                 workID: newWorkID,
                 resources: sourceResources
             )
-            try exec(
-                """
-                UPDATE works SET current_snapshot_id=?,local_generation=1
-                WHERE work_id=? AND local_generation=0
-                """,
-                [.blob(clone.snapshotIDBytes), .text(newWorkID.description)]
-            )
-            guard try changes() == 1 else { throw SyncV2StoreError.staleCAS }
-            try insertHistory(
+            try workRepository.installExplicitCloneHeadInTransaction(clone: clone, newWorkID: newWorkID)
+            try workRepository.insertHistory(
                 workID: newWorkID,
                 snapshotID: clone.snapshotId,
                 reason: "explicitAccountClone",
                 pinned: false,
                 generation: 1
             )
-            try insertIntent(
+            try outboxRepository.insertIntent(.init(
                 intentID: intentID,
                 workID: newWorkID,
                 snapshotID: clone.snapshotId,
                 generation: 1,
                 kind: "checkpoint",
                 scope: .bound(destination)
-            )
+            ))
             return V2CheckpointResult(
                 snapshotID: clone.snapshotId,
                 generation: 1,
@@ -377,48 +232,14 @@ public extension LocalSyncV2Store {
     }
 
     func historyCount(workID: WorkID, scope: V2LocalWorkScope) throws -> Int {
-        guard try scopedWorkRow(workID: workID, scope: scope) != nil else {
-            throw SyncV2StoreError.workNotFound
-        }
-        return try Int(query(
-            "SELECT COUNT(*) FROM history_occurrences WHERE work_id=?",
-            [.text(workID.description)]
-        ).first?.scalar.int64 ?? 0)
+        try workRepository.historyCount(workID: workID, scope: scope)
     }
 
     func history(
         workID: WorkID,
         scope: V2LocalWorkScope
     ) throws -> [V2HistoryOccurrence] {
-        guard try scopedWorkRow(workID: workID, scope: scope) != nil else {
-            throw SyncV2StoreError.workNotFound
-        }
-        return try queryRows(
-            HistoryOccurrenceRow.self,
-            """
-            SELECT \(HistoryOccurrenceRow.columns)
-            FROM history_occurrences WHERE work_id=? ORDER BY rowid
-            """,
-            [.text(workID.description)]
-        ).map { row in
-            guard let snapshot = row.snapshotID,
-                  let reason = row.reason,
-                  let generation = row.localGeneration,
-                  let occurrenceText = row.occurrenceID,
-                  let occurrenceID = UUID(uuidString: occurrenceText),
-                  let createdText = row.createdAt,
-                  let createdAt = Self.parseHistoryDate(createdText) else {
-                throw SyncV2StoreError.invalidHistoryDate
-            }
-            return try V2HistoryOccurrence(
-                occurrenceID: occurrenceID,
-                snapshotID: SnapshotID(rawValue: snapshot.hexString),
-                reason: reason,
-                pinned: row.pinned == 1,
-                localGeneration: generation,
-                createdAt: createdAt
-            )
-        }
+        try workRepository.history(workID: workID, scope: scope)
     }
 
     /// Returns immutable local occurrences newest-first. The cursor is an
@@ -430,67 +251,7 @@ public extension LocalSyncV2Store {
         cursor: String? = nil,
         pageSize: Int = 100
     ) throws -> V2HistoryPage {
-        guard (1 ... 500).contains(pageSize) else {
-            throw SyncV2StoreError.invalidHistoryCursor
-        }
-        guard try scopedWorkRow(workID: workID, scope: scope) != nil else {
-            throw SyncV2StoreError.workNotFound
-        }
-
-        let boundary = try cursor.map(Self.decodeHistoryCursor)
-        let scopeKey = Self.historyScopeKey(scope)
-        if let boundary, boundary.scopeKey != scopeKey {
-            throw SyncV2StoreError.invalidHistoryCursor
-        }
-        var sql = """
-        SELECT \(HistoryPageRow.columns)
-        FROM history_occurrences
-        WHERE work_id=?
-        """
-        var values: [SQLiteValue] = [.text(workID.description)]
-        if let boundary {
-            sql += " AND (created_at < ? OR (created_at = ? AND (local_generation < ? OR (local_generation = ? AND occurrence_id < ?))))"
-            values += [
-                .text(boundary.createdAt),
-                .text(boundary.createdAt),
-                .int(boundary.localGeneration),
-                .int(boundary.localGeneration),
-                .text(boundary.occurrenceID.uuidString.lowercased())
-            ]
-        }
-        sql += " ORDER BY created_at DESC, local_generation DESC, occurrence_id DESC LIMIT ?"
-        values.append(.int(Int64(pageSize)))
-
-        let occurrences = try queryRows(
-            HistoryPageRow.self,
-            sql, values
-        ).map { row in
-            guard let occurrenceText = row.occurrenceID,
-                  let occurrenceID = UUID(uuidString: occurrenceText),
-                  let snapshot = row.snapshotID,
-                  let reason = row.reason,
-                  let pinned = row.pinned,
-                  let generation = row.localGeneration,
-                  let createdText = row.createdAt,
-                  let createdAt = Self.parseHistoryDate(createdText) else {
-                throw SyncV2StoreError.invalidHistoryDate
-            }
-            guard pinned == 0 || pinned == 1, generation > 0 else {
-                throw SyncV2StoreError.invalidHistoryDate
-            }
-            return try V2HistoryOccurrence(
-                occurrenceID: occurrenceID,
-                snapshotID: SnapshotID(rawValue: snapshot.hexString),
-                reason: reason,
-                pinned: pinned == 1,
-                localGeneration: generation,
-                createdAt: createdAt
-            )
-        }
-        let nextCursor = occurrences.count == pageSize
-            ? occurrences.last.map { Self.encodeHistoryCursor($0, scopeKey: scopeKey) }
-            : nil
-        return V2HistoryPage(items: occurrences, nextCursor: nextCursor)
+        try workRepository.historyPage(workID: workID, scope: scope, cursor: cursor, pageSize: pageSize)
     }
 
     func snapshotParents(
@@ -498,88 +259,21 @@ public extension LocalSyncV2Store {
         snapshotID: SnapshotID,
         scope: V2LocalWorkScope
     ) throws -> [SnapshotID] {
-        guard try scopedWorkRow(workID: workID, scope: scope) != nil else {
-            throw SyncV2StoreError.workNotFound
-        }
-        return try loadEncoded(workID: workID, snapshotID: snapshotID).manifest.parentSnapshotIds
+        try workRepository.snapshotParents(workID: workID, snapshotID: snapshotID, scope: scope)
     }
 }
 
-private extension LocalSyncV2Store {
-    struct HistoryCursor: Codable {
-        let scopeKey: String
-        let createdAt: String
-        let localGeneration: Int64
-        let occurrenceID: UUID
-    }
-
-    static func parseHistoryDate(_ value: String) -> Date? {
-        let formatter = ISO8601DateFormatter()
-        formatter.timeZone = TimeZone(secondsFromGMT: 0)
-        formatter.formatOptions = [
-            .withInternetDateTime,
-            .withDashSeparatorInDate,
-            .withColonSeparatorInTime,
-            .withFractionalSeconds
-        ]
-        if let date = formatter.date(from: value) {
-            return date
-        }
-        formatter.formatOptions.remove(.withFractionalSeconds)
-        return formatter.date(from: value)
-    }
-
-    static func historyScopeKey(_ scope: V2LocalWorkScope) -> String {
-        switch scope {
-        case .unbound: "unbound"
-        case .parked: "parked"
-        case let .bound(binding):
-            "bound|\(binding.serverInstanceID)|\(binding.protocolEpoch)|\(binding.accountID)|\(binding.accountFence)"
-        }
-    }
-
-    static func encodeHistoryCursor(
-        _ occurrence: V2HistoryOccurrence,
-        scopeKey: String
-    ) -> String {
-        let date = (try? iso8601(occurrence.createdAt)) ?? "1970-01-01T00:00:00Z"
-        let cursor = HistoryCursor(
-            scopeKey: scopeKey,
-            createdAt: date,
-            localGeneration: occurrence.localGeneration,
-            occurrenceID: occurrence.occurrenceID
-        )
-        let data = (try? JSONEncoder().encode(cursor)) ?? Data()
-        return data.base64EncodedString()
-    }
-
-    static func decodeHistoryCursor(_ cursor: String) throws -> HistoryCursor {
-        guard let data = Data(base64Encoded: cursor),
-              let value = try? JSONDecoder().decode(HistoryCursor.self, from: data),
-              let date = parseHistoryDate(value.createdAt),
-              value.localGeneration > 0 else {
-            throw SyncV2StoreError.invalidHistoryCursor
-        }
-        return HistoryCursor(
-            scopeKey: value.scopeKey,
-            createdAt: (try? iso8601(date)) ?? value.createdAt,
-            localGeneration: value.localGeneration,
-            occurrenceID: value.occurrenceID
-        )
-    }
-}
-
-private extension LocalSyncV2Store {
+extension LocalSyncV2Store {
     func commitCheckpointTransaction(
         _ request: V2CheckpointRequest,
         scope: V2LocalWorkScope,
         createWork: Bool,
         encoded: EncodedSnapshot
     ) throws -> V2CheckpointResult {
-        let anchor = try Self.iso8601(request.documentCreatedAt)
+        let anchor = try StoreValueCoding.iso8601(request.documentCreatedAt)
         return try inTransaction {
             if createWork {
-                try insertWork(
+                try workRepository.insertWork(
                     workID: request.workID,
                     documentID: DocumentID(request.document.id),
                     documentCreatedAt: anchor,
@@ -587,7 +281,7 @@ private extension LocalSyncV2Store {
                     scope: scope
                 )
             }
-            guard let current = try scopedWorkRow(workID: request.workID, scope: scope),
+            guard let current = try workRepository.scopedWorkRow(workID: request.workID, scope: scope),
                   current.localGeneration == request.expectedGeneration,
                   current.documentID == DocumentID(request.document.id).description,
                   current.documentCreatedAt == anchor else {
@@ -597,29 +291,17 @@ private extension LocalSyncV2Store {
                 let currentID = try SnapshotID(rawValue: bytes.hexString)
                 // Another connection may promote without changing generation.
                 // Never commit an encoding against the superseded stable parent.
-                guard try encoded.manifest.parentSnapshotIds == checkpointParents(
+                guard try encoded.manifest.parentSnapshotIds == workRepository.checkpointParents(
                     workID: request.workID, current: currentID
                 ) else { throw SyncV2StoreError.generationMismatch }
             }
-            try insertEncoded(encoded, workID: request.workID)
+            try workRepository.insertEncoded(encoded, workID: request.workID)
             if let resources = request.resources {
-                try replacePortableResources(workID: request.workID, resources: resources)
+                try workRepository.replacePortableResources(workID: request.workID, resources: resources)
             }
             let next = request.expectedGeneration + 1
-            try exec(
-                """
-                UPDATE works SET current_snapshot_id=?,local_generation=?
-                WHERE work_id=? AND local_generation=?
-                """,
-                [
-                    .blob(encoded.snapshotIDBytes), .int(next),
-                    .text(request.workID.description), .int(request.expectedGeneration)
-                ]
-            )
-            guard try changes() == 1 else {
-                throw SyncV2StoreError.generationMismatch
-            }
-            try insertHistory(
+            try workRepository.updateCheckpointHeadInTransaction(encoded: encoded, request: request, next: next)
+            try workRepository.insertHistory(
                 workID: request.workID,
                 snapshotID: encoded.snapshotId,
                 reason: request.reason == .autosave ? "autosaveLeaf" : request.reason.rawValue,
@@ -631,14 +313,14 @@ private extension LocalSyncV2Store {
                 // A parked Work continues to checkpoint locally, but it must
                 // not create an unbound remote lane while no account is
                 // attested. Close any legacy unbound intent in this same tx.
-                try parkPendingUnboundIntents(workID: request.workID)
+                try accountRepository.parkPendingUnboundIntents(workID: request.workID)
             }
             let intentID: UUID? = switch scope {
             case .parked:
                 nil
             case .unbound, .bound:
                 if lane == .normal, request.reason != .autosave {
-                    try upsertCheckpointIntent(
+                    try outboxRepository.upsertCheckpointIntent(
                         workID: request.workID,
                         snapshotID: encoded.snapshotId,
                         generation: next,
@@ -653,6 +335,94 @@ private extension LocalSyncV2Store {
                 generation: next,
                 intentID: intentID,
                 noChanges: false
+            )
+        }
+    }
+}
+
+extension LocalSyncV2Store {
+    static func validateRoot(_ root: URL) throws {
+        guard root.isFileURL else { throw SyncV2StoreError.invalidRoot }
+        var ancestor = root
+        while ancestor.path != "/" {
+            let systemAlias = ancestor.path == "/var" || ancestor.path == "/tmp"
+            if !systemAlias,
+               FileManager.default.fileExists(atPath: ancestor.path),
+               try ancestor.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink == true {
+                throw SyncV2StoreError.invalidRoot
+            }
+            ancestor.deleteLastPathComponent()
+        }
+    }
+
+    func inTransaction<T>(_ body: () throws -> T) throws -> T {
+        try executor.inTransaction(body)
+    }
+
+    func exec(_ sql: String, _ bindings: [SQLiteValue] = []) throws {
+        try executor.exec(sql, bindings)
+    }
+
+    func query(_ sql: String, _ bindings: [SQLiteValue] = []) throws -> [SQLiteRow] {
+        try executor.query(sql, bindings)
+    }
+
+    func changes() throws -> Int {
+        try executor.changes()
+    }
+}
+
+extension LocalSyncV2Store {
+    func commitNoChangeCheckpoint(
+        _ request: V2CheckpointRequest,
+        scope: V2LocalWorkScope,
+        current: SnapshotID,
+        anchor: String
+    ) throws -> V2CheckpointResult {
+        try inTransaction {
+            guard let latest = try workRepository.scopedWorkRow(
+                workID: request.workID,
+                scope: scope
+            ),
+                latest.documentID == DocumentID(request.document.id).description,
+                latest.localGeneration == request.expectedGeneration,
+                latest.currentSnapshotID == current.bytes,
+                latest.documentCreatedAt == anchor else {
+                throw SyncV2StoreError.generationMismatch
+            }
+            let promoted = if request.reason != .autosave {
+                try workRepository.promoteCurrentLeafTransaction(
+                    workID: request.workID, scope: scope, reason: request.reason.rawValue
+                )
+            } else {
+                false
+            }
+            if request.reason.protectsOccurrence, !promoted {
+                try workRepository.insertHistory(
+                    workID: request.workID,
+                    snapshotID: current,
+                    reason: request.reason.rawValue,
+                    pinned: true,
+                    generation: request.expectedGeneration
+                )
+            }
+            if case .parked = scope {
+                try accountRepository.parkPendingUnboundIntents(workID: request.workID)
+            }
+            let intentID: UUID? = if case .parked = scope {
+                nil
+            } else {
+                try outboxRepository.latestPendingIntentID(
+                    workID: request.workID,
+                    scope: scope
+                )
+            }
+            return V2CheckpointResult(
+                snapshotID: current,
+                generation: request.expectedGeneration,
+                intentID: intentID,
+                noChanges: true,
+                promotedLeaf: promoted
             )
         }
     }

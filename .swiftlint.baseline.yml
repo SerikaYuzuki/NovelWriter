@@ -4775,7 +4775,7 @@
       "location": {
         "character": 13,
         "line": 195,
-        "file": "NovelKit/Sources/NovelSyncV2Store/CommandReceiptDecoder.swift"
+        "file": "NovelKit/Sources/NovelSyncV2Store/OutboxRepository+ReceiptDecoder.swift"
       },
       "severity": "error",
       "ruleIdentifier": "cyclomatic_complexity",
@@ -4790,12 +4790,12 @@
       "location": {
         "character": 5,
         "line": 528,
-        "file": "NovelKit/Sources/NovelSyncV2Store/LocalSyncV2Store+Inbox.swift"
+        "file": "NovelKit/Sources/NovelSyncV2Store/InboxRepository.swift"
       },
       "severity": "error",
       "ruleIdentifier": "function_body_length",
       "ruleName": "Function Body Length",
-      "reason": "Function body should span 100 lines or less excluding comments and whitespace: currently spans 101 lines"
+      "reason": "Function body should span 100 lines or less excluding comments and whitespace: currently spans 106 lines"
     },
     "text": "    func adoptGraphTransaction("
   }
