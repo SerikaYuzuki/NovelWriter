@@ -37,4 +37,4 @@ docker push "$server_ref"
 docker push "$ops_ref"
 python3 "$zimaos_dir/render_app_compose.py" --server-image "$server_ref" \
   --ops-image "$ops_ref" --output "$output"
-printf 'Prepared only; import/migration is a separate UI operation. Compose: %s\n' "$output"
+printf 'Prepared only; run migrate.sh separately after login and preparation. Compose: %s\n' "$output"

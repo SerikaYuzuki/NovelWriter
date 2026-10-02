@@ -12,6 +12,8 @@
 | アプリ雛形 | `SyncServerV2/zimaos/app-compose.template.yml`。内部読込用のJSON、4サービスとexternal volume／ネットワーク／x-casaos |
 | 生成 | `SyncServerV2/zimaos/render_app_compose.py`。旧コンテナとimageのinspect、具体値の埋込、文字列をクォートしたblock YAML出力、volume自己検査、`docker compose config -q` |
 | 準備 | `SyncServerV2/zimaos/prepare.sh`。opsだけをbuild、稼働serverのimage IDをtag／push、compose生成 |
+| API操作 | `SyncServerV2/zimaos/zimaos_app.py`。host python3、loopback限定、非表示入力・token更新・install／apply／uninstall |
+| 自動移行 | `SyncServerV2/zimaos/migrate.sh`／`migrate_app.py`。事前確認・backup・退避・受入・失敗時の切戻し |
 | レジストリ | アプリ外の`fuminiwa-registry`。`registry:2`、`127.0.0.1:5000:5000`、volume `fuminiwa-registry-data`、restart unless-stopped |
 
 2026-10-03にClaudeがZimaOS **v1.7.0**で確認した条件（利用者からの引継ぎ）：
@@ -20,7 +22,7 @@
 - file-backed top-level secrets（実際にはbind）、短い書式のexternal volume、service_healthy依存、unless-stoppedは試験済み。長い書式のnamed volumeは以下の本番試験で失敗した。
 - top-level nameは無視され、project名はランダムになる。全サービスにcontainer_nameを指定する。
 - `.env`は読まれない。生成物には具体値を入れる。2重展開があるためシェル変数参照を禁止し、healthcheckのコマンド置換だけを`$$(...)`で出力する。変数を使わずに意味を保てない設定は生成失敗にする。
-- 保存先は`/var/lib/casaos/apps/<random>/docker-compose.yml`（root 0600）。インストール・更新・削除はZimaOS UIで行う。そこへ直接書き込まない。
+- 保存先は`/var/lib/casaos/apps/<random>/docker-compose.yml`（root 0600）。インストール・更新・削除はUIまたは下記APIクライアントで行う。保存ファイルへ直接書き込まない。
 - reckyは999:1000、dockerグループ、sudo不可。既存secretをホストから読まず、必要な新しいコピーだけrootの一時コンテナで作成する。
 
 ### 本番インポートで判明したvolumeの書換え
@@ -167,33 +169,82 @@ docker compose --env-file /dev/null -f "$base/ops/zimaos-app-compose.yml" config
 
 出力は0600のblock YAML。server環境（imageの既定値も含む）・secretのホストパス・既存volumeをinspectから取得し、postgres／caddyは稼働imageのRepoDigestで固定する。named volumeの短い書式はinspectのRWも引き継ぎ、読み取り専用なら`:ro`を付ける。serverのタグが旧image IDと一致しない、inline credential、secret mount／必須設定／health／安全設定の欠落、想定外のmount、volume自己検査・Compose検証失敗では出力を置換しない。secret内容と`.env`は読まない。既存出力は検証成功時のみatomicに置換する。
 
-生成物には非公開の配置・認証client ID等が含まれる。Gitへ入れず、UIインポートにだけ使う。UI用port等を変える場合は直接生成スクリプトの`--ui-port`／`--ui-host`／`--ui-password-file`／`--caddyfile`を指定する。
+生成物には非公開の配置・認証client ID等が含まれる。Gitへ入れず、ZimaOSへの取り込みにだけ使う。UI用port等を変える場合は直接生成スクリプトの`--ui-port`／`--ui-host`／`--ui-password-file`／`--caddyfile`を指定する。
 
-## 移行（Claudeと利用者）
+## 自動化：最初のloginとAPI操作
 
-準備が成功した後、利用者がZimaOS UIを操作できる時間に行う。同じ名前の旧コンテナが残ったままのインポートは失敗する。
-
-1. 旧opsでbackupを取得し、exit 0と`last-success.json`更新を確認する。
-2. opsを最初に停止して定期backupを抑止する。その後edge→server→postgresを停止する。稼働中のbackupがある場合は終了を待つ。
-3. 旧4コンテナを`-legacy`へrenameし、削除せず残す。旧ops projectはこの停止で停止済み。旧composeの`up`を実行しない（同じ名前を再作成するため）。
-4. 利用者がZimaOSのカスタムアプリ画面から生成composeをインポートする。インストールでimageがpullされ、random project名で新4コンテナが作られる。
-5. 次節の検証が完了するまでlegacy・旧compose・旧secret・旧Caddyfileを保持する。
+利用者の決定（案A）に従い、ログインは利用者がサーバーの端末で行う。repository rootからの1行：
 
 ```sh
-docker exec fuminiwa-sync-v2-ops run-backup
-# 成功時刻を確認。内容は時刻とbackup名のみ。
-cat "$base/operational-backups/daily/last-success.json"
-# 以下はbackupの終了・上のread-back成功後だけ。
-docker stop --time 300 fuminiwa-sync-v2-ops
-docker stop fuminiwa-sync-v2-role-split-edge fuminiwa-sync-v2-role-split-server fuminiwa-sync-v2-role-split-postgres
-docker rename fuminiwa-sync-v2-role-split-postgres fuminiwa-sync-v2-role-split-postgres-legacy
-docker rename fuminiwa-sync-v2-role-split-server fuminiwa-sync-v2-role-split-server-legacy
-docker rename fuminiwa-sync-v2-role-split-edge fuminiwa-sync-v2-role-split-edge-legacy
-docker rename fuminiwa-sync-v2-ops fuminiwa-sync-v2-ops-legacy
-# ここで利用者がZimaOS UIからインポート。
+python3 SyncServerV2/zimaos/zimaos_app.py login
 ```
 
-`-legacy`が既にあればrename前に停止し、前回作業の状態を確認する。旧ops projectへの`down`は旧containerを削除するので使わない。migratorは今回実行しない。移行は同じserver binary・同じDBで、schemaを変更しない。
+ユーザー名を入力し、passwordは`getpass`で非表示入力する。成功出力は「保存しました」だけ。Claudeが先に置いた`ops/zimaos_login.py`で既にログイン済みなら、再ログインは不要。既存の`/DATA/AppData/fuminiwa-sync-v2-role-split/ops/zimaos-token.json`をそのまま使い、今後はrepository版へ置き換えられる。
+
+保存形式は`access_token`／`refresh_token`／`expires_at`（unix秒）／`saved_at`（unix秒）／`username`。passwordは保存しない。ファイルは本人所有の0600、親directoryは本人所有・他者書込不可。symlinkは拒否する。値を`cat`・ログ・コマンド引数・Gitへ出さない。Claudeはファイルの内容を表示せず、スクリプトを実行する。`--token-file <path>`はサブコマンドの前に指定できる。
+
+access tokenは期限の5分前まで再利用し、以降はrefreshする。新しいrefresh tokenを含む組をfsyncして原子的に置換し、CLI間のlockでローテーション競合を防ぐ。refresh／新tokenの保存に失敗したら非0で終了し、`zimaos_app.py login`を案内する。通信途中でrefreshが成功し、応答や保存だけ失敗すると古いrefresh tokenは無効になり得る。その場合も利用者が再ログインする。tokenをバックアップから戻して再利用しない。
+
+APIはhostの`http://127.0.0.1`（既定80）のみ。別ホスト、localhost、IPv6、URL内の認証情報、redirectを拒否し、環境のHTTP proxyも使わない。Authorizationは接頭辞なしを既定とし、401の場合だけ`Bearer `を付けて1回再試行する。APIの本文や例外の詳細は表示しない。エラーはHTTP状態コードと既知の安全なmessageだけを表示し、任意のmessageは伏せる。`status`も環境変数・compose・healthcheck出力ではなく、選んだ状態項目だけを表示する。
+
+Claudeがサーバー上で実行する操作例：
+
+```sh
+python3 SyncServerV2/zimaos/zimaos_app.py list
+python3 SyncServerV2/zimaos/zimaos_app.py find --container fuminiwa-sync-v2-role-split-server
+# 元のcontainer_nameが空いている場合だけ。dry-run成功後に本実行する。
+python3 SyncServerV2/zimaos/zimaos_app.py install "$base/ops/zimaos-app-compose.yml" --dry-run
+python3 SyncServerV2/zimaos/zimaos_app.py install "$base/ops/zimaos-app-compose.yml"
+# 実際にfindで得たidを設定する。表示されるのはidだけ。
+app_id=$(python3 SyncServerV2/zimaos/zimaos_app.py find --container fuminiwa-sync-v2-role-split-server)
+python3 SyncServerV2/zimaos/zimaos_app.py status "$app_id"
+python3 SyncServerV2/zimaos/zimaos_app.py apply "$app_id" "$base/ops/zimaos-app-compose.yml"
+# アプリ停止・削除の操作。設定folderは保持し、delete_config_folder=falseを必ず送る。
+python3 SyncServerV2/zimaos/zimaos_app.py uninstall "$app_id"
+```
+
+`find`は一致がなければexit 3、複数一致や一覧取得失敗はexit 1。installは`dry_run=true&check_port_conflict=true`に成功したときだけ`dry_run=false&check_port_conflict=true`を送る。`--dry-run`なら前半だけ。applyはPUT、uninstallはDELETEで`delete_config_folder=false`を固定する。これらの操作例を一括で順に実行しない。初回移行は次のmigrateを使い、二重にinstallしない。
+
+入口の存在と未認証401は利用者報告により確認済み。認証済みAPIの正確な応答形、dry-runの挙動、PUTのpull／再作成範囲、DELETE完了までの時間はClaudeが実機で確認する。パースは`data`／`token`の包みや一覧のmap／配列を受け入れるが、分からない応答は秘密を表示せず失敗する。Codexはログイン・実APIリクエストをしていない。
+
+## 自動移行（Claudeがサーバー上で実行）
+
+新しいsecret／Caddyfileの参照先は前述の準備で作る。旧4コンテナが稼働中、legacyや同名アプリがない状態で、repository rootから実行する：
+
+```sh
+base=/DATA/AppData/fuminiwa-sync-v2-role-split
+# serverは稼働中imageをそのままtag。opsだけbuild。タグは更新ごとに変える。
+./SyncServerV2/zimaos/prepare.sh role-split-20261003-api1 ops-ui-20261003-api1 "$base/ops/zimaos-app-compose.yml"
+python3 SyncServerV2/zimaos/zimaos_app.py list
+./SyncServerV2/zimaos/migrate.sh "$base/ops/zimaos-app-compose.yml"
+```
+
+migrate.shは書込可能な`DOCKER_CONFIG`を設定し、host python3の`migrate_app.py`を呼ぶ。処理は次の順序：
+
+1. レジストリ稼働、compose config -qとJSON正規化、token、旧4コンテナ稼働、legacy／failed退避名なし、同名containerを持つアプリなしを確認する。normalized composeから期待するvolume・bind・secretのホストパス／RWを作る。検証・installは同じ0600の一時composeを使う。
+2. 旧opsで`run-backup`を実行し、exit 0、`last-success.json`の更新・新しい成功時刻・backup名を確認する。失敗時は旧コンテナを止めない。
+3. ops→edge→serverを各30秒、postgresを120秒の猶予で停止する。restartをnoへ変更し、4コンテナを`-legacy`へrenameする。旧ops projectは停止したまま残し、旧composeのup／downを実行しない。
+4. APIでdry-run→installする。移行用portは8443／8790を要求し、別portのcomposeは停止前に拒否する。新4コンテナの出現を待ち、DB／Caddyの既存volume名、全bindとsecretのSource／Destination／RWを照合する。`/tmp/casaos-compose-app-*`、`/DATA/AppData/<service>/config`、`/config` target、余計なmount、RWの変化は拒否する。server image IDも旧コンテナと同じであることを確認する。
+5. 4コンテナのhealthyを最大5分待つ。loopback HTTPSは`-k`、公開HTTPSは証明書検証ありでcapabilitiesを確認し、両方にclient version 0.1.0のheaderを付けて200を要求する。ops UIは未認証401、icon.svgは200・SVG Content-Typeを要求する。
+
+成功時はlegacyを削除せず残す。正しいBasic認証、Webの「今すぐバックアップ」、翌日の定期実行、ホスト再起動の受入は次節のとおり別途行う。schema／server binaryを変える更新にはこの移行スクリプトを使わない。
+
+移行のlockと0600の`ops/zimaos-migration.json`に、旧container ID、composeのhash、phase、アプリidを記録する。tokenやsecret内容は含めない。成功後に同じcomposeで再実行した場合は受入だけ行う。中断した移行では旧IDを照合して切戻す。SIGINT／SIGTERM／SIGHUPも切戻し対象だが、SIGKILL／停電は次回実行時に復旧する。既存legacyのID不一致、旧コンテナ消失、複数アプリなどでは安全側に停止する。
+
+### 自動ロールバック
+
+backup後の停止／rename／install／mount／health／HTTP受入の失敗は、非0で終了する前に切戻す。新アプリidをfindで特定し、設定folderを保持してuninstallする。DELETEの成功応答だけで完了とは扱わず、一覧からの消滅も確認する。新コンテナの消滅を待ち、残った場合はrestart no・停止後に`-zimaos-failed`へrenameして保持する。legacyは元名へ戻しrestart unless-stopped、postgres→serverのhealthy待ち→edge／opsの順で起動し、4healthと公開200を確認する。registryとDB／Caddy volumeは削除しない。
+
+旧コンテナを復旧し始めた後に処理が中断しても、再実行時に元の名前でAPI削除を繰り返さない。旧IDで復旧を続ける。API削除が確認できない場合は旧構成が復旧していても`rollback-incomplete`・非0とし、Claudeが残ったアプリ管理を確認する。復旧失敗は成功扱いにしない。
+
+切戻し済み記録がある場合は、新たな移行を自動で再開しない。原因、アプリ残存、failed退避、元4コンテナのhealthを確認し、必要な退避コンテナの扱いを利用者と確定する。再試行を決めた後に記録を別名へ退避する：
+
+```sh
+# rolled-backかつ残存アプリ／failed退避名の確認が済んだ場合だけ。
+# tokenファイルは表示・退避・削除しない。
+mv "$base/ops/zimaos-migration.json" "$base/ops/zimaos-migration.$(date +%Y%m%d-%H%M%S).json"
+./SyncServerV2/zimaos/migrate.sh "$base/ops/zimaos-app-compose.yml"
+```
 
 ## 反映後の検証
 
@@ -225,16 +276,19 @@ docker stats --no-stream fuminiwa-sync-v2-ops
 
 この構成移行の失敗に対する切戻し。schema変更を伴う将来の更新にそのまま使わない。
 
-1. 利用者がZimaOS UIから新アプリを停止・削除する。**external volume／データを削除する選択はしない**。4つの元のcontainer名が空いたことを確認する。中途半端なインストールもUIで処理する。
+以下は自動切戻しが完了しない場合の手動復旧。移行記録とcontainer IDを照合してから行う。
+
+1. APIのuninstallまたはZimaOS UIから新アプリを停止・削除する。**external volume／データを削除する選択はしない**。4つの元のcontainer名が空いたことを確認する。中途半端なインストールもUIで処理する。
 2. legacyを元の名前へ戻す。registryは止めない。
 3. postgresを開始してhealthyを待ち、server、edge、opsの順で開始する。healthと両capabilities、CLI backupを再確認する。
 
 ```sh
-# UI削除後。元の名前に新containerが残っていたらここで止める。
+# API／UI削除後。元の名前に新containerが残っていたらここで止める。
 docker rename fuminiwa-sync-v2-role-split-postgres-legacy fuminiwa-sync-v2-role-split-postgres
 docker rename fuminiwa-sync-v2-role-split-server-legacy fuminiwa-sync-v2-role-split-server
 docker rename fuminiwa-sync-v2-role-split-edge-legacy fuminiwa-sync-v2-role-split-edge
 docker rename fuminiwa-sync-v2-ops-legacy fuminiwa-sync-v2-ops
+docker update --restart unless-stopped fuminiwa-sync-v2-role-split-postgres fuminiwa-sync-v2-role-split-server fuminiwa-sync-v2-role-split-edge fuminiwa-sync-v2-ops
 docker start fuminiwa-sync-v2-role-split-postgres
 # healthyをread-backしてから次の行。
 docker inspect fuminiwa-sync-v2-role-split-postgres --format '{{.State.Health.Status}}'
@@ -252,14 +306,11 @@ docker exec fuminiwa-sync-v2-ops run-backup
 
 更新時は最初にbackupと変更範囲を確認する。opsだけの更新は新しいタグでbuild／pushし、現在のapp composeのops imageだけを差し替える。移行後にprepareを再実行するとserverはその時点の稼働imageを再タグ付けするだけであり、新server binaryは作らない。server更新は従来のbuild・migration契約に従い、新imageをregistryへpushして更新する。
 
-ZimaOS UIで次のどちらが可能かは**Claudeが実機で検証する**。repositoryからCasaOS保存ファイルを直接編集しない。
+生成composeのimageを新しいタグへ変更し、`zimaos_app.py apply <id> <compose>`で適用する。PUTがpull・再作成する範囲、image ID、container_name、external volume維持をClaudeが実機で確認する。apply自体は初回移行の自動backup／切戻しを行わないため、適用前のbackupと旧composeの保管、適用後の受入が必要。registryへpush済みの新タグを使い、同タグ再push／再pullのcache挙動には依存しない。repositoryからCasaOS保存ファイルを直接編集しない。
 
-- 推奨候補：アプリのcompose編集／更新UIでimageを新タグへ変更し、pull・再作成する。image ID、他サービスの再作成範囲、container_nameとexternal volume維持を確認する。
-- 別候補：同タグを再pushしてUIの再pull／再作成操作を使う。操作の有無とcacheを使わず新IDになることを確認する。変更内容をタグで追跡しにくいので、通常は新タグを使う。
+API更新が利用できない場合の候補はUIでのcompose更新、またはbackup→アプリ削除→再インストール。実機で挙動を確認するまで自動更新成功とは扱わない。必ず既存volumeをexternalで引き継ぐ。schema移行を伴う更新は、旧binaryが新schemaを扱えるという根拠なしに切り戻さない。
 
-UIで部分更新できなければ、backup→アプリ停止→UIで再インポートの方式を検証する。必ず既存volumeをexternalで引き継ぐ。schema移行を伴う更新は、旧binaryが新schemaを扱えるという根拠なしに切り戻さない。
-
-成功後の片付けは**利用者の確認後**。対象は停止した4つの`-legacy`コンテナと不要な旧image／releaseコピーを個別に列挙し、旧runtime／Caddyfile参照がなくなったことを確認してから行う。DB・Caddy・registry volume、backup鍵、daily、現行secretは残す。`down -v`／volume rm／system pruneは使わない。現時点の作業に片付けは含まない。
+成功後の片付けは**利用者の確認後**。対象は停止した4つの`-legacy`コンテナと不要な旧image／releaseコピーを個別に列挙し、旧runtime／Caddyfile参照がなくなったことを確認してから行う。IDと停止状態を照合したlegacyだけを`docker rm <確認したID>`で個別に削除する。DB・Caddy・registry volume、backup鍵、daily、現行secret、tokenファイルは残す。`down -v`／volume rm／system pruneは使わない。現時点の作業に片付けは含まない。
 
 ## ローカル検証と未実施の境界
 
@@ -276,4 +327,6 @@ fake Dockerテストは認証、CSRF、操作の限定、秘密の非表示、We
 
 2回目の修正では39テストが成功した。2重展開を模擬したあと、fake curlを使って元のhealthcheckと修正版を実際のshellで実行し、200／401／500／通信失敗の終了判定が一致することを確認した。変換不能な参照・生成物の変数参照・全サービスの/configターゲットの拒否、Caddy volume名と内部の相対位置の維持も検証した。今回`check.sh`は再実行せず、指定されたPythonテスト全件を検証範囲とした。
 
-ローカルにDocker CLIがないため実imageのbuildと実Composeのconfig検証は未実施。fake CLIによるconfig呼出の確認とは区別する。修正版のZimaOS UIインポート、volume名のinspect、LAN到達、待機CPU、停止時の処理、実backup／翌日の定期成功／再起動は別途Claude側で実施する。
+API／移行の自動化では、既存分を含むoperationsの62テストとlocal recoveryの3テスト（合計65件）が成功した。fake HTTPで既存token形式、0600／symlink拒否、期限余裕、refreshローテーション、Bearer fallback、出力へのcredential非表示、loopback限定、dry-run、DELETEの設定保持を確認。fake Dockerで2回のmount書換え、停止順序、backup失敗、health／公開失敗、中途install、残存コンテナの退避、API削除未完了、中断復旧、旧ID不一致、再実行時のAPI削除抑止を確認した。shell構文とdiff検査も成功。今回の検証範囲はPythonテスト全件で、`check.sh`は未実施。
+
+ローカルにDocker CLIがないため実imageのbuildと実Composeのconfig検証は未実施。fake CLIによるconfig呼出の確認とは区別する。認証済み実APIの応答・install／apply／uninstall・自動移行と切戻し、volume名のinspect、LAN到達、待機CPU、停止時の処理、実backup／翌日の定期成功／再起動は別途Claude側で実施する。
