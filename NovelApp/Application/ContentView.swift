@@ -77,26 +77,7 @@ struct ContentView: View {
         case .recovery:
             RecoveryPane()
         case .loading, .documentSelection:
-            NavigationSplitView {
-                LibraryPane()
-            } detail: {
-                switch appState.startupState {
-                case .loading:
-                    ProgressView("端末の作品を開いています…")
-                case .documentSelection:
-                    ContentUnavailableView {
-                        Label("作品を選択してください", systemImage: "books.vertical")
-                    } description: {
-                        Text("左の作品一覧から作品を開くか、新しい作品を作成してください。")
-                    } actions: {
-                        Button("新しい作品…") { documentPanelPresenter.presentNewDocument() }
-                            .disabled(!appState.permitsNewDocument)
-                        Button("作品を取り込む…") { documentPanelPresenter.presentOpenPanel() }
-                    }
-                default:
-                    EmptyView()
-                }
-            }
+            LibraryView()
         }
     }
 }

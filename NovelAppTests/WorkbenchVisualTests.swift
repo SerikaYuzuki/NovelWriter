@@ -60,7 +60,7 @@ struct WorkbenchVisualTests {
         let defaults = makeIsolatedTestUserDefaults()
         let state = AppState(dependencies: AppDependencies(userDefaults: defaults))
         let presenter = DocumentPanelPresenter(appState: state)
-        let host = NSHostingView(rootView: LibraryWindowView().environment(state).environment(presenter))
+        let host = NSHostingView(rootView: LibraryView().environment(state).environment(presenter))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 540), styleMask: [.titled], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.contentView = host

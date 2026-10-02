@@ -11,8 +11,6 @@ import SwiftUI
 /// `WorkbenchOutlineToolbarContent`へ分け、各列のnative tracking separatorを保つ。
 /// アプリ操作は個別に移動・削除でき、Sidebar開閉と検索はOS標準項目を使う。
 struct WorkbenchToolbarContent: CustomizableToolbarContent {
-    @Environment(\.openWindow) private var openWindow
-    @Environment(\.dismissWindow) private var dismissWindow
     @Environment(AppState.self) private var appState
     @Environment(EditorSearchSession.self) private var editorSearchSession
     @Environment(SnapshotMenuPresenter.self) private var snapshotMenuPresenter
@@ -46,9 +44,7 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
             ToolbarItem(id: WorkbenchToolbarItemID.library) {
                 Button {
                     Task {
-                        guard await appState.returnToSnapshotLibrary() else { return }
-                        openWindow(id: "library")
-                        dismissWindow(id: "workbench")
+                        await appState.returnToSnapshotLibrary()
                     }
                 } label: {
                     Label("作品一覧", systemImage: "books.vertical")

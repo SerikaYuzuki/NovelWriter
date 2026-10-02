@@ -134,7 +134,10 @@ extension AppState {
     /// Refresh the account-scoped remote catalog in the background. The
     /// provider performs account/fence filtering; this layer only deduplicates
     /// by WorkID and merges the result into the local shelf.
-    func refreshSnapshotRemoteCatalog() async {
+    func refreshSnapshotRemoteCatalog(loadMore: Bool = false) async {
+        if loadMore, snapshotSyncLibraryIsLoading || snapshotSyncRemoteCatalogNextCursor == nil {
+            return
+        }
         guard let application = snapshotSyncV2Application,
               let session = authSession,
               authUIState == .signedIn(accountID: session.accountID) else { return }
@@ -150,9 +153,9 @@ extension AppState {
             }
         }
         do {
-            var cursor: String?
-            var items: [SyncV2RemoteCatalogEntry] = []
-            repeat {
+            let cursor = loadMore ? snapshotSyncRemoteCatalogNextCursor : nil
+            var items: [SyncV2RemoteCatalogEntry] = loadMore ? snapshotSyncRemoteCatalogItems : []
+            do {
                 guard matchesSnapshotSyncV2AccountScope(accountScope),
                       snapshotSyncV2CatalogRefreshToken == operationToken else { return }
                 #if FUMINIWA_TEST_COMPOSITION
@@ -167,8 +170,8 @@ extension AppState {
                 guard matchesSnapshotSyncV2AccountScope(accountScope),
                       snapshotSyncV2CatalogRefreshToken == operationToken else { return }
                 items.append(contentsOf: page.items)
-                cursor = page.nextCursor
-            } while cursor != nil
+                snapshotSyncRemoteCatalogNextCursor = page.nextCursor
+            }
             guard matchesSnapshotSyncV2AccountScope(accountScope),
                   snapshotSyncV2CatalogRefreshToken == operationToken else {
                 return

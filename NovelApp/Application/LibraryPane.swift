@@ -29,27 +29,31 @@ struct LibraryPane: View {
     @State private var selection: UUID?
     @State private var searchText = ""
     @State private var pendingImportOpen: StartupLibraryWork?
-    @Environment(\.openWindow) private var openWindow
-    @Environment(\.dismissWindow) private var dismissWindow
+    @FocusState private var searchFocused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.small) {
             HStack {
-                Text("作品一覧")
-                    .font(.headline)
+                Image("FuminiwaBookSprout").resizable().scaledToFit()
+                    .frame(width: 56, height: 56).accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: Spacing.extraSmall) {
+                    Text("ふみにわ").font(.largeTitle.bold())
+                    Text("書きたい物語を、ここから。")
+                        .font(.subheadline).foregroundStyle(.secondary)
+                }
                 Spacer()
-                Button("新規", systemImage: "plus") {
+                Button("新しい作品…", systemImage: "plus") {
                     documentPanelPresenter.presentNewDocument()
                 }
                 .labelStyle(.titleAndIcon)
+                .buttonStyle(.borderedProminent)
                 .help("新しい作品")
                 .disabled(!appState.permitsNewDocument)
+                Button("作品を取り込む…", systemImage: "square.and.arrow.down") {
+                    documentPanelPresenter.presentOpenPanel()
+                }
+                .disabled(!appState.permitsDocumentImport)
                 Menu {
-                    Button("作品を取り込む…", systemImage: "square.and.arrow.down") {
-                        documentPanelPresenter.presentOpenPanel()
-                    }
-                    .labelStyle(.iconOnly)
-                    .help("作品を取り込む")
                     Button("更新", systemImage: "arrow.clockwise") {
                         Task {
                             await appState.refreshSnapshotLibrary()
@@ -73,6 +77,8 @@ struct LibraryPane: View {
             }
             .padding(.horizontal, Spacing.medium)
             TextField("作品を検索", text: $searchText)
+                .focused($searchFocused)
+                .accessibilityIdentifier("library.search")
                 .textFieldStyle(.roundedBorder)
                 .padding(.horizontal, Spacing.medium)
             if let failure = appState.snapshotSyncLibraryFailure ?? appState.snapshotSyncLibraryLocalFailure {
@@ -95,7 +101,8 @@ struct LibraryPane: View {
                 } else {
                     List(selection: $selection) {
                         ForEach(filteredWorks) { work in workRow(work) }
-                    }.listStyle(.sidebar)
+                    }.listStyle(.plain)
+                        .scrollContentBackground(.hidden)
                 }
             }
             .onChange(of: searchText) { _, _ in
@@ -106,23 +113,37 @@ struct LibraryPane: View {
             .overlay {
                 if filteredWorks.isEmpty {
                     if appState.startupState == .loading || appState.snapshotSyncLibraryIsLoading {
-                        ContentUnavailableView("作品一覧を読み込み中…", systemImage: "arrow.clockwise")
+                        ProgressView("作品一覧を読み込み中…")
                     } else if let failure = appState.snapshotSyncLibraryFailure ?? appState.snapshotSyncLibraryLocalFailure {
                         ContentUnavailableView(SyncV2LibraryPresentation.isOffline(failure) ? "オフラインです" : "作品一覧を読み込めませんでした",
                                                systemImage: SyncV2LibraryPresentation.isOffline(failure) ? "wifi.slash" : "exclamationmark.circle",
                                                description: Text("「更新」からもう一度読み込めます。端末内では「新規」から書き始められます。"))
                     } else {
-                        ContentUnavailableView(
-                            searchText.isEmpty ? "最初の作品を書きましょう" : "作品が見つかりません",
-                            systemImage: searchText.isEmpty ? "book.closed" : "magnifyingglass",
-                            description: Text(searchText.isEmpty ? "「新規」からオフラインでも始められます。" : "検索する言葉を変えてください。")
-                        )
+                        if searchText.isEmpty {
+                            ContentUnavailableView {
+                                Image("FuminiwaBookSprout").resizable().scaledToFit()
+                                    .frame(width: 144, height: 144).accessibilityHidden(true)
+                                Text("最初の作品を書きましょう")
+                            } description: {
+                                Text("オフラインでも作成・編集できます。")
+                            } actions: {
+                                Button("新しい作品…") { documentPanelPresenter.presentNewDocument() }
+                                    .buttonStyle(.borderedProminent)
+                                    .disabled(!appState.permitsNewDocument)
+                                Button("作品を取り込む…") { documentPanelPresenter.presentOpenPanel() }
+                                    .disabled(!appState.permitsDocumentImport)
+                            }
+                        } else {
+                            ContentUnavailableView("作品が見つかりません", systemImage: "magnifyingglass",
+                                                   description: Text("検索する言葉を変えてください。"))
+                        }
                     }
                 }
             }
             .contextMenu(forSelectionType: UUID.self) { ids in
                 if let work = works.first(where: { ids.contains($0.id) }) {
                     Button("開く") { open(work) }.disabled(!canOpen(work))
+                    importMenu(work)
                     takeButton(work)
                     renameButton(work)
                     deleteButton(work)
@@ -132,6 +153,14 @@ struct LibraryPane: View {
                     open(work)
                 }
             }
+            if appState.snapshotSyncRemoteCatalogNextCursor != nil {
+                Button("サーバーの作品をさらに読み込む") {
+                    Task { await appState.refreshSnapshotRemoteCatalog(loadMore: true) }
+                }
+                .disabled(appState.snapshotSyncLibraryIsLoading)
+                .frame(maxWidth: .infinity)
+            }
+            Divider()
             HStack {
                 AccountAccessView()
                 Spacer()
@@ -149,7 +178,11 @@ struct LibraryPane: View {
                 .padding(.horizontal, Spacing.medium)
                 .padding(.bottom, Spacing.small)
         }
+        .padding(.top, Spacing.medium)
         .toolbar { ShelfDisplayPicker(selection: $display) }
+        .onReceive(NotificationCenter.default.publisher(for: .focusLibrarySearch)) { _ in
+            searchFocused = true
+        }
         .background(FuminiwaColor.paper.color)
         .alert("作品名を変更", isPresented: Binding(
             get: { pendingRename != nil },
@@ -200,7 +233,7 @@ struct LibraryPane: View {
             Text("「\(pendingDeletion?.title ?? "")」を一覧から削除します。同期した作品のサーバー受領済みデータは1年間保管されます。この端末だけの作品は元に戻せません。")
         }
         .task(id: appState.snapshotSyncV2AccountScopeToken) {
-            guard let application = appState.snapshotSyncV2Application else { return }
+            guard observesImports, let application = appState.snapshotSyncV2Application else { return }
             for await _ in await application.stateChanges() {
                 guard !Task.isCancelled else { return }
                 await appState.refreshSnapshotLibrary()
@@ -252,32 +285,46 @@ struct LibraryPane: View {
 
 private extension LibraryPane {
     private var shelfGrid: some View {
-        ScrollView {
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), alignment: .top)], spacing: Spacing.outer) {
-                ForEach(filteredWorks) { work in
-                    workRow(work)
-                        .padding(Spacing.small)
-                        .background(selection == work.id ? FuminiwaColor.accentMuted.color : FuminiwaColor.surface.color,
-                                    in: RoundedRectangle(cornerRadius: Radius.card))
-                        .onTapGesture(count: 2) { open(work) }
-                        .onTapGesture { selection = work.id }
-                        .accessibilityAddTraits(selection == work.id ? .isSelected : [])
-                        .accessibilityAction(named: "開く") { open(work) }
-                        .focusable()
-                        .focused($focusedWorkID, equals: work.id)
-                        .onKeyPress(.return) { open(work); return .handled }
+        GeometryReader { geometry in
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 160), spacing: Spacing.outer, alignment: .top)], spacing: Spacing.outer) {
+                        ForEach(filteredWorks) { work in
+                            workRow(work)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(Spacing.small)
+                                .background(selection == work.id ? FuminiwaColor.accentMuted.color : FuminiwaColor.surface.color,
+                                            in: RoundedRectangle(cornerRadius: Radius.card))
+                                .contentShape(Rectangle())
+                                .onTapGesture(count: 2) { open(work) }
+                                .onTapGesture { selection = work.id; focusedWorkID = work.id }
+                                .accessibilityAddTraits(selection == work.id ? .isSelected : [])
+                                .accessibilityAction(named: "開く") { open(work) }
+                                .focusable()
+                                .focused($focusedWorkID, equals: work.id)
+                                .id(work.id)
+                        }
+                    }.padding(Spacing.medium)
                 }
-            }.padding(Spacing.medium)
-        }
-        .onChange(of: focusedWorkID) {
-            _, id in if let id {
-                selection = id
+                .onChange(of: focusedWorkID) { _, id in
+                    if let id {
+                        selection = id; proxy.scrollTo(id)
+                    }
+                }
+                .onKeyPress(keys: [.leftArrow, .rightArrow, .upArrow, .downArrow]) { press in
+                    let columns = max(1, Int((geometry.size.width - 2 * Spacing.medium + Spacing.outer) / (160 + Spacing.outer)))
+                    let offset = press.key == .leftArrow ? -1 : press.key == .rightArrow ? 1 : press.key == .upArrow ? -columns : columns
+                    guard !filteredWorks.isEmpty else { return .ignored }
+                    let index = filteredWorks.firstIndex { $0.id == selection } ?? 0
+                    focusedWorkID = filteredWorks[min(max(index + offset, 0), filteredWorks.count - 1)].id
+                    return .handled
+                }
+                .onKeyPress(.return) {
+                    guard let work = works.first(where: { $0.id == selection }) else { return .ignored }
+                    open(work)
+                    return .handled
+                }
             }
-        }
-        .onKeyPress(.return) {
-            guard let work = works.first(where: { $0.id == selection }) else { return .ignored }
-            open(work)
-            return .handled
         }
     }
 
@@ -378,7 +425,7 @@ private extension LibraryPane {
     }
 
     private func deleteButton(_ work: StartupLibraryWork) -> some View {
-        Button("削除…", systemImage: "trash", role: .destructive) {
+        Button("作品を削除…", systemImage: "trash", role: .destructive) {
             deletionAccountScope = appState.snapshotSyncV2AccountScopeToken
             pendingDeletion = work
         }
@@ -407,13 +454,7 @@ private extension LibraryPane {
     }
 
     private func performOpen(_ work: StartupLibraryWork) {
-        Task {
-            if await appState.openLibraryWork(work),
-               appState.currentSnapshotSyncV2WorkID == work.workID, appState.startupState.isReady {
-                openWindow(id: "workbench")
-                dismissWindow(id: "library")
-            }
-        }
+        Task { await appState.openLibraryWork(work) }
     }
 
     private var filteredWorks: [StartupLibraryWork] {

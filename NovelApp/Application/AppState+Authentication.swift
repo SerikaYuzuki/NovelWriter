@@ -696,6 +696,7 @@ extension AppState {
     private func clearAccountScopedSnapshotUI() {
         invalidateSnapshotSyncV2AccountOperations()
         snapshotSyncRemoteCatalogItems = []
+        snapshotSyncRemoteCatalogNextCursor = nil
         snapshotSyncLibraryFailure = nil
         snapshotSyncLibraryLocalFailure = nil
         snapshotSyncLibraryIsLoading = false

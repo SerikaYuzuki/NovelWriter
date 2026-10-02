@@ -33,7 +33,7 @@ final class DocumentPanelPresenter {
     }
 
     func presentOpenPanel(expectedSession: DocumentSessionToken? = nil) {
-        guard appState.permitsDocumentTransitionOperation else { return }
+        guard appState.permitsDocumentImport else { return }
         let session = expectedSession ?? appState.documentSessionToken
         guard session == appState.documentSessionToken else { return }
 

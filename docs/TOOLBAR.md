@@ -10,7 +10,7 @@
 
 ## 2. 既定レイアウト
 
-- Sidebar上: 標準開閉。作品一覧へ戻る入口は移動可能な通常項目としてdetail側へ置く。IME確定・端末保存に成功してから一覧を開き、編集windowを閉じる。
+- Sidebar上: 標準開閉。作品一覧へ戻る入口は移動可能な通常項目としてdetail側へ置く。IME確定・端末保存に成功してから同じwindowで一覧へ戻る。
 - Outline上: そのsection固有の章／人物／ノート／資料追加。作品名はOutline上に置かず、本文領域上端の見出しとして表示する。
 - 執筆のOutline上: 章追加、話追加、話名変更の順。Editor上: 作品一覧、可変余白、話メモ、履歴、保存して同期、書き出し、プロットカード、話内検索、右端にAI支援。
 - 同期操作と状態を一つのボタンへまとめ、「同期中」「同期済み」「通信待ち」「同期失敗」等を文字で示す。端末内作品や未確認の状態を同期済みと表示しない。
@@ -24,7 +24,7 @@
 
 | ID | 操作 | 配置・カスタマイズ |
 | --- | --- | --- |
-| `workbench.library` | 保存して作品一覧へ戻り、編集windowを閉じる | 移動・削除可 |
+| `workbench.library` | 保存して同じwindowの作品一覧へ戻る | 移動・削除可 |
 | `workbench.episode.add` | 選択章へ話を追加 | 執筆時、移動・削除可 |
 | `workbench.snapshot.sync` | 状態を文字表示し、クリックで保存・同期。競合時は確認画面 | 全section、移動・削除可。macOS 26.1以降は表示優先度high |
 | `workbench.episode.rename` | 選択中の話の名前を変更 | 執筆時、移動・削除可 |
@@ -72,7 +72,7 @@ toolbar非表示・項目削除後も、章・人物・世界観・プロット�
 
 ## 9. 作品一覧・名前変更・プロット参照
 
-作品一覧を起動sceneとする。open・新規・Importが成功したら編集windowを開いて一覧windowを閉じ、失敗したら現在のwindowを保つ。「作品一覧…」はtoolbarと同じ入力確定・保存境界を通る。
+macOSは`workbench`の単一Window sceneを使う。未選択時は全幅の作品一覧、open・新規・Import成功後は同じwindowのWorkbenchを表示する。失敗時は現在の画面と原稿を保つ。独立したlibrary windowは設けない。「作品一覧…」はtoolbarと同じ入力確定・保存境界を通る。
 
 端末内作品の保存は同じWorkIDへの保存だけ。同期用コピーは右クリックの「同期用のコピーを作成…」で明示し、通常保存やCmd+Sで作品数を増やさない。
 
@@ -89,3 +89,5 @@ native toolbarの配置は端末UserDefaultsへsection別に保持し、window�
 ## サムネイルの入口
 
 作品情報・人物詳細・世界観ノート詳細の画像menuから設定／置換／削除する。画像のcontext menuも同じ操作を提供し、画像wellへのファイルdrag & dropは同じ切り抜きsheetへ進む。toolbar項目は追加しない。棚では表紙と既存の同期記号・文言を併存させる。[保存契約](sync/v2/thumbnails.md)。
+
+作品一覧のヘッダーにアプリ名・新規・Importを置く。表紙／一覧切替、⌘F検索、表紙の矢印キー選択、Return／double clickでopenに対応する。⌘⇧Lは同じwindowで一覧へ戻る。閉じたwindowは標準Windowメニューから再表示する。

@@ -165,17 +165,9 @@ struct FuminiwaApp: App {
     #endif
 
     var body: some Scene {
-        Window("作品一覧", id: "library") {
-            LibraryWindowView()
-                .defaultAppStorage(appState.userDefaults)
-                .environment(appState)
-                .environment(documentPanelPresenter)
-                .task { await bootstrapIfNeeded() }
-        }
-        .defaultSize(width: 760, height: 520)
-        .windowToolbarStyle(.unified)
         Window("ふみにわ", id: "workbench") {
             ContentView()
+                .defaultAppStorage(appState.userDefaults)
                 .environment(appState)
                 .environment(editorSettings)
                 .environment(documentPanelPresenter)
@@ -183,13 +175,15 @@ struct FuminiwaApp: App {
                 .environment(exportPresenter)
                 .environment(editorSearchSession)
                 .environment(editorCommandSession)
+                .background(WorkbenchReopenBridge(delegate: applicationDelegate))
                 .task { await bootstrapIfNeeded() }
         }
+        .defaultSize(width: 1100, height: 760)
         // Native unified chrome keeps split-view tracking separators in the toolbar row.
         .windowToolbarStyle(.unified)
         .commands {
             CommandGroup(replacing: .newItem) {
-                LibraryWindowCommand().environment(appState)
+                LibraryCommand().environment(appState)
                 Divider()
                 Button("新しい作品") {
                     documentPanelPresenter.presentNewDocument()
@@ -200,7 +194,7 @@ struct FuminiwaApp: App {
                     documentPanelPresenter.presentOpenPanel()
                 }
                 .keyboardShortcut("o", modifiers: .command)
-                .disabled(!appState.permitsDocumentTransitionOperation)
+                .disabled(!appState.permitsDocumentImport)
             }
             CommandGroup(replacing: .saveItem) {
                 Button("保存して同期") {
@@ -325,11 +319,17 @@ struct FuminiwaApp: App {
             }
             CommandGroup(after: .textEditing) {
                 Divider()
-                WorkbenchFindCommands(
-                    appState: appState,
-                    editorSearchSession: editorSearchSession
-                )
-                .disabled(!appState.permitsDocumentInteraction)
+                if !appState.startupState.isReady {
+                    Button("作品を検索…") {
+                        NotificationCenter.default.post(name: .focusLibrarySearch, object: nil)
+                    }.keyboardShortcut("f", modifiers: .command)
+                } else {
+                    WorkbenchFindCommands(
+                        appState: appState,
+                        editorSearchSession: editorSearchSession
+                    )
+                    .disabled(!appState.permitsDocumentInteraction)
+                }
             }
             CommandMenu("表示") {
                 ForEach(ProjectSection.allCases) { section in
@@ -447,5 +447,17 @@ private struct WorkbenchFindCommands: View {
             editorSearchSession.jump(direction: .backward, in: appState.selectedEpisode)
         }
         .keyboardShortcut("g", modifiers: [.command, .shift])
+    }
+}
+
+/// Keep the scene action available after the last window closes (Dock / Finder).
+private struct WorkbenchReopenBridge: View {
+    @Environment(\.openWindow) private var openWindow
+    let delegate: ApplicationDelegate
+
+    var body: some View {
+        Color.clear.onAppear {
+            delegate.reopenWorkbench = { openWindow(id: "workbench") }
+        }
     }
 }

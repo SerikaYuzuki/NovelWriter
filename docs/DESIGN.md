@@ -219,3 +219,7 @@ AIのHTTP・Keychainは共有WritingAssistant内に置き、本文保存やEdito
 - 外部原本のopen-in-place、SQLite DB自体のonline共有、旧CloudKit/v1へのfallback。
 - ログイン後の既存unbound作品の自動adopt、別AccountIDへのWorkIDの付け替え。
 - 明示送信なしのAI送信、依頼で許可した範囲外の書換え。
+
+## macOSの作品一覧と画面遷移
+
+`workbench`の単一Window sceneで、Loading／作品選択時は全幅の`LibraryView`、Ready時はWorkbench、Recovery時は復旧表示を使う。作品一覧へ戻る操作は`returnToSnapshotLibrary()`のIME確定・local checkpoint境界を通り、windowを閉じたり作り直したりしない。起動設定、外部package open、終了処理は既存のAppState／ApplicationDelegateが所有する。

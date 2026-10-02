@@ -44,7 +44,7 @@ struct ThumbnailCaptureTests {
         for dark in [false, true] {
             let scheme: ColorScheme = dark ? .dark : .light
             let suffix = dark ? "dark" : "light"
-            try await capture(LibraryWindowView().environment(state).environment(DocumentPanelPresenter(appState: state))
+            try await capture(LibraryView().environment(state).environment(DocumentPanelPresenter(appState: state))
                 .preferredColorScheme(scheme), name: "shelf-\(suffix)", dark: dark, directory: directory)
             for section in [ProjectSection.projectInfo, .characters, .worldbuilding] {
                 state.workspaceSelection = WorkspaceSelection(section: section)

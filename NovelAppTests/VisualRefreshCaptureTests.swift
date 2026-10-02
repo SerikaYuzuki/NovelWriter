@@ -120,11 +120,11 @@ struct VisualRefreshCaptureTests {
         state.libraryImportFailures[failed] = .retryable(.lostResponse)
         for mode in [ShelfDisplay.grid, .list] {
             defaults.set(mode.rawValue, forKey: "library.display")
-            try await capture(LibraryWindowView(observesLibrary: false).environment(state).environment(DocumentPanelPresenter(appState: state))
+            try await capture(LibraryView(observesLibrary: false).environment(state).environment(DocumentPanelPresenter(appState: state))
                 .defaultAppStorage(defaults).preferredColorScheme(dark ? .dark : .light),
                 size: NSSize(width: 1100, height: 850), dark: dark,
                 url: directory.appendingPathComponent("macos-shelf-\(mode.rawValue)-\(dark ? "dark" : "light").png"))
-            try await capture(LibraryWindowView(observesLibrary: false).environment(state).environment(DocumentPanelPresenter(appState: state))
+            try await capture(LibraryView(observesLibrary: false).environment(state).environment(DocumentPanelPresenter(appState: state))
                 .defaultAppStorage(defaults).preferredColorScheme(dark ? .dark : .light),
                 size: NSSize(width: 700, height: 850), dark: dark,
                 url: directory.appendingPathComponent("macos-shelf-\(mode.rawValue)-narrow-\(dark ? "dark" : "light").png"))
@@ -132,7 +132,7 @@ struct VisualRefreshCaptureTests {
         state.snapshotSyncV2RemoteOnlyOpeningWorkID = nil
         for mode in [ShelfDisplay.grid, .list] {
             defaults.set(mode.rawValue, forKey: "library.display")
-            try await capture(LibraryWindowView(observesLibrary: false).environment(state).environment(DocumentPanelPresenter(appState: state))
+            try await capture(LibraryView(observesLibrary: false).environment(state).environment(DocumentPanelPresenter(appState: state))
                 .defaultAppStorage(defaults).preferredColorScheme(dark ? .dark : .light),
                 size: NSSize(width: 700, height: 850), dark: dark,
                 url: directory.appendingPathComponent("macos-shelf-\(mode.rawValue)-retry-enabled-\(dark ? "dark" : "light").png"))

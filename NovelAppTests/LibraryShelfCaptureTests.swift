@@ -15,7 +15,7 @@ struct LibraryShelfCaptureTests {
             state.startupState = .documentSelection(.init(works: [], presentation: .localAndRemote,
                                                           connection: mode == "offline" ? .offline : .accountRequired))
             state.lastStartupLibraryConnection = mode == "offline" ? .offline : .accountRequired
-            let view = LibraryWindowView().environment(state)
+            let view = LibraryView().environment(state)
                 .environment(DocumentPanelPresenter(appState: state)).preferredColorScheme(.light)
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 760, height: 520),
                                   styleMask: [.titled, .closable], backing: .buffered, defer: false)

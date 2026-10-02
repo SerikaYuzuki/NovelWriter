@@ -113,6 +113,7 @@ final class AppState {
     var snapshotSyncConflict: SyncV2ConflictProjection?
     var snapshotSyncHistory: [SyncV2HistoryItem] = []
     var snapshotSyncLibraryWorks: [StartupLibraryWork] = []
+    var snapshotSyncRemoteCatalogNextCursor: String?
     var snapshotSyncRemoteCatalogItems: [SyncV2RemoteCatalogEntry] = []
     var snapshotSyncCurrentWorkAccountState: SyncV2LibraryAccountState?
     @ObservationIgnored var writingMCPControllerStorage: WritingMCPController?

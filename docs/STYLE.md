@@ -10,7 +10,7 @@
 - 本文キャンバスの色・フォントはchromeと独立した端末設定。OS外観変更で上書きせず、作品へ保存しない。
 - 本文を最も広くし、Sidebar／Outline／toolbarは控えめにする。未実装機能やAIの予約領域を表示しない。
 - 棚は単一の作品一覧。通常操作に内部path、DB、WorkIDを出さず、外部packageは「作品を取り込む…」「書き出す…」から扱う。
-- macOSは作品一覧からWorkbench、iOSは作品棚から作品ホームと各機能へ進む。製品上の階層は維持し、旧CloudKitのラベルや保存処理は戻さない。
+- macOSは同じwindow内の全幅作品一覧からWorkbench、iOSは作品棚から作品ホームと各機能へ進む。製品上の階層は維持し、旧CloudKitのラベルや保存処理は戻さない。
 
 ## 2. カラー
 
@@ -96,7 +96,7 @@
 - macOS本文の「滑らかなカーソル」は既定ON。設定からOFFにでき、OSの「視差効果を減らす」では標準表示に戻す。縦線だけを90msで追従させ、IME候補の位置や実際の入力位置は遅らせない。
 - 編集一覧はEnterで編集、Deleteは確認付き削除。作品chooserは選択とopenを分け、ListにfocusがあるときのReturnとdouble clickで開く。
 - toolbarを唯一の入口にしない。削除可能なitemにはmenu／context menuの代替を残す。
-- macOSはCmd+1〜7でsection、Cmd+Nで新規、Cmd+OでImport、Cmd+Shift+SでExport。Cmd+Fはfocus対象のOutline検索／話内検索を使い分ける。
+- macOSはCmd+1〜7でsection、Cmd+Nで新規、Cmd+OでImport、Cmd+Shift+SでExport。Cmd+Fは作品一覧では棚検索へfocusし、Workbenchではfocus対象のOutline検索／話内検索を使い分ける。
 - Cmd+Sは同じlocal保存直列化へ接続する。保存後のv2 workerは非同期で再開し、network完了を待たない。
 
 ## 8. 文言

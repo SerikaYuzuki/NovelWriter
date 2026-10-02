@@ -437,10 +437,10 @@ extension AppState {
     func openExternalDocument(at url: URL) async -> Bool {
         let isBootstrapImport = !hasCompletedBootstrap && startupState == .loading
         guard let application = snapshotSyncV2Application,
-              permitsDocumentTransitionOperation || isBootstrapImport else { return false }
+              permitsDocumentImport || isBootstrapImport else { return false }
         return await documentOperationGate.perform { [weak self] in
             guard let self,
-                  permitsDocumentTransitionOperation || isBootstrapImport,
+                  permitsDocumentImport || isBootstrapImport,
                   editorCommandSession.prepareForDocumentTransition() else { return false }
             defer { editorCommandSession.resumeAfterDocumentTransition() }
             isDocumentTransitionInProgress = true
