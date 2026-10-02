@@ -7,6 +7,7 @@ import NovelCore
 import NovelSyncV2
 import NovelSyncV2Application
 import NovelSyncV2PortableBridge
+import NovelTiming
 import NovelWritingProgress
 import NovelWritingSupport
 import Observation
@@ -96,7 +97,8 @@ typealias DocumentSessionToken = AppDocumentSessionToken
 @Observable
 final class AppState {
     let syncSessionController = SyncSessionController<AppDocumentSessionToken, SnapshotSyncV2AccountScopeToken, Bool>()
-    let writingSyncScheduler = WritingSyncScheduler()
+    let timing: FuminiwaTiming
+    let writingSyncScheduler: WritingSyncScheduler
     let writingProgress: WritingProgressTracker
     let writingProgressRoot: URL?
     var document: NovelDocument
@@ -204,7 +206,6 @@ final class AppState {
     @ObservationIgnored let systemWakeObserver = NotificationObserverToken(center: NSWorkspace.shared.notificationCenter)
 
     static let projectSectionKey = AppPreferenceKey.projectSection
-    static let autosaveDebounceNanoseconds: UInt64 = 2_000_000_000
 
     var usesSnapshotSyncV2Runtime: Bool {
         snapshotSyncV2Application != nil || snapshotSyncV2Factory != nil
@@ -249,8 +250,11 @@ final class AppState {
         dependencies: AppDependencies,
         initialStartupState: AppStartupState = .loading
     ) {
+        let timing = FuminiwaTiming(defaults: dependencies.userDefaults)
+        self.timing = timing
+        writingSyncScheduler = WritingSyncScheduler(timing: timing)
         textCheck = TextCheckSession(defaults: dependencies.userDefaults)
-        writingProgress = WritingProgressTracker(defaults: dependencies.userDefaults)
+        writingProgress = WritingProgressTracker(defaults: dependencies.userDefaults, timing: timing)
         writingProgressRoot = dependencies.writingProgressRoot
         portableBridge = dependencies.portableBridge
         userDefaults = dependencies.userDefaults
@@ -312,7 +316,7 @@ final class AppState {
         )
 
         saveCoordinator = V2DocumentSaveCoordinator(
-            debounceNanoseconds: Self.autosaveDebounceNanoseconds,
+            timing: timing,
             currentDocument: { [weak self] in
                 guard let self, startupState.isReady else { return nil }
                 return document

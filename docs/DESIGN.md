@@ -42,6 +42,7 @@
 | `NovelApp/` | macOSの作品状態、Workbench、入力・OS境界 |
 | `NovelAppIOS/` | iPhone / iPadの作品棚、段階navigation、入力・OS境界 |
 | `NovelKit/Sources/NovelCore/` | 文書・章・話・関連モデルと値型、依存ゼロ |
+| `NovelTiming` | 端末内の起動時時間設定。Foundationのみ。保存・同期のデータには含めない |
 | `NovelSyncV2` | canonical Snapshot・command・scope等の値と契約 |
 | `NovelSyncV2Store` | SQLite transaction、Snapshot / objects、Outbox / Inbox、履歴・競合 |
 | `NovelSyncV2Application` | ローカル操作、同期計画・worker、account transitionの共通窓口 |
@@ -69,6 +70,10 @@ v2 storeはcurrent state、immutable Snapshotとobjects、head / generation、ac
 `LocalSyncV2Store`だけを公開actorとし、内部の`OutboxRepository`（intent・command・receipt・upload・復旧）、`InboxRepository`（staging・attestation・adoption・shallow/backfill）、`ConflictRepository`（候補・keepBoth・restore）、`AccountRepository`（binding・scope遷移）、`DeletionRepository`（削除intentと順序付きpurge）、`WorkRepository`（work・snapshot・object・履歴・remote対応）へ委譲する。repositoryは同期的なstructで、同じ`SQLiteExecutor`を保持する。個別のactorやconnectionは作らない。
 
 Storeがcheckpoint、install/adopt、publish acknowledgement、account transition、deletion等のtransactionを開始する。repositoryの`...Transaction` / `...InTransaction`と永続化helperはそのtransaction内で呼び、SQLの実行順序を保つ。executorはconnection・statement cache・query/exec/changes・transaction内のobject検証cacheを所有し、ネストは従来どおり拒否する。schemaの移行判断とSQL順序は`Schema.swift`、低水準のCSQLite操作は`SQLiteExecutor.swift` / `SQLiteExecutor+Schema.swift`に置く。
+
+通常保存のscope解決は、同じStore actorが完全検証した現在版、または直前のautosaveでcommitした検証済み版に限り、既存本文・添付・portable resourceの全読込／再hash／全decodeを省く。cacheは本文コピーを持たず、WorkID・account scope・snapshot ID・世代・document anchor・SQLiteの`data_version`と`total_changes()`を照合する。作品openは必ず完全検証し、成功した安定読取は次のautosaveのstampを記録する。読込中の外部書込やcache記帳失敗はstampを捨てるだけで、完全読込に成功したopenを失敗へ変えない。cache missの完全検証も記録するため、resolverとStoreで同じ版を二度検証しない。
+
+本文を変えないと監査したStore内部のoutbox／upload書込とleaf昇格は、書込前のstampが有効で、書込後もcurrent pointer・世代・scope・anchor・`data_version`が同じ時だけ`total_changes()`を更新して引き継ぐ。対象は[CODE_HEALTH](CODE_HEALTH.md#同期onでのcheckpoint-cache)に列挙する。object／snapshot／entries／parentsのimmutability triggerに加え、対象経路は既存entriesへの追加insertやresource変更もしない。未分類transaction、account／作品切替、import・remote install／adoption・復元、世代不一致、close／再open、rollbackは無効化する。別connectionのSQL変更も検知し、書込lock取得後に`data_version`を再確認する。取り込み時の完全検証と新規snapshotの全decode／検証は維持する。cache記帳失敗をCOMMIT後の保存失敗へ変えない。
 
 NovelStorageはpackageの詳細を所有する。Importは外部原本を変えずnew WorkIDへ取り込み、Exportは既存のWorkID / session / binding / Undoを変えない。v2との接続は`NovelSyncV2PortableBridge`を使う。
 
@@ -174,6 +179,34 @@ macOSは[ContentView](../NovelApp/Application/ContentView.swift)から作品選�
 ### 6.4 保存
 
 現在の両Appは`V2DocumentSaveCoordinator`からv2 checkpointへ委譲する。`Cmd+S`・自動保存・遷移前保存を同じ直列化境界へ集める。document operation gateの内側で保存を待つが、network完了は待たない。gate付きpublic APIを相互に呼んで再入待ちにしない。
+
+通常のautosaveは入力停止2秒のdebounceで一回分だけ保存する。保存中に新しいrevisionが届いた場合は、その入力のdebounceを待つ。timerが保存中に満了した場合は再予約する。`saveNow`とexclusive flushは最新revisionまで直ちにdrainし、IME確定、話／作品切替、終了、background、明示保存／同期・スナップショット保存の境界を保つ。途中のrevisionだけ保存された時はdirty表示を保ち、未保存分があるのにsavedとは通知しない。
+
+保存・promotion・更新確認・送信retry・AI記録同期・進み具合の公開間隔は`NovelTiming.FuminiwaTiming`に集約し、両OSのhost生成時にアプリ側の`FuminiwaTiming+Defaults`でUserDefaultsから読み込み、NovelKitのruntime／schedulerへ値を注入する。NovelKitの時間設定型はUserDefaultsを読まない。変更はアプリ再起動後に反映する。以下のキーはすべて`fuminiwa.timing.`を先頭に付ける。単位は秒。数値は範囲内へclampし、非数値・bool・NaN・無限大は既定値に戻す。retry maximumはinitial以上、promotion maximumはidle以上にする。
+
+| キーの末尾 | 既定値 | 範囲 |
+| --- | ---: | ---: |
+| `autosaveDebounceSeconds` | 2 | 0.25〜60 |
+| `autosavePostSaveWaitSeconds` | 2 | 0.25〜60 |
+| `writingSyncVisibleSeconds` | 10 | 1〜600 |
+| `writingSyncHiddenSeconds` | 300 | 5〜3600 |
+| `writingSyncRetryInitialSeconds` | 20 | 1〜600 |
+| `writingSyncRetryMaximumSeconds` | 600 | 1〜3600（initial以上） |
+| `progressPublishSeconds` | 3 | 0.1〜60 |
+| `promotionIdleSeconds` | 60 | 1〜600 |
+| `promotionMaximumSeconds` | 300 | 1〜3600（idle以上） |
+| `headPollNormalSeconds` | 10 | 1〜600 |
+| `headPollTypingSeconds` | 120 | 1〜3600 |
+| `headPollFailureSeconds` | 60 | 1〜3600 |
+| `headPollTypingWindowSeconds` | 60 | 1〜600 |
+| `sendRetryInitialSeconds` | 2 | 0.25〜60 |
+| `sendRetryMaximumSeconds` | 60 | 0.25〜600（initial以上） |
+
+`autosavePostSaveWaitSeconds`は保存・exclusive操作中にtimerが満了して再予約する待機と、保存完了時に未保存revisionが残りtimerがない場合の待機に使う。入力が予約したtimerは通常のdebounceを使う。即時flushには適用しない。AI記録はinitialから倍増してmaximumで止め、成功でリセットする。進み具合の値はUI公開の間隔で、別DBへの永続化retry間隔ではない。
+
+macOSではアプリを終了し、たとえば`defaults write dev.serikayuzuki.fuminiwa fuminiwa.timing.autosaveDebounceSeconds -float 4`を実行して再起動する。戻す時は`defaults delete dev.serikayuzuki.fuminiwa fuminiwa.timing.autosaveDebounceSeconds`。iOS開発ビルドはXcode SchemeのRun → Arguments Passed On Launchに`-fuminiwa.timing.autosaveDebounceSeconds`と`4`を追加して起動する（NSArgumentDomainの上書き）。外すと端末の保存値／既定値へ戻る。設定UIは追加しない。
+
+前面で開いている作品の更新確認は、最後の本文編集から60秒未満なら120秒間隔、それ以外は10秒間隔、失敗後は60秒間隔にする。待機中も注入時計で入力状態を再判定する。前面復帰と章・話・作品の遷移完了は即時確認を起動するが、遷移は通信を待たない。本文編集以外のメタデータ変更は入力中の期限を延ばさない。promotion／uploadと競合処理は既存の経路を保つ。送信retryはinitialから倍増し、既存の0.75〜1.25倍のjitterを掛け、maximumで止める。
 
 遷移の最終保存からinstallまでWorkbench全体の変更を止め、終了要求後は新しい作品操作を受け付けない（D-041）。
 

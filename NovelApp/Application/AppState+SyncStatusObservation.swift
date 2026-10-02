@@ -1,4 +1,5 @@
 import Foundation
+import NovelCore
 import SwiftUI
 
 extension AppState {
@@ -41,6 +42,8 @@ extension AppState {
 private struct SyncStatusObservationID: Hashable {
     let session: AppDocumentSessionToken
     let account: SnapshotSyncV2AccountScopeToken
+    var chapter: ChapterID?
+    var episode: EpisodeID?
     var isActive = true
 }
 
@@ -57,9 +60,10 @@ struct SnapshotSyncObservationModifier: ViewModifier {
             }
             .task(id: SyncStatusObservationID(
                 session: appState.documentSessionToken, account: appState.snapshotSyncV2AccountScopeToken,
-                isActive: scenePhase == .active
+                chapter: appState.selectedChapterID, episode: appState.selectedEpisodeID,
+                isActive: scenePhase == .active && !appState.isDocumentTransitionInProgress
             )) {
-                if scenePhase == .active {
+                if scenePhase == .active, !appState.isDocumentTransitionInProgress {
                     await appState.runAutomaticSnapshotSyncV2()
                 }
             }

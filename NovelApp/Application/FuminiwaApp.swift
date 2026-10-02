@@ -5,6 +5,7 @@ import NovelAuth
 import NovelAuthApple
 import NovelSyncV2Application
 import NovelSyncV2Runtime
+import NovelTiming
 import SwiftUI
 
 @main
@@ -71,12 +72,13 @@ struct FuminiwaApp: App {
         checkpointOverride: SnapshotSyncV2CheckpointOverride? = nil,
         openOverride: SnapshotSyncV2OpenOverride? = nil
     ) -> AppDependencies {
+        let timing = FuminiwaTiming(defaults: userDefaults)
         var dependencies = AppDependencies(
             userDefaults: userDefaults,
             defaultDocumentDirectoryName: "\(AppBuildFlavor.defaultDocumentDirectoryName)-TestHost",
             editorCommandSession: editorCommandSession,
             snapshotSyncV2Factory: {
-                try await SnapshotSyncV2Runtime.makeApplication(mode: .test(configuration))
+                try await SnapshotSyncV2Runtime.makeApplication(mode: .test(configuration), timing: timing)
             },
             writingProgressRoot: configuration.localRoot.url
         )
@@ -141,12 +143,13 @@ struct FuminiwaApp: App {
             origin: explicitOrigin, vault: authVault, authSessionCoordinator: authCoordinator,
             documentGate: platformGate, clientVersion: "0.1.0", clientPlatform: .macos
         )
+        let timing = FuminiwaTiming(defaults: userDefaults)
         let factory: (@Sendable () async throws -> SyncV2Application)? = {
             // The production configuration is typed and always receives the
             // Keychain vault plus the macOS gate. The runtime opens SQLite
             // even when the HTTPS lane is unreachable; it reports offline.
             guard let configuration = runtimeConfiguration else { throw SyncV2ApplicationError.invalidRuntimeMode }
-            return try await SnapshotSyncV2Runtime.makeApplication(mode: .production(configuration))
+            return try await SnapshotSyncV2Runtime.makeApplication(mode: .production(configuration), timing: timing)
         }
 
         return AppDependencies(

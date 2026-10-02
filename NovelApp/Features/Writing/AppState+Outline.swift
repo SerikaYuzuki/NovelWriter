@@ -574,6 +574,9 @@ extension AppState {
         if let workID = currentSnapshotSyncV2WorkID {
             writingProgress.manualChange(document: document, workID: workID.rawValue, episodeID: episodeID, content: content, previousContent: episode.content)
         }
+        if let application = snapshotSyncV2Application, let workID = currentSnapshotSyncV2WorkID {
+            Task { await application.recordBodyEdit(workID: workID) }
+        }
         document.updateEpisodeContent(content, for: episodeID, in: chapterID)
         editorProgressAlreadyTracked = true
         defer { editorProgressAlreadyTracked = false }

@@ -1,6 +1,7 @@
 import Foundation
 @testable import FUMINIWAIOS
 import NovelCore
+import NovelTiming
 import Testing
 
 @MainActor
@@ -23,7 +24,7 @@ struct IOSEditingDepartureRegressionTests {
         let started = AsyncStream<Void>.makeStream()
         let release = AsyncStream<Void>.makeStream()
         store.saveCoordinator = V2DocumentSaveCoordinator(
-            debounceNanoseconds: 60_000_000_000,
+            timing: FuminiwaTiming(autosaveDebounceSeconds: 60, autosavePostSaveWaitSeconds: 60),
             currentDocument: { store.document },
             saveOperation: { _ in
                 started.continuation.yield(())

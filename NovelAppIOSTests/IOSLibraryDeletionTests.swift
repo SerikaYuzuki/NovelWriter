@@ -3,6 +3,7 @@ import Foundation
 import NovelCore
 import NovelSyncV2
 import NovelSyncV2Application
+import NovelTiming
 import Testing
 
 @MainActor
@@ -105,7 +106,8 @@ extension IOSLibraryDeletionTests {
         let item = try #require(store.syncV2LibraryItems.first)
         let session = store.currentDocumentSessionToken
         store.saveCoordinator = V2DocumentSaveCoordinator(
-            debounceNanoseconds: 60_000_000_000, currentDocument: { store.document },
+            timing: FuminiwaTiming(autosaveDebounceSeconds: 60, autosavePostSaveWaitSeconds: 60),
+            currentDocument: { store.document },
             saveOperation: { _ in throw SyncV2ApplicationError.safeBoundaryRejected }
         )
         store.saveCoordinator.markDirty()

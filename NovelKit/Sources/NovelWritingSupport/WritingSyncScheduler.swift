@@ -1,4 +1,5 @@
 import Foundation
+import NovelTiming
 import Observation
 
 /// One foreground lane per document host. Manuscript saves never await this lane.
@@ -6,6 +7,7 @@ import Observation
 public final class WritingSyncScheduler {
     public private(set) var revision = 0
     public private(set) var failed = false
+    @ObservationIgnored private let timing: FuminiwaTiming
     @ObservationIgnored private let now: () -> Duration
     @ObservationIgnored private let sleep: (Duration) async throws -> Void
     @ObservationIgnored private var contextID: String?
@@ -19,8 +21,13 @@ public final class WritingSyncScheduler {
     @ObservationIgnored private var flightID: UUID?
     @ObservationIgnored private var pendingAppend = false
 
-    public init(now: (() -> Duration)? = nil, sleep: @escaping (Duration) async throws -> Void = { try await Task.sleep(for: $0) }) {
+    public init(
+        timing: FuminiwaTiming = .init(),
+        now: (() -> Duration)? = nil,
+        sleep: @escaping (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
+    ) {
         let origin = ContinuousClock.now
+        self.timing = timing
         self.now = now ?? { origin.duration(to: .now) }
         self.sleep = sleep
     }
@@ -101,9 +108,10 @@ public final class WritingSyncScheduler {
             guard flightID == id else { throw error }
             flight = nil; flightID = nil
             if !(error is CancellationError) {
-                failures = min(failures + 1, 7)
+                failures = min(failures + 1, 13)
                 failed = true
-                retryAfter = now() + .seconds(min(600, 10 * (1 << failures)))
+                let retry = timing.writingSyncRetryInitialSeconds * Double(1 << (failures - 1))
+                retryAfter = now() + .seconds(min(timing.writingSyncRetryMaximumSeconds, retry))
             }
             schedule(after: error is CancellationError ? interval : .zero)
             throw error
@@ -111,7 +119,8 @@ public final class WritingSyncScheduler {
     }
 
     private var interval: Duration {
-        visible[contextID ?? ""]?.isEmpty == false ? .seconds(10) : .seconds(300)
+        .seconds(visible[contextID ?? ""]?.isEmpty == false
+            ? timing.writingSyncVisibleSeconds : timing.writingSyncHiddenSeconds)
     }
 
     private func schedule(after delay: Duration) {

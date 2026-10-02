@@ -106,6 +106,21 @@ and must not offer an implicit winner or “always choose” setting in v2.
   including protected local parents required by their graph. All local leaves,
   old chains, intents and receipts are retained. No schema/wire/server change.
 
+## Foreground head polling
+
+Foreground head polling uses an injected monotonic clock: while the last
+accepted body edit is less than 60 seconds old, checks are 120 seconds apart;
+otherwise they are 10 seconds apart. A failed check waits 60 seconds. Waiting
+re-evaluates input activity, including its idle deadline. Foreground return and
+completed chapter/episode/work transitions start an immediate check outside the
+save/document gate; navigation never waits for that network request. Existing
+promotion/upload scheduling remains intact. During continuous typing, noticing
+another device's changes may be delayed by about two minutes. Expected-head CAS
+at publish and the existing explicit conflict/retained-local-leaf handling are
+unchanged: slowing head reads does not discard unsaved/local manuscript bytes.
+These are client timing defaults, injected by the apps from device settings;
+there is no wire, schema, canonical-byte or server change.
+
 ## Head-first and background history (D-106 Step 2)
 
 `remoteOnly -> verifiedHead -> shallowLocal + backfill(running) -> complete`.

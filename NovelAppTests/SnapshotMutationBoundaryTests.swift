@@ -3,6 +3,7 @@ import Foundation
 import NovelCore
 import NovelSyncV2Application
 import NovelSyncV2Runtime
+import NovelTiming
 import Testing
 
 @MainActor
@@ -24,7 +25,7 @@ struct SnapshotMutationBoundaryTests {
         let release = AsyncStream<Void>.makeStream()
         var first = true
         state.saveCoordinator = V2DocumentSaveCoordinator(
-            debounceNanoseconds: 60_000_000_000,
+            timing: FuminiwaTiming(autosaveDebounceSeconds: 60, autosavePostSaveWaitSeconds: 60),
             currentDocument: { state.document },
             saveOperation: { document in
                 if first {

@@ -1,5 +1,6 @@
 import Foundation
 import NovelCore
+import NovelTiming
 import Observation
 
 /// Local device preferences; never part of a document or sync record.
@@ -53,6 +54,7 @@ public final class WritingProgressTracker {
     public private(set) var persistenceFailed = false
     public private(set) var persistenceRetryStopped = false
     public let calendar: WritingCalendar
+    @ObservationIgnored private let timing: FuminiwaTiming
     @ObservationIgnored private let now: @MainActor () -> Date
     @ObservationIgnored private let preferences: WritingGoalPreferences
     @ObservationIgnored private var persistence: (any WritingProgressPersistence)?
@@ -73,10 +75,12 @@ public final class WritingProgressTracker {
 
     public init(
         defaults: UserDefaults,
+        timing: FuminiwaTiming = .init(),
         calendar: WritingCalendar = WritingCalendar(),
         now: @escaping @MainActor () -> Date = { Date() },
         sleep: @escaping @MainActor (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
     ) {
+        self.timing = timing
         preferences = WritingGoalPreferences(defaults: defaults)
         self.calendar = calendar; self.now = now; self.sleep = sleep
     }
@@ -237,9 +241,10 @@ public final class WritingProgressTracker {
 
     private func schedulePublication() {
         guard publishTask == nil else { return }
+        let interval = Duration.seconds(timing.progressPublishSeconds)
         publishTask = Task { [weak self] in
             guard let sleep = self?.sleep else { return }
-            do { try await sleep(.seconds(3)) } catch { return }
+            do { try await sleep(interval) } catch { return }
             self?.publishSnapshot()
         }
     }

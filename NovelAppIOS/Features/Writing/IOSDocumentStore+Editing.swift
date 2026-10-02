@@ -88,6 +88,9 @@ extension IOSDocumentStore {
         if let workID = syncV2ActiveWorkID {
             writingProgress.manualChange(document: document, workID: workID.rawValue, episodeID: episodeID, content: content, previousContent: previousContent)
         }
+        if let application = snapshotSyncV2Application, let workID = syncV2ActiveWorkID {
+            Task { await application.recordBodyEdit(workID: workID) }
+        }
         document.updateEpisodeContent(content, for: episodeID, in: chapterID)
         markDocumentChanged(progressAlreadyTracked: true)
     }

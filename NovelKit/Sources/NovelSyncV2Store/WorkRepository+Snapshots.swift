@@ -111,6 +111,7 @@ extension WorkRepository {
     }
 
     func attestEncodedRows(_ encoded: EncodedSnapshot, workID: WorkID) throws {
+        let snapshotID = encoded.snapshotId
         let parents = try query(
             """
             SELECT parent_snapshot_id FROM snapshot_parents
@@ -119,8 +120,8 @@ extension WorkRepository {
             SELECT parent_snapshot_id FROM shallow_boundaries
             WHERE work_id=? AND snapshot_id=? ORDER BY parent_snapshot_id
             """,
-            [.text(workID.description), .blob(encoded.snapshotIDBytes),
-             .text(workID.description), .blob(encoded.snapshotIDBytes)]
+            [.text(workID.description), .blob(snapshotID.bytes),
+             .text(workID.description), .blob(snapshotID.bytes)]
         ).compactMap { try $0.scalar.blob?.hexString }
         guard parents == encoded.manifest.parentSnapshotIds.map(\.rawValue).sorted() else {
             throw SyncV2StoreError.invalidSnapshot
@@ -131,7 +132,7 @@ extension WorkRepository {
             SELECT \(SnapshotEntryRow.columns)
             FROM snapshot_entries WHERE snapshot_id=? ORDER BY entity_key
             """,
-            [.blob(encoded.snapshotIDBytes)]
+            [.blob(snapshotID.bytes)]
         )
         guard entries.count == encoded.manifest.entries.count else {
             throw SyncV2StoreError.invalidSnapshot
@@ -186,7 +187,11 @@ extension WorkRepository {
             "SELECT \(WorkAnchorRow.columns) FROM works WHERE work_id=?",
             [.text(workID.description)]
         ).first else { throw SyncV2StoreError.workNotFound }
+        let decodeStart = executor.snapshotInsertionObserver == nil ? nil : ContinuousClock.now
         let model = try SnapshotCodec.decode(encoded)
+        if let decodeStart {
+            executor.snapshotInsertionObserver?("decode", decodeStart.duration(to: .now))
+        }
         guard work.documentID == DocumentID(model.document.id).description,
               try work.documentCreatedAt == StoreValueCoding.iso8601(model.documentCreatedAt) else {
             throw SyncV2StoreError.invalidSnapshot
@@ -200,12 +205,14 @@ extension WorkRepository {
         attestExistingObjects: Bool = true,
         verifiedRemote: Bool = false
     ) throws {
-        let alreadyExists = try !query("SELECT 1 FROM snapshots WHERE snapshot_id=?", [.blob(encoded.snapshotIDBytes)])
+        let snapshotID = encoded.snapshotId
+        let alreadyExists = try !query("SELECT 1 FROM snapshots WHERE snapshot_id=?", [.blob(snapshotID.bytes)])
             .isEmpty
         if !verifiedRemote || alreadyExists {
             try validateParents(encoded, workID: workID, checkCycles: alreadyExists)
         }
 
+        let objectsStart = executor.snapshotInsertionObserver == nil ? nil : ContinuousClock.now
         for (objectID, bytes) in encoded.objects {
             if executor.transactionObjects?.contains(objectID) == true {
                 continue
@@ -238,17 +245,20 @@ extension WorkRepository {
             }
         }
 
+        if let objectsStart {
+            executor.snapshotInsertionObserver?("objectUpsert", objectsStart.duration(to: .now))
+        }
         if let existing = try queryRows(
             SnapshotManifestRow.self,
             """
             SELECT \(SnapshotManifestRow.columns)
             FROM snapshots WHERE snapshot_id=?
             """,
-            [.blob(encoded.snapshotIDBytes)]
+            [.blob(snapshotID.bytes)]
         ).first {
             guard existing.workID == workID.description,
                   existing.manifestBytes == encoded.manifestBytes,
-                  existing.manifestDigest == encoded.snapshotIDBytes else {
+                  existing.manifestDigest == snapshotID.bytes else {
                 throw SyncV2StoreError.invalidSnapshot
             }
             // Existing rows must already be exact; do not repair missing children
@@ -263,13 +273,13 @@ extension WorkRepository {
                 ) VALUES(?,?,?,?,?)
                 """,
                 [
-                    .blob(encoded.snapshotIDBytes), .text(workID.description),
-                    .blob(encoded.manifestBytes), .blob(encoded.snapshotIDBytes),
+                    .blob(snapshotID.bytes), .text(workID.description),
+                    .blob(encoded.manifestBytes), .blob(snapshotID.bytes),
                     .text(StoreValueCoding.now())
                 ]
             )
         }
-        try inboxRepository.resolveBoundaries(workID: workID, parent: encoded.snapshotId)
+        try inboxRepository.resolveBoundaries(workID: workID, parent: snapshotID)
         for parent in encoded.manifest.parentSnapshotIds {
             let local = try inboxRepository.hasSnapshot(workID: workID, snapshotID: parent)
             guard local || verifiedRemote else { throw SyncV2StoreError.invalidSnapshot }
@@ -281,11 +291,12 @@ extension WorkRepository {
                 ) VALUES(?,?,?)
                 """,
                 [
-                    .text(workID.description), .blob(encoded.snapshotIDBytes),
+                    .text(workID.description), .blob(snapshotID.bytes),
                     .blob(parent.bytes)
                 ]
             )
         }
+        let entriesStart = executor.snapshotInsertionObserver == nil ? nil : ContinuousClock.now
         for entry in encoded.manifest.entries {
             try exec(
                 """
@@ -294,20 +305,24 @@ extension WorkRepository {
                 ) VALUES(?,?,?,?,?)
                 """,
                 [
-                    .blob(encoded.snapshotIDBytes), .text(entry.entityKey),
+                    .blob(snapshotID.bytes), .text(entry.entityKey),
                     .blob(entry.objectId.bytes), .int(Int64(entry.byteCount)),
                     .text(entry.contentType.rawValue)
                 ]
             )
         }
+        if let entriesStart {
+            executor.snapshotInsertionObserver?("entryInsert", entriesStart.duration(to: .now))
+        }
     }
 
     func validateParents(_ encoded: EncodedSnapshot, workID: WorkID, checkCycles: Bool = true) throws {
+        let snapshotID = encoded.snapshotId
         for parent in encoded.manifest.parentSnapshotIds {
-            guard parent != encoded.snapshotId,
+            guard parent != snapshotID,
                   try inboxRepository.hasSnapshot(workID: workID, snapshotID: parent) || !query(
                       "SELECT 1 FROM shallow_boundaries WHERE work_id=? AND snapshot_id=? AND parent_snapshot_id=?",
-                      [.text(workID.description), .blob(encoded.snapshotIDBytes), .blob(parent.bytes)]
+                      [.text(workID.description), .blob(snapshotID.bytes), .blob(parent.bytes)]
                   ).isEmpty else { throw SyncV2StoreError.invalidSnapshot }
             // A new content-addressed manifest can only point at existing rows.
             // Immediate foreign keys make closing a cycle impossible on insertion.
@@ -327,7 +342,7 @@ extension WorkRepository {
                 """,
                 [
                     .text(workID.description), .blob(parent.bytes),
-                    .text(workID.description), .blob(encoded.snapshotIDBytes)
+                    .text(workID.description), .blob(snapshotID.bytes)
                 ]
             )
             guard cycle.isEmpty else { throw SyncV2StoreError.invalidSnapshot }
@@ -490,8 +505,17 @@ extension WorkRepository {
         current: SnapshotID,
         candidate: EncodedSnapshot
     ) throws -> Bool {
-        let previous = try loadEncoded(workID: workID, snapshotID: current)
-        return previous.manifest.entries == candidate.manifest.entries &&
-            previous.objects == candidate.objects
+        guard let bytes = try query(
+            "SELECT manifest_bytes FROM snapshots WHERE work_id=? AND snapshot_id=?",
+            [.text(workID.description), .blob(current.bytes)]
+        ).first?.scalar.blob,
+            SnapshotID(data: bytes) == current else { throw SyncV2StoreError.snapshotNotFound }
+        let manifest = try SnapshotValidator.validate(manifestBytes: bytes)
+        guard manifest.workId == workID else { throw SyncV2StoreError.invalidSnapshot }
+        try attestEncodedRows(EncodedSnapshot(manifest: manifest, manifestBytes: bytes, objects: [:]), workID: workID)
+        // Both sides use digest-validated immutable CAS objects. Equal entries
+        // include object IDs, sizes and types, so loading payload bytes adds no
+        // content distinction. Parents may differ for an already-promoted head.
+        return manifest.entries == candidate.manifest.entries
     }
 }

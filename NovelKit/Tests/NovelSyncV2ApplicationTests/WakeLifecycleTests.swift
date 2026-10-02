@@ -27,11 +27,12 @@ struct WakeLifecycleTests {
         let planner = WakeTestPlanner(failsCandidate: failure)
         let state = InMemorySyncV2RuntimeState()
         let configuration = try TestRuntimeConfiguration()
+        let clock = LeafTestClock()
         let (delays, continuation) = AsyncStream<UInt64>.makeStream()
         let app = try SyncV2Application(mode: .test(configuration), composition: SyncV2RuntimeComposition(
             identity: .test, kernel: state, planner: planner, remote: configuration.remote,
             gate: InMemorySyncV2DocumentGate(), library: state
-        ), automaticSyncSleep: { delay in
+        ), promotionClock: clock.clock, automaticSyncSleep: { delay in
             continuation.yield(delay)
             try await Task.sleep(for: .seconds(3600))
         })

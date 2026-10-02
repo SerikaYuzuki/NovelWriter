@@ -132,8 +132,8 @@ actor ProductionSyncV2Kernel: SyncV2LocalKernel, SyncV2LibraryProvider {
         }
     }
 
-    /// Read only the generation; checkpoint still fully validates the current
-    /// snapshot through scopeForCheckpoint before replacing any local pointer.
+    /// Read only the generation; checkpoint attests the exact current version
+    /// through scopeForCheckpoint before replacing any local pointer.
     func currentGeneration(workID: WorkID) async throws -> Int64 {
         do {
             guard try await store.workDeletion(workID: workID) == nil else { throw SyncV2ApplicationError.workDeletionPending }

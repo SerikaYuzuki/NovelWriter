@@ -1,6 +1,7 @@
 @testable import EditorKit
 import Foundation
 @testable import FUMINIWAIOS
+import NovelTiming
 import Testing
 
 @MainActor
@@ -41,7 +42,7 @@ struct IOSAssistantProofreadingTests {
                 clearCount += 1
             })
             store.saveCoordinator = V2DocumentSaveCoordinator(
-                debounceNanoseconds: 60_000_000_000,
+                timing: FuminiwaTiming(autosaveDebounceSeconds: 60, autosavePostSaveWaitSeconds: 60),
                 currentDocument: { store.document },
                 saveOperation: {
                     _ in if fails {

@@ -64,6 +64,40 @@ current pointer, immutable Snapshot row, object references, account binding,
 and sealed command/outbox state in one transaction. The network is never
 awaited inside that transaction. `.novelpkg` remains Import/Export only.
 
+Foreground head polling uses an injected monotonic clock: while the last
+accepted body edit is less than 60 seconds old, checks are 120 seconds apart;
+otherwise they are 10 seconds apart. A failed check waits 60 seconds. Waiting
+re-evaluates input activity, including its idle deadline. Foreground return and
+completed chapter/episode/work transitions start an immediate check outside the
+save/document gate; navigation never waits for that network request. Existing
+promotion/upload scheduling remains intact. During continuous typing, noticing
+another device's changes may be delayed by about two minutes. Expected-head CAS
+at publish and the existing explicit conflict/retained-local-leaf handling are
+unchanged: slowing head reads does not discard unsaved/local manuscript bytes.
+These are client timing defaults, injected by the apps from device settings;
+there is no wire, schema, canonical-byte or server change.
+
+Checkpoint scope validation may reuse a current snapshot fully validated by
+this Store actor or committed by its last autosave, with identical WorkID,
+account scope, snapshot ID, generation and document anchor. Every open still
+fully validates manifest/object/closure/decode/resource bytes; a stable,
+successful open or cache-miss validation seeds the next autosave. An external
+write during a successful open, or a bookkeeping failure, discards only the
+cache stamp and does not turn that open into failure.
+
+SQLite `data_version` and `total_changes()` detect SQL writes; the external-write
+version is checked again under the commit lock. Audited content-neutral Store
+outbox/upload writes and leaf promotion may advance only the cached change
+counter after attesting the unchanged current pointer, generation, scope,
+anchor and external-write version. They never insert/change current entries or
+resources. Resolution/restore/clone acknowledgements, unclassified writes,
+account/work changes, install/adoption/import/restore, generation mismatch,
+rollback and close/reopen invalidate reuse. Other connections always invalidate
+reuse on an actual DB change. New checkpoint content still passes full decode
+and validation before commit. Cache bookkeeping failure cannot fail a durable
+save. This changes validation timing, not schema, canonical identity or
+durability. See [the audited paths](CODE_HEALTH.md#同期onでのcheckpoint-cache).
+
 ## 3. Identity, account isolation, and fence
 
 Every work has an immutable `workId`. A work is `unbound`, `bound`, or

@@ -10,6 +10,7 @@ final class SQLiteExecutor {
     private var statements: [String: OpaquePointer] = [:]
     var registeredAncestorCache: WorkRepository.RegisteredAncestorCache?
     var transactionObjects: Set<ObjectID>?
+    var snapshotInsertionObserver: (@Sendable (String, Duration) -> Void)?
 
     init(databaseURL: URL, policy: V2StoreOpenPolicy) throws {
         var handle: OpaquePointer?

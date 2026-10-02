@@ -20,6 +20,12 @@ public struct EntityKey: Hashable, Sendable, CustomStringConvertible {
               parts.allSatisfy({ !$0.isEmpty }) else {
             return false
         }
+        let range = NSRange(key.startIndex ..< key.endIndex, in: key)
+        return Self.patterns.contains { $0.firstMatch(in: key, range: range)?.range == range }
+    }
+
+    /// Constant patterns, compiled once and shared across concurrent encoders.
+    private static let patterns: [NSRegularExpression] = {
         let uuid = #"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"#
         let dynamic = "(?:" + uuid + ")"
         let workPattern = "^work/(document|title|synopsis|" +
@@ -35,10 +41,13 @@ public struct EntityKey: Hashable, Sendable, CustomStringConvertible {
             "^world-note/" + dynamic + "$",
             "^attachment/" + dynamic + #"/(metadata|bytes)$"#
         ]
-        return patterns.contains {
-            key.range(of: $0, options: .regularExpression) != nil
+        return patterns.map {
+            guard let expression = try? NSRegularExpression(pattern: $0) else {
+                preconditionFailure("Invalid constant EntityKey pattern")
+            }
+            return expression
         }
-    }
+    }()
 
     var id: String? {
         let parts = rawValue.split(separator: "/")

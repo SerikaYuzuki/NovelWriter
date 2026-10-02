@@ -1,11 +1,29 @@
 import Foundation
 import NovelCore
+import NovelTiming
 @testable import NovelWritingProgress
 import Observation
 import Testing
 
 @MainActor
 struct WritingProgressSchedulingTests {
+    @Test func injectedPublicationIntervalIsUsed() async throws {
+        let clock = ProgressTestClock()
+        let tracker = try WritingProgressTracker(defaults: #require(UserDefaults(suiteName: UUID().uuidString)),
+                                                 timing: FuminiwaTiming(progressPublishSeconds: 0.5),
+                                                 sleep: clock.sleep)
+        let document = NovelDocument.newDocument(), work = UUID()
+        tracker.install(document, workID: work)
+        tracker.manualChange(document: document, workID: work, episodeID: document.chapters[0].episodes[0].id,
+                             content: "文")
+        #expect(await clock.scheduled(0) == .milliseconds(500))
+        await withCheckedContinuation { continuation in
+            withObservationTracking { _ = tracker.total } onChange: { continuation.resume() }
+            clock.advance()
+        }
+        #expect(tracker.total == 1)
+    }
+
     @Test func manualChangesPublishOnceAndKeepOtherEpisodeCache() async throws {
         let tracker = try WritingProgressTracker(defaults: #require(UserDefaults(suiteName: UUID().uuidString)))
         var document = NovelDocument.newDocument()
@@ -44,7 +62,10 @@ struct WritingProgressSchedulingTests {
 
     @Test func publicationArrivesWithinThreeSecondsWithoutPersistence() async throws {
         let clock = ProgressTestClock()
-        let tracker = try WritingProgressTracker(defaults: #require(UserDefaults(suiteName: UUID().uuidString)), sleep: clock.sleep)
+        let tracker = try WritingProgressTracker(
+            defaults: #require(UserDefaults(suiteName: UUID().uuidString)),
+            sleep: clock.sleep
+        )
         let document = NovelDocument.newDocument(), work = UUID()
         tracker.install(document, workID: work)
         tracker.manualChange(document: document, workID: work, episodeID: document.chapters[0].episodes[0].id,
@@ -63,7 +84,10 @@ struct WritingProgressSchedulingTests {
 
     @Test func automaticRetriesBackOffCapAndRecover() async throws {
         let clock = ProgressTestClock(), store = RetryProgressStore()
-        let tracker = try WritingProgressTracker(defaults: #require(UserDefaults(suiteName: UUID().uuidString)), sleep: clock.sleep)
+        let tracker = try WritingProgressTracker(
+            defaults: #require(UserDefaults(suiteName: UUID().uuidString)),
+            sleep: clock.sleep
+        )
         await tracker.connect(store)
         var document = NovelDocument.newDocument()
         let work = UUID(), episode = document.chapters[0].episodes[0].id
@@ -102,7 +126,10 @@ struct WritingProgressSchedulingTests {
     @Test(arguments: [false, true])
     func unsupportedVersionStopsRetriesButRetainsMemory(failsOnLoad: Bool) async throws {
         let clock = ProgressTestClock(), store = PermanentProgressStore(failsOnLoad: failsOnLoad)
-        let tracker = try WritingProgressTracker(defaults: #require(UserDefaults(suiteName: UUID().uuidString)), sleep: clock.sleep)
+        let tracker = try WritingProgressTracker(
+            defaults: #require(UserDefaults(suiteName: UUID().uuidString)),
+            sleep: clock.sleep
+        )
         await tracker.connect(store)
         var document = NovelDocument.newDocument()
         let work = UUID(), episode = document.chapters[0].episodes[0].id
