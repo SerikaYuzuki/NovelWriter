@@ -62,7 +62,7 @@ docker compose --env-file "$ops_env" -f SyncServerV2/docker-compose.ops.yml \
 docker compose --env-file "$ops_env" -f SyncServerV2/docker-compose.ops.yml \
   -p fuminiwa-sync-v2-ops up -d --no-build
 docker logs --tail 50 fuminiwa-sync-v2-ops
-docker exec fuminiwa-sync-v2-ops sh -c 'grep -E "^(Name|State|Uid|Gid|Groups):" /proc/1/status'
+docker exec --user 999:1000 fuminiwa-sync-v2-ops sh -c 'grep -E "^(Name|State|Uid|Gid|Groups):" /proc/1/status'
 docker inspect fuminiwa-sync-v2-ops --format '{{.HostConfig.RestartPolicy.Name}} {{.State.Health.Status}}'
 ```
 
@@ -75,9 +75,11 @@ docker exec fuminiwa-sync-v2-ops run-backup
 docker logs --since 48h fuminiwa-sync-v2-ops
 docker exec fuminiwa-sync-v2-ops ops-healthcheck
 docker inspect fuminiwa-sync-v2-ops --format '{{.State.Health.Status}}'
-cat /DATA/AppData/fuminiwa-sync-v2-role-split/operational-backups/daily/last-success.json
+docker exec --user 999:1000 fuminiwa-sync-v2-ops cat /backups/last-success.json
 docker stats --no-stream fuminiwa-sync-v2-ops
 ```
+
+ops内のファイルを`cat`等で直接読むexecは`--user 999:1000`を指定する。0600の成功記録や0700のbackup directoryは999が所有し、コンテナのrootにもDAC_OVERRIDEはない。`run-backup`と`ops-healthcheck`は内部でsocket用の補助グループを設定して999:1000へ落とすため、上の呼出では`--user`を付けない。
 
 cronのログとbackupの標準出力・標準エラーはコンテナログへ出る。手動実行の結果はexecの出力へ返る。成功はbackup.pyの完了出力、exit 0、last-success.jsonの更新で確認する。重複実行は非zeroとなり、成功記録は更新しない。Dockerログは10MB×3に制限し、暗号鍵やconfig内容は表示しない。
 

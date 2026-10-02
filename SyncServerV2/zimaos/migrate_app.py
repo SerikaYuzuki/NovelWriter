@@ -154,9 +154,12 @@ class Host:
             raise MigrationError('HTTP受入確認が失敗しました')
 
     def backup(self):
-        before = self.docker('exec', NAMES['ops'], 'cat', '/backups/last-success.json').stdout
+        # Direct reads must use the file owner: root has no DAC_OVERRIDE here.
+        before = self.docker('exec', '--user', '999:1000', NAMES['ops'], 'cat', '/backups/last-success.json').stdout
+        # Keep the wrapper's root entry so ops.py can set the socket group,
+        # then permanently drop to 999:1000 before reading config or backing up.
         self.docker('exec', NAMES['ops'], 'run-backup', timeout=3600)
-        after = self.docker('exec', NAMES['ops'], 'cat', '/backups/last-success.json').stdout
+        after = self.docker('exec', '--user', '999:1000', NAMES['ops'], 'cat', '/backups/last-success.json').stdout
         try:
             record = json.loads(after)
             stamp = dt.datetime.fromisoformat(record['completed_at'])

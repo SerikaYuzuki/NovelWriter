@@ -231,6 +231,8 @@ migrate.shは書込可能な`DOCKER_CONFIG`を設定し、host python3の`migrat
 
 移行のlockと0600の`ops/zimaos-migration.json`に、旧container ID、composeのhash、phase、アプリidを記録する。tokenやsecret内容は含めない。成功後に同じcomposeで再実行した場合は受入だけ行う。中断した移行では旧IDを照合して切戻す。SIGINT／SIGTERM／SIGHUPも切戻し対象だが、SIGKILL／停電は次回実行時に復旧する。既存legacyのID不一致、旧コンテナ消失、複数アプリなどでは安全側に停止する。
 
+2026-10-03の本番実行では、前提確認後のbackup前の成功記録読み取りがPermission deniedで失敗した。旧コンテナは何も停止していない。原因は、cap_drop ALLのrootにはDAC_OVERRIDEがなく、999所有・0600の記録を直接catできなかったこと。backup前後の読み取りを`docker exec --user 999:1000 ... cat /backups/last-success.json`へ修正した。`run-backup`／`ops-healthcheck`はops.pyが補助グループ設定後に999:1000へ落としてから処理するので、呼出は変更しない。Webも権限移行後に読み取る。修正後の本番再実行結果は未確認。
+
 ### 自動ロールバック
 
 backup後の停止／rename／install／mount／health／HTTP受入の失敗は、非0で終了する前に切戻す。新アプリidをfindで特定し、設定folderを保持してuninstallする。DELETEの成功応答だけで完了とは扱わず、一覧からの消滅も確認する。新コンテナの消滅を待ち、残った場合はrestart no・停止後に`-zimaos-failed`へrenameして保持する。legacyは元名へ戻しrestart unless-stopped、postgres→serverのhealthy待ち→edge／opsの順で起動し、4healthと公開200を確認する。registryとDB／Caddy volumeは削除しない。
@@ -263,7 +265,7 @@ curl --fail --silent --show-error --cacert '<CA.pem>' --output /dev/null --write
 curl --silent --output /dev/null --write-out '%{http_code}\n' http://192.168.11.5:8790/
 # admin passwordはcurlのプロンプトで入力。
 curl --fail --silent --show-error --user admin --output /dev/null --write-out '%{http_code}\n' http://192.168.11.5:8790/
-docker exec fuminiwa-sync-v2-ops sh -c 'grep -E "^(Name|State|Uid|Gid|Groups):" /proc/1/status'
+docker exec --user 999:1000 fuminiwa-sync-v2-ops sh -c 'grep -E "^(Name|State|Uid|Gid|Groups):" /proc/1/status'
 docker logs --tail 100 fuminiwa-sync-v2-ops
 docker stats --no-stream fuminiwa-sync-v2-ops
 ```
@@ -328,5 +330,7 @@ fake Dockerテストは認証、CSRF、操作の限定、秘密の非表示、We
 2回目の修正では39テストが成功した。2重展開を模擬したあと、fake curlを使って元のhealthcheckと修正版を実際のshellで実行し、200／401／500／通信失敗の終了判定が一致することを確認した。変換不能な参照・生成物の変数参照・全サービスの/configターゲットの拒否、Caddy volume名と内部の相対位置の維持も検証した。今回`check.sh`は再実行せず、指定されたPythonテスト全件を検証範囲とした。
 
 API／移行の自動化では、既存分を含むoperationsの62テストとlocal recoveryの3テスト（合計65件）が成功した。fake HTTPで既存token形式、0600／symlink拒否、期限余裕、refreshローテーション、Bearer fallback、出力へのcredential非表示、loopback限定、dry-run、DELETEの設定保持を確認。fake Dockerで2回のmount書換え、停止順序、backup失敗、health／公開失敗、中途install、残存コンテナの退避、API削除未完了、中断復旧、旧ID不一致、再実行時のAPI削除抑止を確認した。shell構文とdiff検査も成功。今回の検証範囲はPythonテスト全件で、`check.sh`は未実施。
+
+直接読み取りのUID修正では、fake Hostがrootのcatを拒否するテストを追加し、前後の読み取りだけに`--user 999:1000`が付くこと、run-backupの呼出を維持することを確認した。既存分を含むoperations 63件とlocal recovery 3件（合計66件）が成功。今回もPythonテスト全件を検証範囲とし、`check.sh`は未実施。
 
 ローカルにDocker CLIがないため実imageのbuildと実Composeのconfig検証は未実施。fake CLIによるconfig呼出の確認とは区別する。認証済み実APIの応答・install／apply／uninstall・自動移行と切戻し、volume名のinspect、LAN到達、待機CPU、停止時の処理、実backup／翌日の定期成功／再起動は別途Claude側で実施する。

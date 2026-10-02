@@ -547,6 +547,36 @@ class MigrationTests(unittest.TestCase):
             self.assertFalse(any(c[0] in ('stop', 'rename', 'update') for c in self.host.calls))
             self.assertIsNone(self.journal.read())
 
+    def test_backup_direct_reads_use_owner_and_runner_keeps_privilege_setup(self):
+        class PermissionHost(migrate.Host):
+            def __init__(self):
+                self.calls = []
+                self.reads = 0
+
+            def docker(self, *args, **kwargs):
+                self.calls.append((args, kwargs))
+                if 'cat' in args:
+                    # Model uid 999's 0600 record with root lacking DAC_OVERRIDE.
+                    if args[:4] != ('exec', '--user', '999:1000', migrate.NAMES['ops']):
+                        raise migrate.MigrationError('Permission denied')
+                    self.reads += 1
+                    record = {'completed_at': dt.datetime.now(dt.timezone.utc).isoformat(),
+                              'backup': 'before' if self.reads == 1 else 'after'}
+                    output = json.dumps(record).encode()
+                else:
+                    output = b''
+                return subprocess.CompletedProcess(args, 0, output, b'')
+
+        host = PermissionHost()
+        host.backup()
+        read = ('exec', '--user', '999:1000', migrate.NAMES['ops'],
+                'cat', '/backups/last-success.json')
+        self.assertEqual(host.calls, [
+            (read, {}),
+            (('exec', migrate.NAMES['ops'], 'run-backup'), {'timeout': 3600}),
+            (read, {}),
+        ])
+
     def test_real_host_commands_are_captured_and_errors_are_hidden(self):
         host = migrate.Host()
         fake = subprocess.CompletedProcess([], 1, ACCESS.encode(), REFRESH.encode())
