@@ -20,7 +20,7 @@ func shallowMigrationAttestsEveryTail(marker: String) async throws {
     \(deletion) UPDATE schema_meta SET checksum=X'\(checksum)' WHERE key='schema';
     """))
     let upgraded = try LocalSyncV2Store(root: root, policy: .openExisting)
-    #expect(try await upgraded.query("SELECT COUNT(*) FROM shallow_boundaries").first?[0].int64 == 0)
+    #expect(try await upgraded.query("SELECT COUNT(*) FROM shallow_boundaries").first?.scalar.int64 == 0)
     #expect(try await upgraded.schemaVersionAndChecksum().1 == V2StoreSchema.checksum(Data(sql.utf8)))
     await upgraded.close()
 }
@@ -45,7 +45,7 @@ func shallowMigrationAttestsEveryTail(marker: String) async throws {
     let task = Task { try await store.installShallowHead(fixture.graph, scope: scopeA) }
     await #expect(throws: CancellationError.self) { try await task.value }
     for table in ["works", "snapshots", "objects", "shallow_boundaries", "history_backfills"] {
-        #expect(try await store.query("SELECT COUNT(*) FROM \(table)").first?[0].int64 == 0)
+        #expect(try await store.query("SELECT COUNT(*) FROM \(table)").first?.scalar.int64 == 0)
     }
     try await store.exec("DROP TRIGGER cancel_shallow")
     try await store.installShallowHead(fixture.graph, scope: scopeA)

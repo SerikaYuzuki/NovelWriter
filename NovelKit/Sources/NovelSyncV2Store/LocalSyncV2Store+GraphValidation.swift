@@ -17,9 +17,13 @@ extension LocalSyncV2Store {
     }
 
     func validateGraph(_ graph: V2RemoteSnapshotGraph, forceFull: Bool = false) throws -> GraphAnchor {
-        let marker = try query("SELECT value,checksum FROM schema_meta WHERE key=?",
-                               [.text("inbox-validator/" + graph.inboxID.uuidString.lowercased())]).first
-        let full = forceFull || marker?[0].text != Self.inboxValidatorVersion || marker?[1].blob != graph.headSnapshotID.bytes
+        let marker = try queryRows(
+            SchemaMarkerRow.self,
+            "SELECT \(SchemaMarkerRow.columns) FROM schema_meta WHERE key=?",
+            [.text("inbox-validator/" + graph.inboxID.uuidString.lowercased())]
+        ).first
+        let full = forceFull || marker?.value != Self.inboxValidatorVersion ||
+            marker?.checksum != graph.headSnapshotID.bytes
         return try Self.validateGraphContent(graph, full: full)
     }
 

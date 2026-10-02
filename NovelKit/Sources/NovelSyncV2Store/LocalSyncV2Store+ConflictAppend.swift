@@ -51,8 +51,8 @@ extension LocalSyncV2Store {
         remoteIdentity: (id: UUID, revision: Int64)? = nil
     ) throws -> V2ConflictCandidate {
         guard let current = try scopedWorkRow(workID: material.workID, scope: scope),
-              current[2].int64 == material.sourceGeneration,
-              current[3].blob == material.localSnapshotID.bytes else {
+              current.localGeneration == material.sourceGeneration,
+              current.currentSnapshotID == material.localSnapshotID.bytes else {
             throw SyncV2StoreError.staleConflictAction
         }
         let graph = try loadInboxGraph(
@@ -80,14 +80,14 @@ extension LocalSyncV2Store {
             return existing
         }
         if let remoteIdentity, let activeRow {
-            guard activeRow[0].text == remoteIdentity.id.uuidString.lowercased(),
-                  let previous = activeRow[1].int64,
+            guard activeRow.conflictID == remoteIdentity.id.uuidString.lowercased(),
+                  let previous = activeRow.currentRevision,
                   remoteIdentity.revision > previous else {
                 throw SyncV2StoreError.staleConflictAction
             }
         }
-        let conflictID = remoteIdentity?.id ?? activeRow?[0].text.flatMap(UUID.init(uuidString:)) ?? UUID()
-        let revision = remoteIdentity?.revision ?? (activeRow?[1].int64 ?? 0) + 1
+        let conflictID = remoteIdentity?.id ?? activeRow?.conflictID.flatMap(UUID.init(uuidString:)) ?? UUID()
+        let revision = remoteIdentity?.revision ?? (activeRow?.currentRevision ?? 0) + 1
         try persistConflictHead(
             activeRow: activeRow,
             conflictID: conflictID,
@@ -107,17 +107,17 @@ extension LocalSyncV2Store {
     }
 
     private func matchingConflict(
-        _ row: [SQLiteValue]?,
+        _ row: ConflictCandidateRow?,
         material: ConflictAppendMaterial
     ) throws -> V2ConflictCandidate? {
         guard let row,
-              row[2].blob == material.baseSnapshotID?.bytes,
-              row[3].blob == material.localSnapshotID.bytes,
-              row[4].blob == material.remote.encoded.snapshotIDBytes,
-              row[5].int64 == material.sourceGeneration,
-              let conflictID = row[0].text.flatMap(UUID.init(uuidString:)),
-              let revision = row[1].int64 else { return nil }
-        if row[6].text != material.remote.inboxID.uuidString.lowercased() {
+              row.baseSnapshotID == material.baseSnapshotID?.bytes,
+              row.localSnapshotID == material.localSnapshotID.bytes,
+              row.remoteSnapshotID == material.remote.encoded.snapshotIDBytes,
+              row.sourceGeneration == material.sourceGeneration,
+              let conflictID = row.conflictID.flatMap(UUID.init(uuidString:)),
+              let revision = row.currentRevision else { return nil }
+        if row.remoteInboxID != material.remote.inboxID.uuidString.lowercased() {
             try exec(
                 """
                 UPDATE inbox_batches
@@ -135,7 +135,7 @@ extension LocalSyncV2Store {
     }
 
     private func persistConflictHead(
-        activeRow: [SQLiteValue]?,
+        activeRow: ConflictCandidateRow?,
         conflictID: UUID,
         revision: Int64,
         material: ConflictAppendMaterial

@@ -32,7 +32,7 @@ public extension LocalSyncV2Store {
             )
             for row in selectedRows {
                 let source = try binding(from: row)
-                guard let workText = row[0].text,
+                guard let workText = row.workID,
                       let workUUID = UUID(uuidString: workText) else {
                     throw SyncV2StoreError.invalidLifecycle
                 }
@@ -55,26 +55,27 @@ public extension LocalSyncV2Store {
         }
     }
 
-    private func activeBindingRows() throws -> [[SQLiteValue]] {
-        try query(
+    private func activeBindingRows() throws -> [AccountBindingRow] {
+        try queryRows(
+            AccountBindingRow.self,
             """
-            SELECT work_id,server_instance_id,protocol_epoch,account_id,account_fence
+            SELECT \(AccountBindingRow.columns)
             FROM account_bindings WHERE state='bound' ORDER BY work_id
             """
         )
     }
 
     private func selectedTransitionRows(
-        activeRows: [[SQLiteValue]],
+        activeRows: [AccountBindingRow],
         from old: V2AccountBinding?,
         to new: V2AccountBinding?
-    ) throws -> [[SQLiteValue]] {
+    ) throws -> [AccountBindingRow] {
         guard let old else { return activeRows }
         let selected = activeRows.filter {
-            $0[1].text == old.serverInstanceID &&
-                $0[2].int64 == old.protocolEpoch &&
-                $0[3].text == old.accountID &&
-                $0[4].text == old.accountFence
+            $0.serverInstanceID == old.serverInstanceID &&
+                $0.protocolEpoch == old.protocolEpoch &&
+                $0.accountID == old.accountID &&
+                $0.accountFence == old.accountFence
         }
         guard selected.isEmpty else {
             guard selected.count == activeRows.count else {
@@ -87,10 +88,10 @@ public extension LocalSyncV2Store {
         // idempotent; a mixed scope remains a hard mismatch.
         if let new,
            activeRows.allSatisfy({
-               $0[1].text == new.serverInstanceID &&
-                   $0[2].int64 == new.protocolEpoch &&
-                   $0[3].text == new.accountID &&
-                   $0[4].text == new.accountFence
+               $0.serverInstanceID == new.serverInstanceID &&
+                   $0.protocolEpoch == new.protocolEpoch &&
+                   $0.accountID == new.accountID &&
+                   $0.accountFence == new.accountFence
            }) {
             return []
         }
@@ -98,11 +99,11 @@ public extension LocalSyncV2Store {
         return []
     }
 
-    private func binding(from row: [SQLiteValue]) throws -> V2AccountBinding {
-        guard let server = row[1].text,
-              let epoch = row[2].int64,
-              let account = row[3].text,
-              let fence = row[4].text else {
+    private func binding(from row: AccountBindingRow) throws -> V2AccountBinding {
+        guard let server = row.serverInstanceID,
+              let epoch = row.protocolEpoch,
+              let account = row.accountID,
+              let fence = row.accountFence else {
             throw SyncV2StoreError.invalidLifecycle
         }
         return V2AccountBinding(
@@ -116,10 +117,10 @@ public extension LocalSyncV2Store {
     private func reactivateMatchingParkedBindings(
         to new: V2AccountBinding
     ) throws {
-        let parkedRows = try query(
+        let parkedRows = try queryRows(
+            AccountBindingRow.self,
             """
-            SELECT p.work_id,p.server_instance_id,p.protocol_epoch,
-                   p.account_id,p.account_fence
+            SELECT \(AccountBindingRow.qualifiedColumns("p"))
             FROM account_bindings p
             WHERE p.state='parked' AND p.account_id=?
               AND NOT EXISTS (
@@ -134,7 +135,7 @@ public extension LocalSyncV2Store {
             let source = try binding(from: row)
             guard source.serverInstanceID == new.serverInstanceID,
                   source.protocolEpoch == new.protocolEpoch,
-                  let workText = row[0].text,
+                  let workText = row.workID,
                   let workUUID = UUID(uuidString: workText) else {
                 // AccountID is namespaced by server and protocol epoch. A
                 // collision in another namespace remains explicitly parked.
@@ -272,12 +273,13 @@ public extension LocalSyncV2Store {
         to new: V2AccountBinding
     ) throws {
         try insertBinding(workID: workID, binding: new)
-        if let row = try query(
-            "SELECT current_snapshot_id,local_generation FROM works WHERE work_id=?",
+        if let row = try queryRows(
+            WorkCurrentRow.self,
+            "SELECT \(WorkCurrentRow.columns) FROM works WHERE work_id=?",
             [.text(workID.description)]
         ).first,
-            let snapshotBytes = row[0].blob,
-            let generation = row[1].int64,
+            let snapshotBytes = row.currentSnapshotID,
+            let generation = row.localGeneration,
             generation > 0 {
             try _ = upsertCheckpointIntent(
                 workID: workID,
@@ -334,12 +336,13 @@ public extension LocalSyncV2Store {
         }
         try parkPendingUnboundIntents(workID: workID)
         try retireScopeCaches(workID: workID)
-        if let row = try query(
-            "SELECT current_snapshot_id,local_generation FROM works WHERE work_id=?",
+        if let row = try queryRows(
+            WorkCurrentRow.self,
+            "SELECT \(WorkCurrentRow.columns) FROM works WHERE work_id=?",
             [.text(workID.description)]
         ).first,
-            let snapshotBytes = row[0].blob,
-            let generation = row[1].int64,
+            let snapshotBytes = row.currentSnapshotID,
+            let generation = row.localGeneration,
             generation > 0 {
             try _ = upsertCheckpointIntent(
                 workID: workID,
@@ -372,9 +375,10 @@ public extension LocalSyncV2Store {
         binding: V2AccountBinding,
         disposition: String
     ) throws {
-        let rows = try query(
+        let rows = try queryRows(
+            RestoreIdentityRow.self,
             """
-            SELECT r.restore_id,r.intent_id,r.command_id
+            SELECT \(RestoreIdentityRow.qualifiedColumns("r"))
             FROM restore_records r
             JOIN sync_intents i
               ON i.intent_id=r.intent_id AND i.work_id=r.work_id
@@ -388,8 +392,8 @@ public extension LocalSyncV2Store {
             [.text(workID.description), .text(binding.accountID)] + binding.values
         )
         for row in rows {
-            guard let restoreID = row[0].text,
-                  let intentID = row[1].text else {
+            guard let restoreID = row.restoreID,
+                  let intentID = row.intentID else {
                 throw SyncV2StoreError.invalidLifecycle
             }
             try exec(
@@ -405,7 +409,7 @@ public extension LocalSyncV2Store {
                 ] + binding.values
             )
             guard try changes() == 1 else { throw SyncV2StoreError.invalidLifecycle }
-            if let commandID = row[2].text {
+            if let commandID = row.commandID {
                 try exec(
                     """
                     UPDATE sealed_commands SET status=?

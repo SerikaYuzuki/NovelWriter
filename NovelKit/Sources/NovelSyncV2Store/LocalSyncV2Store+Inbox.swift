@@ -33,8 +33,8 @@ public extension LocalSyncV2Store {
         try Task.checkCancellation()
         try inTransaction {
             if let work = try scopedWorkRow(workID: graph.workID, scope: scope) {
-                guard work[1].text == anchor.documentID.description,
-                      work[5].text == anchor.createdAt else {
+                guard work.documentID == anchor.documentID.description,
+                      work.documentCreatedAt == anchor.createdAt else {
                     throw SyncV2StoreError.invalidSnapshot
                 }
             } else if try workExists(workID: graph.workID) {
@@ -202,7 +202,7 @@ extension LocalSyncV2Store {
               AND account_id=? AND account_fence=?
             """,
             [.text(inboxID.uuidString.lowercased())] + binding.values
-        ).first?[0].text else { throw SyncV2StoreError.inboxNotFound }
+        ).first?.scalar.text else { throw SyncV2StoreError.inboxNotFound }
         return state
     }
 
@@ -212,39 +212,37 @@ extension LocalSyncV2Store {
         anchor: GraphAnchor
     ) throws {
         let inboxID = graph.inboxID.uuidString.lowercased()
-        guard let batch = try query(
+        guard let batch = try queryRows(
+            InboxReplayBatchRow.self,
             """
-            SELECT work_id,document_id,document_created_at,server_instance_id,
-                   protocol_epoch,account_id,account_fence,snapshot_id,
-                   expected_current_snapshot_id,expected_local_generation,
-                   expected_remote_head_snapshot_id,expected_remote_head_generation,
-                   state,manifest_bytes
+            SELECT \(InboxReplayBatchRow.columns)
             FROM inbox_batches WHERE inbox_id=?
             """,
             [.text(inboxID)]
         ).first,
-            batch[0].text == graph.workID.description,
-            batch[1].text == anchor.documentID.description,
-            batch[2].text == anchor.createdAt,
-            batch[3].text == binding.serverInstanceID,
-            batch[4].int64 == binding.protocolEpoch,
-            batch[5].text == binding.accountID,
-            batch[6].text == binding.accountFence,
-            batch[7].blob == graph.headSnapshotID.bytes,
-            batch[8].blob == graph.expectedCurrentSnapshotID?.bytes,
-            batch[9].int64 == graph.expectedLocalGeneration,
-            batch[10].blob == graph.expectedRemoteHead?.snapshotID.bytes,
-            batch[11].int64 == graph.expectedRemoteHead?.generation,
-            ["staged", "verified", "adopted"].contains(batch[12].text ?? ""),
-            try batch[13].blob == graphSnapshot(
+            batch.workID == graph.workID.description,
+            batch.documentID == anchor.documentID.description,
+            batch.documentCreatedAt == anchor.createdAt,
+            batch.serverInstanceID == binding.serverInstanceID,
+            batch.protocolEpoch == binding.protocolEpoch,
+            batch.accountID == binding.accountID,
+            batch.accountFence == binding.accountFence,
+            batch.snapshotID == graph.headSnapshotID.bytes,
+            batch.expectedCurrentSnapshotID == graph.expectedCurrentSnapshotID?.bytes,
+            batch.expectedLocalGeneration == graph.expectedLocalGeneration,
+            batch.expectedRemoteHeadSnapshotID == graph.expectedRemoteHead?.snapshotID.bytes,
+            batch.expectedRemoteHeadGeneration == graph.expectedRemoteHead?.generation,
+            ["staged", "verified", "adopted"].contains(batch.state ?? ""),
+            try batch.manifestBytes == graphSnapshot(
                 graph.headSnapshotID,
                 in: graph
             ).manifestBytes else {
             throw SyncV2StoreError.invalidSnapshot
         }
-        let storedSnapshots = try query(
+        let storedSnapshots = try queryRows(
+            InboxReplaySnapshotRow.self,
             """
-            SELECT snapshot_id,manifest_bytes,is_head FROM inbox_snapshots
+            SELECT \(InboxReplaySnapshotRow.columns) FROM inbox_snapshots
             WHERE inbox_id=? ORDER BY snapshot_id
             """,
             [.text(inboxID)]
@@ -256,16 +254,17 @@ extension LocalSyncV2Store {
             throw SyncV2StoreError.invalidSnapshot
         }
         for (row, snapshot) in zip(storedSnapshots, expectedSnapshots) {
-            guard row[0].blob == snapshot.snapshotIDBytes,
-                  row[1].blob == snapshot.manifestBytes,
-                  row[2].int64 == (snapshot.snapshotId == graph.headSnapshotID ? 1 : 0) else {
+            guard row.snapshotID == snapshot.snapshotIDBytes,
+                  row.manifestBytes == snapshot.manifestBytes,
+                  row.isHead == (snapshot.snapshotId == graph.headSnapshotID ? 1 : 0) else {
                 throw SyncV2StoreError.invalidSnapshot
             }
         }
         let objects = try graphObjectUnion(graph)
-        let storedObjects = try query(
+        let storedObjects = try queryRows(
+            ObjectBytesRow.self,
             """
-            SELECT object_id,byte_count,bytes FROM inbox_objects
+            SELECT \(ObjectBytesRow.columns) FROM inbox_objects
             WHERE inbox_id=? ORDER BY object_id
             """,
             [.text(inboxID)]
@@ -275,9 +274,9 @@ extension LocalSyncV2Store {
             throw SyncV2StoreError.invalidSnapshot
         }
         for (row, object) in zip(storedObjects, expectedObjects) {
-            guard row[0].blob == object.key.bytes,
-                  row[1].int64 == Int64(object.value.count),
-                  row[2].blob == object.value else {
+            guard row.objectID == object.key.bytes,
+                  row.byteCount == Int64(object.value.count),
+                  row.bytes == object.value else {
                 throw SyncV2StoreError.invalidSnapshot
             }
         }
@@ -285,9 +284,10 @@ extension LocalSyncV2Store {
     }
 
     func attestInboxClosure(_ graph: V2RemoteSnapshotGraph) throws {
-        let rows = try query(
+        let rows = try queryRows(
+            InboxClosureRow.self,
             """
-            SELECT snapshot_id,entity_key,object_id,byte_count,content_type
+            SELECT \(InboxClosureRow.columns)
             FROM inbox_closure WHERE inbox_id=?
             ORDER BY snapshot_id,entity_key
             """,
@@ -300,11 +300,11 @@ extension LocalSyncV2Store {
         }
         guard rows.count == entries.count else { throw SyncV2StoreError.invalidSnapshot }
         for (row, pair) in zip(rows, entries) {
-            guard row[0].blob == pair.0.bytes,
-                  row[1].text == pair.1.entityKey,
-                  row[2].blob == pair.1.objectId.bytes,
-                  row[3].int64 == Int64(pair.1.byteCount),
-                  row[4].text == pair.1.contentType.rawValue else {
+            guard row.snapshotID == pair.0.bytes,
+                  row.entityKey == pair.1.entityKey,
+                  row.objectID == pair.1.objectId.bytes,
+                  row.byteCount == Int64(pair.1.byteCount),
+                  row.contentType == pair.1.contentType.rawValue else {
                 throw SyncV2StoreError.invalidSnapshot
             }
         }
@@ -326,10 +326,10 @@ extension LocalSyncV2Store {
                   workID: graph.workID,
                   scope: .bound(binding)
               ),
-              current[1].text == anchor.documentID.description,
-              current[5].text == anchor.createdAt,
-              current[3].blob == graph.expectedCurrentSnapshotID?.bytes,
-              current[2].int64 == graph.expectedLocalGeneration else {
+              current.documentID == anchor.documentID.description,
+              current.documentCreatedAt == anchor.createdAt,
+              current.currentSnapshotID == graph.expectedCurrentSnapshotID?.bytes,
+              current.localGeneration == graph.expectedLocalGeneration else {
             throw SyncV2StoreError.staleCAS
         }
         if let expectedConflict {
@@ -341,7 +341,7 @@ extension LocalSyncV2Store {
                 binding: binding
             )
         }
-        if let previous = current[3].blob {
+        if let previous = current.currentSnapshotID {
             let previousID: SnapshotID
             do { previousID = try SnapshotID(rawValue: previous.hexString) }
             catch { throw SyncV2StoreError.invalidSnapshot }
@@ -427,17 +427,17 @@ extension LocalSyncV2Store {
 
     private func validateOrdinaryAdoption(
         workID: WorkID,
-        current: [SQLiteValue],
+        current: WorkRow,
         binding: V2AccountBinding
     ) throws {
         guard try activeConflictRow(workID: workID, binding: binding) == nil else {
             throw SyncV2StoreError.staleConflictAction
         }
-        if let bytes = current[3].blob,
+        if let bytes = current.currentSnapshotID,
            try isUnpromotedLeaf(workID: workID, snapshotID: SnapshotID(rawValue: bytes.hexString)) {
             throw SyncV2StoreError.staleCAS
         }
-        guard current[6].text == V2SyncLane.normal.rawValue,
+        guard current.syncLane == V2SyncLane.normal.rawValue,
               try query(
                   """
                   SELECT 1 FROM sync_intents
@@ -477,11 +477,11 @@ extension LocalSyncV2Store {
                   workID: request.workID,
                   scope: .bound(binding)
               ),
-              let currentGeneration = current[2].int64 else {
+              let currentGeneration = current.localGeneration else {
             throw SyncV2StoreError.staleConflictAction
         }
         let exactSource = currentGeneration == request.sourceGeneration &&
-            current[3].blob == request.localSnapshotID.bytes
+            current.currentSnapshotID == request.localSnapshotID.bytes
         if exactSource {
             try adoptGraphTransaction(
                 graph,

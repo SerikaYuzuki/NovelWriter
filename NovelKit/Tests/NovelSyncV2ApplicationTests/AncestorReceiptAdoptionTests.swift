@@ -39,7 +39,7 @@ struct AncestorReceiptAdoptionTests {
         }
         try await app.resumePending()
         try await eventually { try await app.pendingAdoption(workID: fixture.workID) != nil }
-        #expect(try await store.query("SELECT remote_generation FROM snapshot_remote_equivalents").first?[0]
+        #expect(try await store.query("SELECT remote_generation FROM snapshot_remote_equivalents").first?.scalar
             .int64 == 839)
         let openingApp: SyncV2Application
         if repairLegacyStore {
@@ -69,8 +69,8 @@ struct AncestorReceiptAdoptionTests {
         #expect(try await store.pendingIntents(scope: productionScope).isEmpty)
         #expect(try await openingApp.pendingAdoption(workID: fixture.workID) == nil)
         #expect(try await store.query("SELECT remote_snapshot_id,remote_generation FROM snapshot_remote_equivalents")
-            .first?[0].blob == fixture.local.snapshotID.bytes)
-        #expect(try await store.query("SELECT remote_generation FROM snapshot_remote_equivalents").first?[0]
+            .first?.blob("remote_snapshot_id") == fixture.local.snapshotID.bytes)
+        #expect(try await store.query("SELECT remote_generation FROM snapshot_remote_equivalents").first?.scalar
             .int64 == 839)
         #expect(try await store.open(workID: fixture.workID, scope: productionScope).attachments == [fixture.cover])
         await store.close()
@@ -190,7 +190,7 @@ extension AncestorReceiptAdoptionTests {
         }
         #expect(try await app.checkForRemoteUpdates(workID: fixture.workID) == !concurrentEdit)
         #expect(await configuration.remote.recordedOperations().isEmpty)
-        #expect(try await fixture.store.query("SELECT COUNT(*) FROM sync_intents").first?[0].int64 == 1)
+        #expect(try await fixture.store.query("SELECT COUNT(*) FROM sync_intents").first?.scalar.int64 == 1)
         #expect(try await fixture.store.pendingIntents(scope: productionScope).isEmpty)
         if concurrentEdit {
             #expect(try await app.pendingAdoption(workID: fixture.workID) == nil)
@@ -235,7 +235,7 @@ extension AncestorReceiptAdoptionTests {
         await #expect(throws: SyncV2Failure.accountFenceChanged) {
             try await app.checkForRemoteUpdates(workID: fixture.workID)
         }
-        #expect(try await fixture.store.query("SELECT COUNT(*) FROM inbox_batches").first?[0].int64 == 0)
+        #expect(try await fixture.store.query("SELECT COUNT(*) FROM inbox_batches").first?.scalar.int64 == 0)
         #expect(try await fixture.store.workSummary(workID: fixture.workID, scope: productionScope)
             .acknowledgedHeadGeneration == 839)
         #expect(await configuration.remote.recordedOperations().isEmpty)

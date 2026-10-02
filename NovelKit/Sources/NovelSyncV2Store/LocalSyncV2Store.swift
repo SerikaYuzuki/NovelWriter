@@ -69,11 +69,12 @@ public actor LocalSyncV2Store {
 
 public extension LocalSyncV2Store {
     func schemaVersionAndChecksum() throws -> (String, Data) {
-        guard let row = try query(
-            "SELECT value,checksum FROM schema_meta WHERE key='schema'"
+        guard let row = try queryRows(
+            SchemaMarkerRow.self,
+            "SELECT \(SchemaMarkerRow.columns) FROM schema_meta WHERE key='schema'"
         ).first,
-            let version = row[0].text,
-            let checksum = row[1].blob else { throw SyncV2StoreError.schemaMismatch }
+            let version = row.value,
+            let checksum = row.checksum else { throw SyncV2StoreError.schemaMismatch }
         return (version, checksum)
     }
 
@@ -87,8 +88,8 @@ public extension LocalSyncV2Store {
         try inTransaction {
             let anchor = try Self.iso8601(documentCreatedAt)
             if let row = try scopedWorkRow(workID: workID, scope: scope) {
-                guard row[1].text == documentID.description,
-                      row[5].text == anchor else {
+                guard row.documentID == documentID.description,
+                      row.documentCreatedAt == anchor else {
                     throw SyncV2StoreError.invalidSnapshot
                 }
                 return
@@ -107,13 +108,12 @@ public extension LocalSyncV2Store {
     }
 
     func listWorks(scope: V2LocalWorkScope) throws -> [V2WorkSummary] {
-        let rows: [[SQLiteValue]] = switch scope {
+        let rows: [WorkRow] = switch scope {
         case .unbound:
-            try query(
+            try queryRows(
+                WorkRow.self,
                 """
-                SELECT w.work_id,w.document_id,w.local_generation,
-                       w.current_snapshot_id,w.acknowledged_head_generation,
-                       w.document_created_at,w.sync_lane
+                SELECT \(WorkRow.columns)
                 FROM works w
                 WHERE NOT EXISTS (
                   SELECT 1 FROM account_bindings b
@@ -123,11 +123,10 @@ public extension LocalSyncV2Store {
                 """
             )
         case .parked:
-            try query(
+            try queryRows(
+                WorkRow.self,
                 """
-                SELECT w.work_id,w.document_id,w.local_generation,
-                       w.current_snapshot_id,w.acknowledged_head_generation,
-                       w.document_created_at,w.sync_lane
+                SELECT \(WorkRow.columns)
                 FROM works w
                 WHERE EXISTS (
                   SELECT 1 FROM account_bindings b
@@ -140,11 +139,10 @@ public extension LocalSyncV2Store {
                 """
             )
         case let .bound(binding):
-            try query(
+            try queryRows(
+                WorkRow.self,
                 """
-                SELECT w.work_id,w.document_id,w.local_generation,
-                       w.current_snapshot_id,w.acknowledged_head_generation,
-                       w.document_created_at,w.sync_lane
+                SELECT \(WorkRow.columns)
                 FROM works w JOIN account_bindings b ON b.work_id=w.work_id
                 WHERE b.server_instance_id=? AND b.protocol_epoch=?
                   AND b.account_id=? AND b.account_fence=? AND b.state='bound'
@@ -168,7 +166,7 @@ public extension LocalSyncV2Store {
             throw SyncV2StoreError.workNotFound
         }
         let summary = try Self.summary(row)
-        guard let anchor = row[5].text,
+        guard let anchor = row.documentCreatedAt,
               let documentCreatedAt = ISO8601DateFormatter().date(from: anchor) else {
             throw SyncV2StoreError.invalidSnapshot
         }
@@ -210,12 +208,12 @@ public extension LocalSyncV2Store {
         var parents: [SnapshotID] = []
         var currentSnapshot: SnapshotID?
         if let existing {
-            guard existing[1].text == DocumentID(request.document.id).description,
-                  existing[2].int64 == request.expectedGeneration,
-                  existing[5].text == anchor else {
+            guard existing.documentID == DocumentID(request.document.id).description,
+                  existing.localGeneration == request.expectedGeneration,
+                  existing.documentCreatedAt == anchor else {
                 throw SyncV2StoreError.generationMismatch
             }
-            if let bytes = existing[3].blob {
+            if let bytes = existing.currentSnapshotID {
                 let current = try SnapshotID(rawValue: bytes.hexString)
                 currentSnapshot = current
                 parents = try checkpointParents(workID: request.workID, current: current)
@@ -263,7 +261,7 @@ public extension LocalSyncV2Store {
         workID: WorkID? = nil
     ) throws -> [V2PendingIntent] {
         var sql = """
-        SELECT intent_id,work_id,source_snapshot_id,source_generation,kind,status
+        SELECT \(IntentRow.columns)
         FROM sync_intents
         WHERE status IN ('pending','sealed')
           -- A publish that already received conflictPending is immutable
@@ -283,7 +281,10 @@ public extension LocalSyncV2Store {
             values.append(.text(workID.description))
         }
         sql += " ORDER BY CASE WHEN kind='conflictResolution' THEN 0 ELSE 1 END, work_id,source_generation, rowid"
-        return try query(sql, values).map(Self.pendingIntent)
+        return try queryRows(
+            IntentRow.self,
+            sql, values
+        ).map(Self.pendingIntent)
     }
 
     func prepareExplicitAccountClone(
@@ -300,7 +301,7 @@ public extension LocalSyncV2Store {
                   workID: sourceWorkID,
                   scope: sourceScope
               ),
-              let sourceSnapshotBytes = source[3].blob,
+              let sourceSnapshotBytes = source.currentSnapshotID,
               try !workExists(workID: newWorkID) else {
             throw SyncV2StoreError.workNotFound
         }
@@ -327,7 +328,7 @@ public extension LocalSyncV2Store {
             guard try scopedWorkRow(
                 workID: sourceWorkID,
                 scope: sourceScope
-            )?[3].blob == sourceSnapshotBytes,
+            )?.currentSnapshotID == sourceSnapshotBytes,
                 try !workExists(workID: newWorkID) else {
                 throw SyncV2StoreError.staleCAS
             }
@@ -382,7 +383,7 @@ public extension LocalSyncV2Store {
         return try Int(query(
             "SELECT COUNT(*) FROM history_occurrences WHERE work_id=?",
             [.text(workID.description)]
-        ).first?[0].int64 ?? 0)
+        ).first?.scalar.int64 ?? 0)
     }
 
     func history(
@@ -392,19 +393,20 @@ public extension LocalSyncV2Store {
         guard try scopedWorkRow(workID: workID, scope: scope) != nil else {
             throw SyncV2StoreError.workNotFound
         }
-        return try query(
+        return try queryRows(
+            HistoryOccurrenceRow.self,
             """
-            SELECT snapshot_id,reason,pinned,local_generation,occurrence_id,created_at
+            SELECT \(HistoryOccurrenceRow.columns)
             FROM history_occurrences WHERE work_id=? ORDER BY rowid
             """,
             [.text(workID.description)]
         ).map { row in
-            guard let snapshot = row[0].blob,
-                  let reason = row[1].text,
-                  let generation = row[3].int64,
-                  let occurrenceText = row[4].text,
+            guard let snapshot = row.snapshotID,
+                  let reason = row.reason,
+                  let generation = row.localGeneration,
+                  let occurrenceText = row.occurrenceID,
                   let occurrenceID = UUID(uuidString: occurrenceText),
-                  let createdText = row[5].text,
+                  let createdText = row.createdAt,
                   let createdAt = Self.parseHistoryDate(createdText) else {
                 throw SyncV2StoreError.invalidHistoryDate
             }
@@ -412,7 +414,7 @@ public extension LocalSyncV2Store {
                 occurrenceID: occurrenceID,
                 snapshotID: SnapshotID(rawValue: snapshot.hexString),
                 reason: reason,
-                pinned: row[2].int64 == 1,
+                pinned: row.pinned == 1,
                 localGeneration: generation,
                 createdAt: createdAt
             )
@@ -441,7 +443,7 @@ public extension LocalSyncV2Store {
             throw SyncV2StoreError.invalidHistoryCursor
         }
         var sql = """
-        SELECT occurrence_id,snapshot_id,reason,pinned,local_generation,created_at
+        SELECT \(HistoryPageRow.columns)
         FROM history_occurrences
         WHERE work_id=?
         """
@@ -459,14 +461,17 @@ public extension LocalSyncV2Store {
         sql += " ORDER BY created_at DESC, local_generation DESC, occurrence_id DESC LIMIT ?"
         values.append(.int(Int64(pageSize)))
 
-        let occurrences = try query(sql, values).map { row in
-            guard let occurrenceText = row[0].text,
+        let occurrences = try queryRows(
+            HistoryPageRow.self,
+            sql, values
+        ).map { row in
+            guard let occurrenceText = row.occurrenceID,
                   let occurrenceID = UUID(uuidString: occurrenceText),
-                  let snapshot = row[1].blob,
-                  let reason = row[2].text,
-                  let pinned = row[3].int64,
-                  let generation = row[4].int64,
-                  let createdText = row[5].text,
+                  let snapshot = row.snapshotID,
+                  let reason = row.reason,
+                  let pinned = row.pinned,
+                  let generation = row.localGeneration,
+                  let createdText = row.createdAt,
                   let createdAt = Self.parseHistoryDate(createdText) else {
                 throw SyncV2StoreError.invalidHistoryDate
             }
@@ -583,12 +588,12 @@ private extension LocalSyncV2Store {
                 )
             }
             guard let current = try scopedWorkRow(workID: request.workID, scope: scope),
-                  current[2].int64 == request.expectedGeneration,
-                  current[1].text == DocumentID(request.document.id).description,
-                  current[5].text == anchor else {
+                  current.localGeneration == request.expectedGeneration,
+                  current.documentID == DocumentID(request.document.id).description,
+                  current.documentCreatedAt == anchor else {
                 throw SyncV2StoreError.generationMismatch
             }
-            if let bytes = current[3].blob {
+            if let bytes = current.currentSnapshotID {
                 let currentID = try SnapshotID(rawValue: bytes.hexString)
                 // Another connection may promote without changing generation.
                 // Never commit an encoding against the superseded stable parent.
@@ -621,7 +626,7 @@ private extension LocalSyncV2Store {
                 pinned: request.reason.protectsOccurrence,
                 generation: next
             )
-            let lane = V2SyncLane(rawValue: current[6].text ?? "")
+            let lane = V2SyncLane(rawValue: current.syncLane ?? "")
             if case .parked = scope {
                 // A parked Work continues to checkpoint locally, but it must
                 // not create an unbound remote lane while no account is

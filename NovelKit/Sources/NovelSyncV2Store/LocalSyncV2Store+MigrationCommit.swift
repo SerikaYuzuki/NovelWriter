@@ -102,7 +102,7 @@ public extension LocalSyncV2Store {
     ) throws -> Bool {
         guard let batch = try migrationBatchForCommit(migrationID: request.staging.migrationID),
               migrationBatchMatches(batch, request: request),
-              let manifest = batch[3].blob,
+              let manifest = batch.manifestBytes,
               let model = try? SnapshotCodec.decode(
                   manifestBytes: manifest,
                   objects: stagedObjects
@@ -112,8 +112,9 @@ public extension LocalSyncV2Store {
                   workID: request.staging.proposedWorkID,
                   binding: request.binding
               ),
-              let work = try query(
-                  "SELECT document_id,current_snapshot_id,local_generation FROM works WHERE work_id=?",
+              let work = try queryRows(
+                  MigrationWorkRow.self,
+                  "SELECT \(MigrationWorkRow.columns) FROM works WHERE work_id=?",
                   [.text(request.staging.proposedWorkID.description)]
               ).first,
               migrationWorkMatches(work, request: request),
@@ -139,7 +140,7 @@ public extension LocalSyncV2Store {
         }
         guard let batch = try migrationBatchForCommit(migrationID: request.staging.migrationID),
               migrationBatchMatches(batch, request: request),
-              let manifest = batch[3].blob else {
+              let manifest = batch.manifestBytes else {
             throw SyncV2StoreError.staleCAS
         }
         let stagedObjects = try migrationStagingObjects(migrationID: request.staging.migrationID)
@@ -229,11 +230,11 @@ public extension LocalSyncV2Store {
         )
     }
 
-    private func migrationBatchForCommit(migrationID: UUID) throws -> [SQLiteValue]? {
-        try query(
+    private func migrationBatchForCommit(migrationID: UUID) throws -> MigrationCommitRow? {
+        try queryRows(
+            MigrationCommitRow.self,
             """
-            SELECT proposed_work_id,proposed_document_id,snapshot_id,manifest_bytes,
-                   state,verified_account_id
+            SELECT \(MigrationCommitRow.columns)
             FROM migration_staging_batches WHERE migration_id=?
             """,
             [.text(migrationID.uuidString.lowercased())]
@@ -241,16 +242,16 @@ public extension LocalSyncV2Store {
     }
 
     private func migrationBatchMatches(
-        _ batch: [SQLiteValue],
+        _ batch: MigrationCommitRow,
         request: V2MigrationCommitRequest
     ) -> Bool {
-        batch.count >= 6 &&
-            batch[0].text == request.staging.proposedWorkID.description &&
-            batch[1].text == request.staging.proposedDocumentID.description &&
-            batch[2].blob == request.staging.snapshotID.bytes &&
-            batch[3].blob == request.staging.manifestBytes &&
-            batch[4].text == "verified" &&
-            batch[5].text == request.binding.accountID
+        batch.columnCount >= 6 &&
+            batch.proposedWorkID == request.staging.proposedWorkID.description &&
+            batch.proposedDocumentID == request.staging.proposedDocumentID.description &&
+            batch.snapshotID == request.staging.snapshotID.bytes &&
+            batch.manifestBytes == request.staging.manifestBytes &&
+            batch.state == "verified" &&
+            batch.verifiedAccountID == request.binding.accountID
     }
 
     private func migrationModelMatches(
@@ -264,13 +265,13 @@ public extension LocalSyncV2Store {
     }
 
     private func migrationWorkMatches(
-        _ work: [SQLiteValue],
+        _ work: MigrationWorkRow,
         request: V2MigrationCommitRequest
     ) -> Bool {
-        work.count >= 3 &&
-            work[0].text == request.staging.proposedDocumentID.description &&
-            work[1].blob == request.staging.snapshotID.bytes &&
-            work[2].int64 == 1
+        work.columnCount >= 3 &&
+            work.documentID == request.staging.proposedDocumentID.description &&
+            work.currentSnapshotID == request.staging.snapshotID.bytes &&
+            work.localGeneration == 1
     }
 
     private func migrationDocumentMatches(

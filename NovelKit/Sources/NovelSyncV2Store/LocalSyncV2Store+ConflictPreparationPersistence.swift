@@ -118,8 +118,8 @@ extension LocalSyncV2Store {
     ) throws -> V2RestorePreparationResult {
         try inTransaction {
             guard let latest = try scopedWorkRow(workID: request.workID, scope: scope),
-                  latest[2].int64 == request.expectedLocalGeneration,
-                  latest[3].blob == prepared.currentBytes else {
+                  latest.localGeneration == request.expectedLocalGeneration,
+                  latest.currentSnapshotID == prepared.currentBytes else {
                 throw SyncV2StoreError.staleCAS
             }
             guard try acknowledgedHead(workID: request.workID) ==
@@ -187,9 +187,10 @@ extension LocalSyncV2Store {
         scope: V2LocalWorkScope,
         prepared: RestorePreparedMaterial
     ) throws {
-        let equivalent = try query(
+        let equivalent = try queryRows(
+            RemoteEquivalentRow.self,
             """
-            SELECT remote_snapshot_id,remote_generation
+            SELECT \(RemoteEquivalentRow.columns)
             FROM snapshot_remote_equivalents
             WHERE work_id=? AND local_snapshot_id=?
             """,
@@ -220,8 +221,8 @@ extension LocalSyncV2Store {
                 .blob(request.selectedSnapshotID.bytes), .blob(prepared.currentID.bytes),
                 .blob(prepared.result.snapshotIDBytes),
                 .text(prepared.intentID.uuidString.lowercased()),
-                equivalent?[0].blob.map(SQLiteValue.blob) ?? .null,
-                equivalent?[1].int64.map(SQLiteValue.int) ?? .null,
+                equivalent?.remoteSnapshotID.map(SQLiteValue.blob) ?? .null,
+                equivalent?.remoteGeneration.map(SQLiteValue.int) ?? .null,
                 prepared.expectedRemoteHead.map {
                     .blob($0.snapshotID.bytes)
                 } ?? .null,

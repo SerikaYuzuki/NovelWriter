@@ -55,15 +55,14 @@ extension LocalSyncV2Store {
     func activeConflictRow(
         workID: WorkID,
         binding: V2AccountBinding
-    ) throws -> [SQLiteValue]? {
+    ) throws -> ConflictCandidateRow? {
         guard try bindingIsActive(workID: workID, binding: binding) else {
             throw SyncV2StoreError.workNotFound
         }
-        return try query(
+        return try queryRows(
+            ConflictCandidateRow.self,
             """
-            SELECT c.conflict_id,c.current_revision,k.base_snapshot_id,
-                   k.local_snapshot_id,k.remote_snapshot_id,k.source_generation,
-                   k.remote_inbox_id
+            SELECT \(ConflictCandidateRow.columns)
             FROM conflicts c JOIN conflict_candidates k
               ON k.conflict_id=c.conflict_id AND k.revision=c.current_revision
             WHERE c.work_id=? AND c.server_instance_id=?
@@ -104,7 +103,7 @@ extension LocalSyncV2Store {
                 .text(conflict.conflictID.uuidString.lowercased()),
                 .int(conflict.revision)
             ]
-        ).first?[0].text,
+        ).first?.scalar.text,
             let inboxID = UUID(uuidString: text) else {
             throw SyncV2StoreError.inboxNotFound
         }
@@ -128,7 +127,7 @@ extension LocalSyncV2Store {
             workID: request.workID,
             scope: .bound(binding)
         ),
-            (current[2].int64.map { $0 >= request.sourceGeneration } == true) else {
+            (current.localGeneration.map { $0 >= request.sourceGeneration } == true) else {
             throw SyncV2StoreError.staleConflictAction
         }
     }
@@ -151,7 +150,7 @@ extension LocalSyncV2Store {
                   workID: request.workID,
                   scope: .bound(binding)
               ),
-              (current[2].int64.map { $0 >= request.sourceGeneration } == true) else {
+              (current.localGeneration.map { $0 >= request.sourceGeneration } == true) else {
             throw SyncV2StoreError.staleConflictAction
         }
     }
@@ -223,9 +222,9 @@ extension LocalSyncV2Store {
                   workID: record.workID,
                   binding: record.binding
               ),
-              row[0].text == conflictID.uuidString.lowercased(),
-              row[1].int64 == revision,
-              row[3].blob == localCandidate.bytes,
+              row.conflictID == conflictID.uuidString.lowercased(),
+              row.currentRevision == revision,
+              row.localSnapshotID == localCandidate.bytes,
               let active = try activeConflict(
                   workID: record.workID,
                   scope: .bound(record.binding)
@@ -269,12 +268,10 @@ extension LocalSyncV2Store {
         originalHead: V2RemoteHead,
         cloneHead: V2RemoteHead
     ) throws {
-        guard let row = try query(
+        guard let row = try queryRows(
+            KeepBothFinalizationRow.self,
             """
-            SELECT conflict_id,conflict_revision,source_generation,
-                   remote_snapshot_id,new_work_id,new_root_snapshot_id,
-                   expected_original_head_snapshot_id,
-                   expected_original_head_generation,state
+            SELECT \(KeepBothFinalizationRow.columns)
             FROM pending_keep_both
             WHERE source_work_id=? AND command_id=?
             """,
@@ -283,17 +280,17 @@ extension LocalSyncV2Store {
                 .text(record.commandID.uuidString.lowercased())
             ]
         ).first,
-            let conflict = row[0].text,
-            let revision = row[1].int64,
-            let generation = row[2].int64,
-            let remoteBytes = row[3].blob,
-            let newWork = row[4].text,
-            let root = row[5].blob,
-            row[6].blob == originalHead.snapshotID.bytes,
-            row[7].int64 == originalHead.generation,
+            let conflict = row.conflictID,
+            let revision = row.conflictRevision,
+            let generation = row.sourceGeneration,
+            let remoteBytes = row.remoteSnapshotID,
+            let newWork = row.newWorkID,
+            let root = row.newRootSnapshotID,
+            row.expectedOriginalHeadSnapshotID == originalHead.snapshotID.bytes,
+            row.expectedOriginalHeadGeneration == originalHead.generation,
             cloneHead.snapshotID.bytes == root,
             cloneHead.generation == 1,
-            row[8].text == "sealed" else {
+            row.state == "sealed" else {
             throw SyncV2StoreError.staleConflictAction
         }
         guard let active = try activeConflict(
@@ -348,12 +345,13 @@ extension LocalSyncV2Store {
             ]
         )
         guard try changes() == 1 else { throw SyncV2StoreError.staleConflictAction }
-        guard let clone = try query(
-            "SELECT current_snapshot_id,local_generation FROM works WHERE work_id=?",
+        guard let clone = try queryRows(
+            WorkCurrentRow.self,
+            "SELECT \(WorkCurrentRow.columns) FROM works WHERE work_id=?",
             [.text(newWork)]
         ).first,
-            let current = clone[0].blob,
-            let cloneGeneration = clone[1].int64 else {
+            let current = clone.currentSnapshotID,
+            let cloneGeneration = clone.localGeneration else {
             throw SyncV2StoreError.staleConflictAction
         }
         if current != root || cloneGeneration != 1 {

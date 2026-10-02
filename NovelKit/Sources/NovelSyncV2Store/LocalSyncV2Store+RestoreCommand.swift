@@ -15,21 +15,24 @@ public extension LocalSyncV2Store {
         guard try scopedWorkRow(workID: workID, scope: scope) != nil,
               let intent = try pendingIntents(scope: scope, workID: workID).first(where: { $0.intentID == intentID }),
               intent.kind == "restore", intent.sourceGeneration > 1,
-              let row = try query(
+              let row = try queryRows(
+                  RestoreCommandRow.self,
                   """
-                  SELECT pre_restore_snapshot_id,selected_snapshot_id,result_snapshot_id,
-                         expected_remote_head_snapshot_id,expected_remote_head_generation
+                  SELECT \(RestoreCommandRow.columns)
                   FROM restore_records WHERE work_id=? AND intent_id=? AND state='prepared'
                   """, [.text(workID.description), .text(intentID.uuidString.lowercased())]
               ).first,
-              let previous = row[0].blob, let selected = row[1].blob,
-              row[2].blob == intent.sourceSnapshotID.bytes else { throw SyncV2StoreError.invalidCommand }
+              let previous = row.preRestoreSnapshotID, let selected = row.selectedSnapshotID,
+              row.resultSnapshotID == intent.sourceSnapshotID.bytes else { throw SyncV2StoreError.invalidCommand }
         return try V2RestoreCommandSource(
             previousSnapshotID: SnapshotID(rawValue: previous.hexString),
             selectedSnapshotID: SnapshotID(rawValue: selected.hexString),
             restoredSnapshotID: intent.sourceSnapshotID,
             previousGeneration: intent.sourceGeneration - 1,
-            expectedRemoteHead: Self.head(snapshot: row[3].blob, generation: row[4].int64)
+            expectedRemoteHead: Self.head(
+                snapshot: row.expectedRemoteHeadSnapshotID,
+                generation: row.expectedRemoteHeadGeneration
+            )
         )
     }
 }

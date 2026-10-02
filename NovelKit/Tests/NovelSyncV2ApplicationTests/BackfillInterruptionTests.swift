@@ -36,7 +36,7 @@ extension RemoteHTTPLineageTests {
         let client = try http.client(snapshots: [], overrideState: state, localStore: store)
         await #expect(throws: (any Error).self) { try await client.backfillHistory(workID: fixture.workID) }
         #expect(try await store.backfillState(workID: fixture.workID)?.resumeCursor == nil)
-        #expect(try await store.query("SELECT COUNT(*) FROM snapshots").first?[0].int64 == 1)
+        #expect(try await store.query("SELECT COUNT(*) FROM snapshots").first?.scalar.int64 == 1)
         await store.close()
         let reopened = try LocalSyncV2Store(root: root, policy: .openExisting)
         state.failNext(path: path, replies: [fixture.backfillPage])
@@ -73,7 +73,7 @@ extension RemoteHTTPLineageTests {
         state.failNext(path: "/v2/works/\(fixture.workID)/download?mode", replies: [.init(status: 200, headers: fixture.backfillPage.headers, body: bytes)])
         let client = try http.client(snapshots: [], overrideState: state, localStore: store)
         await #expect(throws: (any Error).self) { try await client.backfillHistory(workID: fixture.workID) }
-        #expect(try await store.query("SELECT COUNT(*) FROM snapshots").first?[0].int64 == 1)
+        #expect(try await store.query("SELECT COUNT(*) FROM snapshots").first?.scalar.int64 == 1)
         #expect(try await store.backfillState(workID: fixture.workID)?.status == .failed)
         let requestCount = state.count(path: "/v2/works/\(fixture.workID)/download")
         try await client.backfillHistory(workID: fixture.workID)

@@ -8,8 +8,8 @@ public extension LocalSyncV2Store {
     ) throws -> (generation: Int64, head: V2RemoteHead)? {
         guard case .bound = scope,
               let row = try scopedWorkRow(workID: workID, scope: scope),
-              let generation = row[2].int64,
-              row[6].text == V2SyncLane.normal.rawValue,
+              let generation = row.localGeneration,
+              row.syncLane == V2SyncLane.normal.rawValue,
               try activeConflict(workID: workID, scope: scope) == nil,
               try pendingIntents(scope: scope, workID: workID).isEmpty,
               let head = try acknowledgedHead(workID: workID) else { return nil }
@@ -24,9 +24,9 @@ public extension LocalSyncV2Store {
         guard case .bound = scope else { return false }
         return try inTransaction {
             guard let row = try scopedWorkRow(workID: workID, scope: scope),
-                  row[2].int64 == expectedLocalGeneration,
-                  let snapshot = row[3].blob,
-                  row[6].text == V2SyncLane.normal.rawValue,
+                  row.localGeneration == expectedLocalGeneration,
+                  let snapshot = row.currentSnapshotID,
+                  row.syncLane == V2SyncLane.normal.rawValue,
                   try activeConflict(workID: workID, scope: scope) == nil,
                   try pendingIntents(scope: scope, workID: workID).isEmpty,
                   try allSealedCommands(scope: scope, workID: workID).allSatisfy({

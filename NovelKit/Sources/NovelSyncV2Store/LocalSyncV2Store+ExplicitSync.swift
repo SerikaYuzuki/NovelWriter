@@ -9,9 +9,9 @@ public extension LocalSyncV2Store {
         guard case .bound = scope else { throw SyncV2StoreError.accountMismatch }
         try inTransaction {
             guard let row = try scopedWorkRow(workID: workID, scope: scope),
-                  let generation = row[2].int64,
-                  let snapshot = row[3].blob,
-                  row[6].text == V2SyncLane.normal.rawValue else {
+                  let generation = row.localGeneration,
+                  let snapshot = row.currentSnapshotID,
+                  row.syncLane == V2SyncLane.normal.rawValue else {
                 throw SyncV2StoreError.accountMismatch
             }
             _ = try promoteCurrentLeafTransaction(workID: workID, scope: scope)

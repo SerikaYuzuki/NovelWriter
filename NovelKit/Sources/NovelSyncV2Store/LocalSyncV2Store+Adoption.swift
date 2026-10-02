@@ -36,14 +36,14 @@ public extension LocalSyncV2Store {
                   """,
                   [.text(workID.description)] + binding.values
               ).first,
-              row[0].text != nil else {
+              try row.scalar.text != nil else {
             return nil
         }
         let inboxID = try conflictInbox(active)
         guard try inboxState(inboxID: inboxID, binding: binding) == "verified",
               let current = try scopedWorkRow(workID: workID, scope: scope),
-              let generation = current[2].int64,
-              let snapshot = current[3].blob else {
+              let generation = current.localGeneration,
+              let snapshot = current.currentSnapshotID else {
             return nil
         }
         let expected = try SnapshotID(rawValue: snapshot.hexString)

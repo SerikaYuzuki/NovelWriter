@@ -52,7 +52,11 @@ struct ShallowFixture {
                                       expectedRemoteHead: fixture.graph.expectedRemoteHead)
     try await full.installInitialGraph(graph, scope: scopeA)
     for table in ["snapshots", "snapshot_entries", "snapshot_parents", "objects"] {
-        #expect(try await store.query("SELECT COUNT(*) FROM \(table)").first?[0].int64 == full.query("SELECT COUNT(*) FROM \(table)").first?[0].int64)
+        #expect(try await store.query(
+            "SELECT COUNT(*) FROM \(table)"
+        ).first?.scalar.int64 == full.query(
+            "SELECT COUNT(*) FROM \(table)"
+        ).first?.scalar.int64)
     }
     for snapshot in fixture.snapshots {
         let actual = try await store.committedSnapshot(workID: fixture.workID, snapshotID: snapshot.snapshotId, scope: scopeA)
@@ -60,7 +64,9 @@ struct ShallowFixture {
         #expect(actual?.objects == snapshot.objects)
     }
     #expect(try await store.backfillState(workID: fixture.workID)?.status == .complete)
-    #expect(try await store.query("SELECT COUNT(*) FROM shallow_boundaries").first?[0].int64 == 0)
+    #expect(try await store.query(
+        "SELECT COUNT(*) FROM shallow_boundaries"
+    ).first?.scalar.int64 == 0)
     await store.close(); await full.close()
 }
 
@@ -111,7 +117,9 @@ func malformedBackfillIsAtomic(kind: String) async throws {
         try await store.applyBackfillPage(fixture.page(snapshots), workID: fixture.workID, binding: bindingA,
                                           root: fixture.head.snapshotId, expectedCursor: kind == "cursor" ? "wrong" : nil)
     }
-    #expect(try await store.query("SELECT COUNT(*) FROM snapshots").first?[0].int64 == 1)
+    #expect(try await store.query(
+        "SELECT COUNT(*) FROM snapshots"
+    ).first?.scalar.int64 == 1)
     #expect(try await store.backfillState(workID: fixture.workID)?.resumeCursor == nil)
     await store.close()
 }
@@ -158,7 +166,9 @@ func malformedBackfillIsAtomic(kind: String) async throws {
         try await store.applyBackfillPage(fixture.page(cursor: "end"), workID: fixture.workID, binding: bindingA,
                                           root: fixture.head.snapshotId, expectedCursor: nil)
     }
-    #expect(try await store.query("SELECT COUNT(*) FROM snapshots").first?[0].int64 == 1)
+    #expect(try await store.query(
+        "SELECT COUNT(*) FROM snapshots"
+    ).first?.scalar.int64 == 1)
     #expect(try await store.backfillState(workID: fixture.workID)?.resumeCursor == nil)
     await store.close()
 }

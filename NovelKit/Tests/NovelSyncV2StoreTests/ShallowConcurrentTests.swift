@@ -38,7 +38,7 @@ import Testing
     let deletion = try #require(try await store.workDeletion(workID: fixture.workID))
     try await store.completeWorkDeletion(deletion)
     for table in ["history_backfills", "shallow_boundaries", "snapshots", "snapshot_parents"] {
-        #expect(try await store.query("SELECT COUNT(*) FROM \(table)").first?[0].int64 == 0)
+        #expect(try await store.query("SELECT COUNT(*) FROM \(table)").first?.scalar.int64 == 0)
     }
     await store.close()
     let reopened = try LocalSyncV2Store(root: root, policy: .openExisting)
@@ -75,7 +75,7 @@ func backfill256ItemsWriteLockUnder100ms() async throws {
         try await store.applyBackfillPage(V2BackfillPage(snapshots: [parent], resumeCursor: nil, terminal: true),
                                           workID: workID, binding: bindingA, root: head.snapshotId, expectedCursor: nil)
     }
-    #expect(try await store.query("SELECT COUNT(*) FROM snapshots").first?[0].int64 == 1)
+    #expect(try await store.query("SELECT COUNT(*) FROM snapshots").first?.scalar.int64 == 1)
     await store.close()
 }
 

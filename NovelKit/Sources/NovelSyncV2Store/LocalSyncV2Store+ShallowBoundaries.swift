@@ -29,7 +29,7 @@ extension LocalSyncV2Store {
         let values: [SQLiteValue] = [.text(workID.description), .blob(parent.bytes)]
         try exec("""
         INSERT INTO snapshot_parents(work_id,snapshot_id,parent_snapshot_id)
-        SELECT work_id,snapshot_id,parent_snapshot_id FROM shallow_boundaries
+        SELECT \(ShallowBoundaryRow.columns) FROM shallow_boundaries
         WHERE work_id=? AND parent_snapshot_id=?
         """, values)
         try exec("DELETE FROM shallow_boundaries WHERE work_id=? AND parent_snapshot_id=?", values)

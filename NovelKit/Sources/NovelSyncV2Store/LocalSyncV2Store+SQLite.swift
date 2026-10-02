@@ -38,14 +38,12 @@ extension LocalSyncV2Store {
     func scopedWorkRow(
         workID: WorkID,
         scope: V2LocalWorkScope
-    ) throws -> [SQLiteValue]? {
-        let columns = """
-        w.work_id,w.document_id,w.local_generation,w.current_snapshot_id,
-        w.acknowledged_head_generation,w.document_created_at,w.sync_lane
-        """
+    ) throws -> WorkRow? {
+        let columns = WorkRow.columns
         switch scope {
         case .unbound:
-            return try query(
+            return try queryRows(
+                WorkRow.self,
                 """
                 SELECT \(columns) FROM works w
                 WHERE w.work_id=? AND NOT EXISTS (
@@ -56,7 +54,8 @@ extension LocalSyncV2Store {
                 [.text(workID.description)]
             ).first
         case .parked:
-            return try query(
+            return try queryRows(
+                WorkRow.self,
                 """
                 SELECT \(columns) FROM works w
                 WHERE w.work_id=? AND EXISTS (
@@ -70,7 +69,8 @@ extension LocalSyncV2Store {
                 [.text(workID.description)]
             ).first
         case let .bound(binding):
-            return try query(
+            return try queryRows(
+                WorkRow.self,
                 """
                 SELECT \(columns) FROM works w
                 JOIN account_bindings b ON b.work_id=w.work_id
@@ -176,7 +176,7 @@ extension LocalSyncV2Store {
         """
         sql += scope.intentPredicateSQL
         let values = [.text(workID.description)] + scope.intentPredicateValues
-        if let text = try query(sql, values).first?[0].text,
+        if let text = try query(sql, values).first?.scalar.text,
            let existing = UUID(uuidString: text) {
             try exec(
                 """
@@ -237,7 +237,7 @@ extension LocalSyncV2Store {
         return try query(
             sql,
             [.text(workID.description)] + scope.intentPredicateValues
-        ).first?[0].text.flatMap(UUID.init(uuidString:))
+        ).first?.scalar.text.flatMap(UUID.init(uuidString:))
     }
 
     func insertHistory(
@@ -267,13 +267,14 @@ extension LocalSyncV2Store {
               encoded.manifest.workId == workID else {
             throw SyncV2StoreError.invalidSnapshot
         }
-        guard let work = try query(
-            "SELECT document_id,document_created_at FROM works WHERE work_id=?",
+        guard let work = try queryRows(
+            WorkAnchorRow.self,
+            "SELECT \(WorkAnchorRow.columns) FROM works WHERE work_id=?",
             [.text(workID.description)]
         ).first else { throw SyncV2StoreError.workNotFound }
         let model = try SnapshotCodec.decode(encoded)
-        guard work[0].text == DocumentID(model.document.id).description,
-              try work[1].text == Self.iso8601(model.documentCreatedAt) else {
+        guard work.documentID == DocumentID(model.document.id).description,
+              try work.documentCreatedAt == Self.iso8601(model.documentCreatedAt) else {
             throw SyncV2StoreError.invalidSnapshot
         }
         try insertValidatedEncoded(encoded, workID: workID, attestExistingObjects: false)
@@ -291,7 +292,9 @@ extension LocalSyncV2Store {
                 continue
             }
             if let existing = try query(
-                attestExistingObjects ? "SELECT byte_count,bytes FROM objects WHERE object_id=?" : "SELECT byte_count FROM objects WHERE object_id=?",
+                attestExistingObjects
+                    ? "SELECT \(ObjectContentRow.columns) FROM objects WHERE object_id=?"
+                    : "SELECT byte_count FROM objects WHERE object_id=?",
                 [.blob(objectID.bytes)]
             ).first {
                 // Incoming bytes have been digest-validated. Existing immutable CAS
@@ -300,8 +303,8 @@ extension LocalSyncV2Store {
                 // Import must attest bytes it will reuse from an earlier transaction,
                 // so a corrupt existing CAS row cannot turn valid input into a bad install.
                 // This happens once per unique object, not once per snapshot.
-                guard existing[0].int64 == Int64(bytes.count),
-                      !attestExistingObjects || existing[1].blob == bytes else {
+                guard try existing.int64("byte_count") == Int64(bytes.count),
+                      try !attestExistingObjects || ObjectContentRow(existing).bytes == bytes else {
                     throw SyncV2StoreError.invalidSnapshot
                 }
                 if attestExistingObjects {
@@ -316,16 +319,17 @@ extension LocalSyncV2Store {
             }
         }
 
-        if let existing = try query(
+        if let existing = try queryRows(
+            SnapshotManifestRow.self,
             """
-            SELECT work_id,manifest_bytes,manifest_digest
+            SELECT \(SnapshotManifestRow.columns)
             FROM snapshots WHERE snapshot_id=?
             """,
             [.blob(encoded.snapshotIDBytes)]
         ).first {
-            guard existing[0].text == workID.description,
-                  existing[1].blob == encoded.manifestBytes,
-                  existing[2].blob == encoded.snapshotIDBytes else {
+            guard existing.workID == workID.description,
+                  existing.manifestBytes == encoded.manifestBytes,
+                  existing.manifestDigest == encoded.snapshotIDBytes else {
                 throw SyncV2StoreError.invalidSnapshot
             }
             // Existing rows must already be exact; do not repair missing children
@@ -383,18 +387,19 @@ extension LocalSyncV2Store {
         guard let bytes = try query(
             "SELECT manifest_bytes FROM snapshots WHERE work_id=? AND snapshot_id=?",
             [.text(workID.description), .blob(snapshotID.bytes)]
-        ).first?[0].blob,
+        ).first?.scalar.blob,
             SnapshotID(data: bytes) == snapshotID else { throw SyncV2StoreError.snapshotNotFound }
         let manifest = try SnapshotValidator.validate(manifestBytes: bytes)
         guard manifest.workId == workID else { throw SyncV2StoreError.invalidSnapshot }
         var objects: [ObjectID: Data] = [:]
         for entry in manifest.entries {
-            guard let object = try query(
-                "SELECT byte_count,bytes FROM objects WHERE object_id=?",
+            guard let object = try queryRows(
+                ObjectContentRow.self,
+                "SELECT \(ObjectContentRow.columns) FROM objects WHERE object_id=?",
                 [.blob(entry.objectId.bytes)]
             ).first,
-                object[0].int64 == Int64(entry.byteCount),
-                let data = object[1].blob,
+                object.byteCount == Int64(entry.byteCount),
+                let data = object.bytes,
                 ObjectID(data: data) == entry.objectId else { throw SyncV2StoreError.invalidSnapshot }
             objects[entry.objectId] = data
         }
@@ -451,13 +456,14 @@ extension LocalSyncV2Store {
             """,
             [.text(workID.description), .blob(encoded.snapshotIDBytes),
              .text(workID.description), .blob(encoded.snapshotIDBytes)]
-        ).compactMap { $0[0].blob?.hexString }
+        ).compactMap { try $0.scalar.blob?.hexString }
         guard parents == encoded.manifest.parentSnapshotIds.map(\.rawValue).sorted() else {
             throw SyncV2StoreError.invalidSnapshot
         }
-        let entries = try query(
+        let entries = try queryRows(
+            SnapshotEntryRow.self,
             """
-            SELECT entity_key,object_id,byte_count,content_type
+            SELECT \(SnapshotEntryRow.columns)
             FROM snapshot_entries WHERE snapshot_id=? ORDER BY entity_key
             """,
             [.blob(encoded.snapshotIDBytes)]
@@ -466,27 +472,27 @@ extension LocalSyncV2Store {
             throw SyncV2StoreError.invalidSnapshot
         }
         for (row, entry) in zip(entries, encoded.manifest.entries) {
-            guard row[0].text == entry.entityKey,
-                  row[1].blob == entry.objectId.bytes,
-                  row[2].int64 == Int64(entry.byteCount),
-                  row[3].text == entry.contentType.rawValue else {
+            guard row.entityKey == entry.entityKey,
+                  row.objectID == entry.objectId.bytes,
+                  row.byteCount == Int64(entry.byteCount),
+                  row.contentType == entry.contentType.rawValue else {
                 throw SyncV2StoreError.invalidSnapshot
             }
         }
     }
 
-    func validateAnchor(_ model: SnapshotModel, workRow: [SQLiteValue]) throws {
-        guard workRow[1].text == DocumentID(model.document.id).description,
-              try workRow[5].text == Self.iso8601(model.documentCreatedAt) else {
+    func validateAnchor(_ model: SnapshotModel, workRow: WorkRow) throws {
+        guard workRow.documentID == DocumentID(model.document.id).description,
+              try workRow.documentCreatedAt == Self.iso8601(model.documentCreatedAt) else {
             throw SyncV2StoreError.invalidSnapshot
         }
     }
 
-    static func summary(_ row: [SQLiteValue]) throws -> V2WorkSummary {
-        guard let work = row[0].text,
-              let document = row[1].text,
-              let generation = row[2].int64,
-              let laneText = row[6].text,
+    static func summary(_ row: WorkRow) throws -> V2WorkSummary {
+        guard let work = row.workID,
+              let document = row.documentID,
+              let generation = row.localGeneration,
+              let laneText = row.syncLane,
               let lane = V2SyncLane(rawValue: laneText) else {
             throw SyncV2StoreError.sqlite("work")
         }
@@ -494,21 +500,21 @@ extension LocalSyncV2Store {
             workID: WorkID(uuidString: work),
             documentID: DocumentID(uuidString: document),
             localGeneration: generation,
-            currentSnapshotID: row[3].blob.map {
+            currentSnapshotID: row.currentSnapshotID.map {
                 try SnapshotID(rawValue: $0.hexString)
             },
-            acknowledgedHeadGeneration: row[4].int64,
+            acknowledgedHeadGeneration: row.acknowledgedHeadGeneration,
             syncLane: lane
         )
     }
 
-    static func pendingIntent(_ row: [SQLiteValue]) throws -> V2PendingIntent {
-        guard let intent = row[0].text.flatMap(UUID.init(uuidString:)),
-              let work = row[1].text,
-              let snapshot = row[2].blob,
-              let generation = row[3].int64,
-              let kind = row[4].text,
-              let status = row[5].text else {
+    static func pendingIntent(_ row: IntentRow) throws -> V2PendingIntent {
+        guard let intent = row.intentID.flatMap(UUID.init(uuidString:)),
+              let work = row.workID,
+              let snapshot = row.sourceSnapshotID,
+              let generation = row.sourceGeneration,
+              let kind = row.kind,
+              let status = row.status else {
             throw SyncV2StoreError.sqlite("intent")
         }
         return try V2PendingIntent(
@@ -557,22 +563,20 @@ extension LocalSyncV2Store {
         guard sqlite3_step(statement) == SQLITE_DONE else { throw sqliteError() }
     }
 
-    func query(_ sql: String, _ bindings: [SQLiteValue] = []) throws -> [[SQLiteValue]] {
+    func query(_ sql: String, _ bindings: [SQLiteValue] = []) throws -> [SQLiteRow] {
         let statement: OpaquePointer? = try preparedStatement(sql)
         defer {
             sqlite3_reset(statement)
             sqlite3_clear_bindings(statement)
         }
         try bind(statement, bindings)
-        var rows: [[SQLiteValue]] = []
+        var rows: [SQLiteRow] = []
         var result = sqlite3_step(statement)
         while result == SQLITE_ROW {
             guard let statement else {
                 throw SyncV2StoreError.sqlite("query statement unavailable")
             }
-            try rows.append((0 ..< sqlite3_column_count(statement)).map {
-                try SQLiteValue(statement: statement, index: Int32($0))
-            })
+            try rows.append(SQLiteRow(statement: statement))
             result = sqlite3_step(statement)
         }
         guard result == SQLITE_DONE else { throw sqliteError() }
@@ -610,7 +614,7 @@ extension LocalSyncV2Store {
     }
 }
 
-enum SQLiteValue {
+enum SQLiteValue: Sendable {
     case null
     case text(String)
     case blob(Data)
