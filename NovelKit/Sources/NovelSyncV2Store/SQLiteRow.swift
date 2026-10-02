@@ -1,4 +1,3 @@
-import CSQLite
 import Foundation
 
 /// A result row retains SQLite's column names independently of SELECT order.
@@ -6,13 +5,9 @@ struct SQLiteRow: Sendable {
     private let names: [String]
     private let values: [SQLiteValue]
 
-    init(statement: OpaquePointer) throws {
-        names = (0 ..< sqlite3_column_count(statement)).map {
-            String(cString: sqlite3_column_name(statement, $0))
-        }
-        values = try (0 ..< sqlite3_column_count(statement)).map {
-            try SQLiteValue(statement: statement, index: $0)
-        }
+    init(names: [String], values: [SQLiteValue]) {
+        self.names = names
+        self.values = values
     }
 
     func value(named name: String) throws -> SQLiteValue {
@@ -68,16 +63,6 @@ struct SQLiteRow: Sendable {
 protocol SQLiteRowDecodable: Sendable {
     static var columns: String { get }
     init(_ row: SQLiteRow) throws
-}
-
-extension LocalSyncV2Store {
-    func queryRows<Row: SQLiteRowDecodable>(
-        _: Row.Type,
-        _ sql: String,
-        _ bindings: [SQLiteValue] = []
-    ) throws -> [Row] {
-        try query(sql, bindings).map(Row.init)
-    }
 }
 
 extension SQLiteRowDecodable {

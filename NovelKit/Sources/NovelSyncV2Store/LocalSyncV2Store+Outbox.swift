@@ -6,15 +6,7 @@ public extension LocalSyncV2Store {
         scope: V2LocalWorkScope,
         workID: WorkID
     ) throws -> [V2SealedCommandRecord] {
-        guard case let .bound(binding) = scope else { throw SyncV2StoreError.accountMismatch }
-        return try queryRows(
-            SealedCommandRow.self,
-            Self.commandSelect + """
-             WHERE work_id=? AND server_instance_id=? AND protocol_epoch=?
-               AND account_id=? AND account_fence=? ORDER BY rowid
-            """,
-            [.text(workID.description)] + binding.values
-        ).map(Self.commandRecord)
+        try outboxRepository.allSealedCommands(scope: scope, workID: workID)
     }
 
     func seal(
@@ -33,10 +25,10 @@ public extension LocalSyncV2Store {
         }
         let payload = command.payload
         let workID = try payload.workID
-        guard try scopedWorkRow(workID: workID, scope: scope) != nil else {
+        guard try workRepository.scopedWorkRow(workID: workID, scope: scope) != nil else {
             throw SyncV2StoreError.accountMismatch
         }
-        if let existing = try sealedRecord(
+        if let existing = try outboxRepository.sealedRecord(
             commandID: command.commandId,
             binding: binding
         ) {
@@ -70,24 +62,7 @@ public extension LocalSyncV2Store {
         scope: V2LocalWorkScope,
         workID: WorkID? = nil
     ) throws -> [V2SealedCommandRecord] {
-        guard case let .bound(binding) = scope else {
-            throw SyncV2StoreError.accountMismatch
-        }
-        var sql = Self.commandSelect + """
-         WHERE server_instance_id=? AND protocol_epoch=?
-           AND account_id=? AND account_fence=?
-           AND status IN ('sealed','sending')
-        """
-        var values = binding.values
-        if let workID {
-            sql += " AND work_id=?"
-            values.append(.text(workID.description))
-        }
-        sql += " ORDER BY rowid"
-        return try queryRows(
-            SealedCommandRow.self,
-            sql, values
-        ).map(Self.commandRecord)
+        try outboxRepository.pendingSealedCommands(scope: scope, workID: workID)
     }
 
     @discardableResult
@@ -95,43 +70,14 @@ public extension LocalSyncV2Store {
         commandID: UUID,
         scope: V2LocalWorkScope
     ) throws -> V2SealedCommandRecord {
-        guard case let .bound(binding) = scope else {
-            throw SyncV2StoreError.accountMismatch
-        }
-        try exec(
-            """
-            UPDATE sealed_commands SET status='sending'
-            WHERE command_id=? AND server_instance_id=? AND protocol_epoch=?
-              AND account_id=? AND account_fence=? AND status='sealed'
-              AND EXISTS (
-                SELECT 1 FROM account_bindings b
-                WHERE b.work_id=sealed_commands.work_id
-                  AND b.server_instance_id=sealed_commands.server_instance_id
-                  AND b.protocol_epoch=sealed_commands.protocol_epoch
-                  AND b.account_id=sealed_commands.account_id
-                  AND b.account_fence=sealed_commands.account_fence
-                  AND b.state='bound'
-              )
-            """,
-            [.text(commandID.uuidString.lowercased())] + binding.values
-        )
-        guard let record = try sealedRecord(commandID: commandID, binding: binding),
-              record.lifecycle == .sending else {
-            throw SyncV2StoreError.invalidLifecycle
-        }
-        return record
+        try outboxRepository.markSending(commandID: commandID, scope: scope)
     }
 
     func requeue(
         commandID: UUID,
         scope: V2LocalWorkScope
     ) throws {
-        try transitionCommand(
-            commandID: commandID,
-            scope: scope,
-            from: ["sending"],
-            to: "sealed"
-        )
+        try outboxRepository.requeue(commandID: commandID, scope: scope)
     }
 
     func quarantine(
@@ -140,12 +86,12 @@ public extension LocalSyncV2Store {
         reason: String? = nil
     ) throws {
         try inTransaction {
-            try transitionCommand(
+            try outboxRepository.transitionCommand(
                 commandID: commandID, scope: scope,
                 from: ["sealed", "sending", "conflictPending"], to: "quarantined"
             )
             if let reason {
-                try recordCommandFailureReason(commandID: commandID, reason: reason)
+                try outboxRepository.recordCommandFailureReason(commandID: commandID, reason: reason)
             }
         }
     }
@@ -154,41 +100,14 @@ public extension LocalSyncV2Store {
         commandID: UUID,
         scope: V2LocalWorkScope
     ) throws {
-        try transitionCommand(
-            commandID: commandID,
-            scope: scope,
-            from: ["sealed", "sending", "conflictPending"],
-            to: "parked"
-        )
+        try outboxRepository.park(commandID: commandID, scope: scope)
     }
 
     func receiptReadback(
         commandID: UUID,
         scope: V2LocalWorkScope
     ) throws -> V2ReceiptReadback? {
-        guard case let .bound(binding) = scope else {
-            throw SyncV2StoreError.accountMismatch
-        }
-        guard try commandBindingIsActive(commandID: commandID, binding: binding) else {
-            throw SyncV2StoreError.accountMismatch
-        }
-        guard let row = try queryRows(
-            ReceiptRow.self,
-            """
-            SELECT \(ReceiptRow.columns)
-            FROM remote_receipts
-            WHERE account_id=? AND command_id=? AND work_id IN (
-              SELECT work_id FROM sealed_commands
-              WHERE command_id=? AND server_instance_id=? AND protocol_epoch=?
-                AND account_id=? AND account_fence=?
-            )
-            """,
-            [
-                .text(binding.accountID), .text(commandID.uuidString.lowercased()),
-                .text(commandID.uuidString.lowercased())
-            ] + binding.values
-        ).first else { return nil }
-        return try Self.receipt(commandID: commandID, row: row)
+        try outboxRepository.receiptReadback(commandID: commandID, scope: scope)
     }
 
     func acknowledge(
@@ -199,26 +118,26 @@ public extension LocalSyncV2Store {
         guard case let .bound(binding) = scope else {
             throw SyncV2StoreError.accountMismatch
         }
-        guard try commandBindingIsActive(
+        guard try outboxRepository.commandBindingIsActive(
             commandID: acknowledgement.commandID,
             binding: binding
         ) else {
             throw SyncV2StoreError.accountMismatch
         }
-        guard let record = try sealedRecord(
+        guard let record = try outboxRepository.sealedRecord(
             commandID: acknowledgement.commandID,
             binding: binding
         ) else { throw SyncV2StoreError.invalidCommand }
-        let decoded = try decodeAcknowledgement(
+        let decoded = try outboxRepository.decodeAcknowledgement(
             acknowledgement,
             record: record
         )
 
-        if let existing = try receiptReadback(
+        if let existing = try outboxRepository.receiptReadback(
             commandID: acknowledgement.commandID,
             scope: scope
         ) {
-            try validateDuplicateReceipt(existing, acknowledgement: decoded)
+            try outboxRepository.validateDuplicateReceipt(existing, acknowledgement: decoded)
             return
         }
         guard [.sealed, .sending, .conflictPending].contains(record.lifecycle) else {
@@ -233,14 +152,14 @@ public extension LocalSyncV2Store {
                 guard let verifiedPublishInboxID else {
                     throw SyncV2StoreError.invalidAcknowledgement
                 }
-                try validatePublishNoChangesGraph(
+                try outboxRepository.validatePublishNoChangesGraph(
                     inboxID: verifiedPublishInboxID,
                     record: record,
                     acknowledgement: decoded,
                     binding: binding
                 )
             }
-            try persistTerminalAcknowledgement(
+            try outboxRepository.persistTerminalAcknowledgement(
                 decoded,
                 record: record,
                 binding: binding
@@ -249,33 +168,232 @@ public extension LocalSyncV2Store {
     }
 }
 
-private extension LocalSyncV2Store {
-    func validatePublishNoChangesGraph(
-        inboxID: UUID,
-        record: V2SealedCommandRecord,
-        acknowledgement: DecodedCommandAcknowledgement,
-        binding: V2AccountBinding
+extension LocalSyncV2Store {
+    func persistSealedCommand(
+        _ command: SealedCommand,
+        payload: SyncV2CommandPayload,
+        workID: WorkID,
+        scope: V2LocalWorkScope,
+        binding: V2AccountBinding,
+        intentID: UUID?
     ) throws {
-        guard acknowledgement.result == .noChanges,
-              let remoteHead = acknowledgement.remoteHead else {
-            throw SyncV2StoreError.invalidAcknowledgement
+        try inTransaction {
+            try outboxRepository.validateCommandSource(
+                command,
+                payload: payload,
+                workID: workID,
+                scope: scope,
+                intentID: intentID
+            )
+            try outboxRepository.insertSealedCommand(
+                command,
+                workID: workID,
+                binding: binding,
+                intentID: intentID
+            )
+            if let intentID {
+                try outboxRepository.sealIntent(intentID)
+            }
+            try conflictRepository.linkPreparedAction(
+                command,
+                payload: payload,
+                workID: workID,
+                intentID: intentID
+            )
         }
-        let graph = try loadInboxGraph(inboxID: inboxID, binding: binding)
-        guard try inboxState(inboxID: inboxID, binding: binding) == "verified",
-              graph.workID == record.workID,
-              graph.headSnapshotID == remoteHead.snapshotID,
-              graph.expectedRemoteHead == remoteHead,
-              graph.expectedRemoteHead?.generation == remoteHead.generation else {
-            throw SyncV2StoreError.invalidAcknowledgement
+    }
+}
+
+public extension LocalSyncV2Store {
+    /// Upgrade recovery runs before the normal wake scans its pending lanes.
+    /// No intent, source generation, command ID, digest or request is replaced.
+    func retryUnacknowledgedCommands(scope: V2LocalWorkScope) throws {
+        guard case .bound = scope else { throw SyncV2StoreError.accountMismatch }
+        try inTransaction {
+            for work in try workRepository.listWorks(scope: scope) {
+                try outboxRepository.retryUnacknowledgedCommandsTransaction(
+                    workID: work.workID,
+                    scope: scope,
+                    legacyOnly: true
+                )
+            }
         }
-        let command = try SealedCommand.decodeCanonical(record.canonicalRequest)
-        let payload = command.payload
-        let candidate = try payload.snapshot("candidateSnapshotId")
-        guard candidate == record.sourceSnapshotID,
-              try graphHead(graph, containsAncestor: candidate) else {
-            throw SyncV2StoreError.invalidAcknowledgement
+    }
+
+    func retryUnacknowledgedCommands(workID: WorkID, scope: V2LocalWorkScope) throws {
+        try inTransaction { try outboxRepository.retryUnacknowledgedCommandsTransaction(
+            workID: workID,
+            scope: scope,
+            legacyOnly: true
+        ) }
+    }
+}
+
+public extension LocalSyncV2Store {
+    /// Queue only unreceived content; the application reads remote updates for
+    /// already received current snapshots without creating another publish.
+    /// Existing durable commands keep their identity and retry ordering.
+    func requestSynchronization(workID: WorkID, scope: V2LocalWorkScope) throws {
+        guard case .bound = scope else { throw SyncV2StoreError.accountMismatch }
+        try inTransaction {
+            guard let row = try workRepository.scopedWorkRow(workID: workID, scope: scope),
+                  let generation = row.localGeneration,
+                  let snapshot = row.currentSnapshotID,
+                  row.syncLane == V2SyncLane.normal.rawValue else {
+                throw SyncV2StoreError.accountMismatch
+            }
+            _ = try workRepository.promoteCurrentLeafTransaction(workID: workID, scope: scope)
+            try outboxRepository.retryQuarantinedUploads(workID: workID, scope: scope)
+            try outboxRepository.retryInitialCreateWork(workID: workID, scope: scope)
+            try outboxRepository.retryQuarantinedPublish(workID: workID, scope: scope)
+            try outboxRepository.retryUnacknowledgedCommandsTransaction(workID: workID, scope: scope)
+            guard try outboxRepository.pendingIntents(scope: scope, workID: workID).isEmpty else { return }
+            _ = try outboxRepository.upsertCheckpointIntent(
+                workID: workID,
+                snapshotID: SnapshotID(rawValue: snapshot.hexString),
+                generation: generation,
+                scope: scope
+            )
         }
-        _ = try validateGraph(graph)
-        try validateGraphParents(graph)
+    }
+}
+
+public extension LocalSyncV2Store {
+    /// Metadata-only read: periodic checks never decode every work on the shelf.
+    func automaticSyncCandidate(
+        workID: WorkID, scope: V2LocalWorkScope
+    ) throws -> (generation: Int64, head: V2RemoteHead)? {
+        try outboxRepository.automaticSyncCandidate(workID: workID, scope: scope)
+    }
+
+    /// A head check may race a local checkpoint. Queue only the exact clean
+    /// generation inspected by that check; never retry a quarantined command.
+    func requestAutomaticSynchronization(
+        workID: WorkID, scope: V2LocalWorkScope, expectedLocalGeneration: Int64
+    ) throws -> Bool {
+        guard case .bound = scope else { return false }
+        return try inTransaction {
+            guard let row = try workRepository.scopedWorkRow(workID: workID, scope: scope),
+                  row.localGeneration == expectedLocalGeneration,
+                  let snapshot = row.currentSnapshotID,
+                  row.syncLane == V2SyncLane.normal.rawValue,
+                  try conflictRepository.activeConflict(workID: workID, scope: scope) == nil,
+                  try outboxRepository.pendingIntents(scope: scope, workID: workID).isEmpty,
+                  try outboxRepository.allSealedCommands(scope: scope, workID: workID).allSatisfy({
+                      $0.lifecycle == .completed || $0.sourceGeneration < expectedLocalGeneration
+                  }) else { return false }
+            _ = try workRepository.promoteCurrentLeafTransaction(workID: workID, scope: scope)
+            let intent = try outboxRepository.upsertCheckpointIntent(
+                workID: workID, snapshotID: SnapshotID(rawValue: snapshot.hexString),
+                generation: expectedLocalGeneration, scope: scope
+            )
+            return intent != nil
+        }
+    }
+}
+
+public extension LocalSyncV2Store {
+    func quarantinedCommandReason(workID: WorkID, scope: V2LocalWorkScope) throws -> String? {
+        try outboxRepository.quarantinedCommandReason(workID: workID, scope: scope)
+    }
+}
+
+public extension LocalSyncV2Store {
+    /// The first unreceived intent survives coalescing and process restarts.
+    func oldestUnreceivedChange(workID: WorkID, scope: V2LocalWorkScope) throws -> Date? {
+        try outboxRepository.oldestUnreceivedChange(workID: workID, scope: scope)
+    }
+}
+
+public extension LocalSyncV2Store {
+    /// Called only for the server's exact pre-commit lineage rejection. Keep
+    /// old command bytes and its intent as evidence; checkpoint data is retained.
+    func replanRejectedPublish(commandID: UUID, scope: V2LocalWorkScope) throws {
+        guard case let .bound(binding) = scope else { throw SyncV2StoreError.accountMismatch }
+        try inTransaction {
+            guard let record = try outboxRepository.sealedRecord(commandID: commandID, binding: binding),
+                  record.kind == .publish, record.lifecycle == .sending,
+                  let intentID = record.intentID,
+                  try outboxRepository.receiptReadback(commandID: commandID, scope: scope) == nil,
+                  let row = try workRepository.scopedWorkRow(workID: record.workID, scope: scope),
+                  let current = row.currentSnapshotID, let generation = row.localGeneration else {
+                throw SyncV2StoreError.invalidCommand
+            }
+            let command = try SealedCommand.decodeCanonical(record.canonicalRequest)
+            let payload = command.payload
+            guard try payload.remoteHead("expectedRemoteHead") !=
+                workRepository.publishBaseHead(workID: record.workID, snapshotID: record.sourceSnapshotID) else {
+                throw SyncV2StoreError.invalidCommand
+            }
+            try outboxRepository.transitionCommand(
+                commandID: commandID,
+                scope: scope,
+                from: ["sending"],
+                to: "quarantined"
+            )
+            try outboxRepository.quarantineRejectedIntentInTransaction(intentID: intentID)
+            _ = try outboxRepository.upsertCheckpointIntent(workID: record.workID,
+                                                            snapshotID: SnapshotID(rawValue: current.hexString),
+                                                            generation: generation, scope: scope)
+        }
+    }
+}
+
+public extension LocalSyncV2Store {
+    func persistUploadTransfer(
+        _ transfer: V2UploadTransferRecord,
+        scope: V2LocalWorkScope
+    ) throws {
+        guard case let .bound(binding) = scope,
+              OutboxRepository.validUploadTransferLifecycles.contains(transfer.lifecycle),
+              transfer.objectID == ObjectID(data: transfer.exactBytes),
+              transfer.bytesDigest == ObjectID(data: transfer.exactBytes),
+              transfer.sourceGeneration > 0,
+              transfer.acknowledgedOffset >= 0,
+              transfer.acknowledgedOffset <= transfer.exactBytes.count,
+              transfer.objectID.bytes.count == 32,
+              transfer.sourceSnapshotID.bytes.count == 32,
+              transfer.bytesDigest.bytes.count == 32 else {
+            throw SyncV2StoreError.invalidCommand
+        }
+        try inTransaction {
+            try outboxRepository.persistUploadTransferInTransaction(transfer, binding: binding)
+        }
+    }
+
+    func uploadTransfer(
+        commandID: UUID,
+        scope: V2LocalWorkScope
+    ) throws -> V2UploadTransferRecord? {
+        try outboxRepository.uploadTransfer(commandID: commandID, scope: scope)
+    }
+
+    func acknowledgeUploadTransfer(
+        transferID: UUID,
+        byteCount: Int,
+        scope: V2LocalWorkScope
+    ) throws {
+        try outboxRepository.acknowledgeUploadTransfer(transferID: transferID, byteCount: byteCount, scope: scope)
+    }
+}
+
+public extension LocalSyncV2Store {
+    func quarantineUpload(transferID: UUID, workID: WorkID, reason: String, scope: V2LocalWorkScope) throws {
+        guard case let .bound(binding) = scope else { throw SyncV2StoreError.accountMismatch }
+        try inTransaction {
+            guard try workRepository.scopedWorkRow(workID: workID, scope: scope) != nil else {
+                throw SyncV2StoreError.accountMismatch
+            }
+            try outboxRepository.quarantineUploadInTransaction(
+                transferID: transferID,
+                workID: workID,
+                reason: reason,
+                binding: binding
+            )
+        }
+    }
+
+    func quarantinedUploadReason(workID: WorkID, scope: V2LocalWorkScope) throws -> String? {
+        try outboxRepository.quarantinedUploadReason(workID: workID, scope: scope)
     }
 }

@@ -2,7 +2,6 @@
 // intentionally remain co-located so every accepted checksum is auditable.
 // swiftlint:disable:next blanket_disable_command
 // swiftlint:disable type_body_length
-import CSQLite
 import Foundation
 import NovelSyncV2
 
@@ -140,13 +139,13 @@ enum V2StoreSchema {
         Data(hex: SHA256Digest.hex(sql))!
     }
 
-    static func open(_ db: OpaquePointer, create: Bool) throws {
+    static func open(_ database: OpaquePointer, create: Bool) throws {
         let sql = try resourceSQL()
         if create {
-            return try openBase(db, create: true, sql: sql)
+            return try openBase(database, create: true, sql: sql)
         }
-        try execute(db, "PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL;")
-        if (try? attest(db, expectedSQL: sql, expectedChecksum: checksum(sql))) != nil {
+        try execute(database, "PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL;")
+        if (try? attest(database, expectedSQL: sql, expectedChecksum: checksum(sql))) != nil {
             return
         }
         let source = String(decoding: sql, as: UTF8.self)
@@ -161,60 +160,50 @@ enum V2StoreSchema {
         let versions = boundaries.map { Data(source[..<$0].utf8) } + [sql]
         // Legacy migrations apply only to the original base. Each additive
         // version is independently attested, including its exact checksum.
-        if !(versions.contains { (try? attest(db, expectedSQL: $0, expectedChecksum: checksum($0))) != nil }) {
+        if !(versions.contains { (try? attest(database, expectedSQL: $0, expectedChecksum: checksum($0))) != nil }) {
             do {
-                try openBase(db, create: false, sql: versions[0])
+                try openBase(database, create: false, sql: versions[0])
             } catch {
                 // Another opener may have completed both legacy and tail steps.
-                try attest(db, expectedSQL: sql, expectedChecksum: checksum(sql))
+                try attest(database, expectedSQL: sql, expectedChecksum: checksum(sql))
                 return
             }
         }
-        try execute(db, "BEGIN IMMEDIATE")
+        try execute(database, "BEGIN IMMEDIATE")
         do {
             guard let current = versions.lastIndex(where: {
-                (try? attest(db, expectedSQL: $0, expectedChecksum: checksum($0))) != nil
+                (try? attest(database, expectedSQL: $0, expectedChecksum: checksum($0))) != nil
             }) else { throw SyncV2StoreError.schemaMismatch }
             for index in current ..< boundaries.count {
-                try attest(db, expectedSQL: versions[index], expectedChecksum: checksum(versions[index]))
+                try attest(database, expectedSQL: versions[index], expectedChecksum: checksum(versions[index]))
                 let end = index + 1 < boundaries.count ? boundaries[index + 1] : source.endIndex
-                try execute(db, String(source[boundaries[index] ..< end]))
-                try updateMetadata(db, checksum: checksum(versions[index + 1]))
-                try attest(db, expectedSQL: versions[index + 1], expectedChecksum: checksum(versions[index + 1]))
+                try execute(database, String(source[boundaries[index] ..< end]))
+                try updateMetadata(database, checksum: checksum(versions[index + 1]))
+                try attest(database, expectedSQL: versions[index + 1], expectedChecksum: checksum(versions[index + 1]))
             }
-            try execute(db, "COMMIT")
+            try execute(database, "COMMIT")
         } catch {
-            try execute(db, "ROLLBACK")
+            try execute(database, "ROLLBACK")
             throw error
         }
     }
 
-    private static func openBase(_ db: OpaquePointer, create: Bool, sql: Data) throws {
+    private static func openBase(_ database: OpaquePointer, create: Bool, sql: Data) throws {
         let expectedChecksum = checksum(sql)
-        guard sqlite3_exec(
-            db,
-            "PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL;",
-            nil,
-            nil,
-            nil
-        ) == SQLITE_OK else {
-            throw SyncV2StoreError.sqlite(String(cString: sqlite3_errmsg(db)))
-        }
+        try execute(database, "PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL;")
         if create {
-            guard try schemaObjects(db).isEmpty else {
+            guard try schemaObjects(database).isEmpty else {
                 throw SyncV2StoreError.schemaMismatch
             }
-            guard sqlite3_exec(db, String(decoding: sql, as: UTF8.self), nil, nil, nil) == SQLITE_OK else {
-                throw SyncV2StoreError.sqlite(String(cString: sqlite3_errmsg(db)))
-            }
-            try insertMetadata(db, checksum: expectedChecksum)
+            try execute(database, String(decoding: sql, as: UTF8.self))
+            try insertMetadata(database, checksum: expectedChecksum)
         }
         if create {
-            try attest(db, expectedSQL: sql, expectedChecksum: expectedChecksum)
+            try attest(database, expectedSQL: sql, expectedChecksum: expectedChecksum)
             return
         }
         do {
-            try attest(db, expectedSQL: sql, expectedChecksum: expectedChecksum)
+            try attest(database, expectedSQL: sql, expectedChecksum: expectedChecksum)
         } catch {
             let canonicalError = error
             let candidates: [(Data, Data)] = [
@@ -226,13 +215,13 @@ enum V2StoreSchema {
                 guard checksum(legacySQL) == legacyChecksum else { continue }
                 do {
                     try attest(
-                        db,
+                        database,
                         expectedSQL: legacySQL,
                         expectedChecksum: legacyChecksum,
                         includeTransferJournal: false
                     )
                     try migrateLegacyRestoreState(
-                        db,
+                        database,
                         expectedSQL: sql,
                         expectedChecksum: expectedChecksum
                     )
@@ -247,12 +236,12 @@ enum V2StoreSchema {
                 if checksum(legacyTransferSQL) == legacyUnconstrainedTransferStateChecksum {
                     do {
                         try attest(
-                            db,
+                            database,
                             expectedSQL: legacyTransferSQL,
                             expectedChecksum: legacyUnconstrainedTransferStateChecksum
                         )
                         try migrateLegacyTransferSchema(
-                            db,
+                            database,
                             expectedSQL: sql,
                             expectedChecksum: expectedChecksum
                         )
@@ -267,13 +256,13 @@ enum V2StoreSchema {
                 if checksum(legacySQL) == legacyCleanTransferStateChecksum {
                     do {
                         try attest(
-                            db,
+                            database,
                             expectedSQL: legacySQL,
                             expectedChecksum: legacyCleanTransferStateChecksum,
                             includeTransferJournal: false
                         )
                         try migrateLegacyTransferJournal(
-                            db,
+                            database,
                             expectedSQL: sql,
                             expectedChecksum: expectedChecksum
                         )
@@ -285,7 +274,7 @@ enum V2StoreSchema {
             }
             guard migrated else { throw canonicalError }
         }
-        try attest(db, expectedSQL: sql, expectedChecksum: expectedChecksum)
+        try attest(database, expectedSQL: sql, expectedChecksum: expectedChecksum)
     }
 
     /// v2 databases created before restore retirement used the same metadata
@@ -357,21 +346,19 @@ enum V2StoreSchema {
     /// column before updating the canonical checksum. No local snapshot or
     /// restore audit row is deleted.
     private static func migrateLegacyRestoreState(
-        _ db: OpaquePointer,
+        _ database: OpaquePointer,
         expectedSQL: Data,
         expectedChecksum: Data
     ) throws {
-        guard sqlite3_exec(db, "BEGIN IMMEDIATE", nil, nil, nil) == SQLITE_OK else {
-            throw SyncV2StoreError.sqlite(String(cString: sqlite3_errmsg(db)))
-        }
+        try execute(database, "BEGIN IMMEDIATE")
         do {
             try execute(
-                db,
+                database,
                 "ALTER TABLE restore_records RENAME TO restore_records_legacy"
             )
-            try execute(db, restoreTableDDL(from: expectedSQL))
+            try execute(database, restoreTableDDL(from: expectedSQL))
             try execute(
-                db,
+                database,
                 """
                 INSERT INTO restore_records(
                   restore_id,work_id,account_id,selected_snapshot_id,
@@ -388,42 +375,36 @@ enum V2StoreSchema {
                 FROM restore_records_legacy
                 """
             )
-            try execute(db, "DROP TABLE restore_records_legacy")
-            try ensureTransferJournal(db, expectedSQL: expectedSQL)
-            try updateMetadata(db, checksum: expectedChecksum)
-            try attest(db, expectedSQL: expectedSQL, expectedChecksum: expectedChecksum)
-            guard sqlite3_exec(db, "COMMIT", nil, nil, nil) == SQLITE_OK else {
-                throw SyncV2StoreError.sqlite(String(cString: sqlite3_errmsg(db)))
-            }
+            try execute(database, "DROP TABLE restore_records_legacy")
+            try ensureTransferJournal(database, expectedSQL: expectedSQL)
+            try updateMetadata(database, checksum: expectedChecksum)
+            try attest(database, expectedSQL: expectedSQL, expectedChecksum: expectedChecksum)
+            try execute(database, "COMMIT")
         } catch {
-            guard sqlite3_exec(db, "ROLLBACK", nil, nil, nil) == SQLITE_OK else {
-                throw SyncV2StoreError.sqlite(String(cString: sqlite3_errmsg(db)))
-            }
+            try execute(database, "ROLLBACK")
             throw error
         }
     }
 
     private static func migrateLegacyTransferSchema(
-        _ db: OpaquePointer,
+        _ database: OpaquePointer,
         expectedSQL: Data,
         expectedChecksum: Data
     ) throws {
-        guard sqlite3_exec(db, "BEGIN IMMEDIATE", nil, nil, nil) == SQLITE_OK else {
-            throw SyncV2StoreError.sqlite(String(cString: sqlite3_errmsg(db)))
-        }
+        try execute(database, "BEGIN IMMEDIATE")
         do {
-            try execute(db, "DROP INDEX IF EXISTS upload_transfers_scope")
-            try execute(db, "ALTER TABLE upload_transfers RENAME TO upload_transfers_legacy")
-            try execute(db, uploadTransferTableDDL(from: expectedSQL))
+            try execute(database, "DROP INDEX IF EXISTS upload_transfers_scope")
+            try execute(database, "ALTER TABLE upload_transfers RENAME TO upload_transfers_legacy")
+            try execute(database, uploadTransferTableDDL(from: expectedSQL))
             try execute(
-                db,
+                database,
                 """
                 CREATE INDEX upload_transfers_scope
                   ON upload_transfers(server_instance_id, protocol_epoch, account_id, account_fence, work_id)
                 """
             )
             try execute(
-                db,
+                database,
                 """
                 INSERT INTO upload_transfers(
                   transfer_id,command_id,work_id,object_id,source_snapshot_id,
@@ -438,47 +419,35 @@ enum V2StoreSchema {
                 FROM upload_transfers_legacy
                 """
             )
-            try execute(db, "DROP TABLE upload_transfers_legacy")
-            try updateMetadata(db, checksum: expectedChecksum)
-            try attest(db, expectedSQL: expectedSQL, expectedChecksum: expectedChecksum)
-            guard sqlite3_exec(db, "COMMIT", nil, nil, nil) == SQLITE_OK else {
-                throw SyncV2StoreError.sqlite(String(cString: sqlite3_errmsg(db)))
-            }
+            try execute(database, "DROP TABLE upload_transfers_legacy")
+            try updateMetadata(database, checksum: expectedChecksum)
+            try attest(database, expectedSQL: expectedSQL, expectedChecksum: expectedChecksum)
+            try execute(database, "COMMIT")
         } catch {
-            guard sqlite3_exec(db, "ROLLBACK", nil, nil, nil) == SQLITE_OK else {
-                throw SyncV2StoreError.sqlite(String(cString: sqlite3_errmsg(db)))
-            }
+            try execute(database, "ROLLBACK")
             throw error
         }
     }
 
     private static func migrateLegacyTransferJournal(
-        _ db: OpaquePointer,
+        _ database: OpaquePointer,
         expectedSQL: Data,
         expectedChecksum: Data
     ) throws {
-        guard sqlite3_exec(db, "BEGIN IMMEDIATE", nil, nil, nil) == SQLITE_OK else {
-            throw SyncV2StoreError.sqlite(String(cString: sqlite3_errmsg(db)))
-        }
+        try execute(database, "BEGIN IMMEDIATE")
         do {
-            try ensureTransferJournal(db, expectedSQL: expectedSQL)
-            try updateMetadata(db, checksum: expectedChecksum)
-            try attest(db, expectedSQL: expectedSQL, expectedChecksum: expectedChecksum)
-            guard sqlite3_exec(db, "COMMIT", nil, nil, nil) == SQLITE_OK else {
-                throw SyncV2StoreError.sqlite(String(cString: sqlite3_errmsg(db)))
-            }
+            try ensureTransferJournal(database, expectedSQL: expectedSQL)
+            try updateMetadata(database, checksum: expectedChecksum)
+            try attest(database, expectedSQL: expectedSQL, expectedChecksum: expectedChecksum)
+            try execute(database, "COMMIT")
         } catch {
-            guard sqlite3_exec(db, "ROLLBACK", nil, nil, nil) == SQLITE_OK else {
-                throw SyncV2StoreError.sqlite(String(cString: sqlite3_errmsg(db)))
-            }
+            try execute(database, "ROLLBACK")
             throw error
         }
     }
 
-    private static func execute(_ db: OpaquePointer, _ sql: String) throws {
-        guard sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK else {
-            throw SyncV2StoreError.sqlite(String(cString: sqlite3_errmsg(db)))
-        }
+    private static func execute(_ database: OpaquePointer, _ sql: String) throws {
+        try SQLiteExecutor.execute(database, sql)
     }
 
     private static func restoreTableDDL(from sql: Data) throws -> String {
@@ -505,173 +474,63 @@ enum V2StoreSchema {
         return String(source[start.lowerBound ..< end.lowerBound])
     }
 
-    private static func updateMetadata(_ db: OpaquePointer, checksum: Data) throws {
-        var statement: OpaquePointer?
-        guard sqlite3_prepare_v2(
-            db,
-            "UPDATE schema_meta SET checksum=? WHERE key='schema'",
-            -1,
-            &statement,
-            nil
-        ) == SQLITE_OK else {
-            throw SyncV2StoreError.sqlite(String(cString: sqlite3_errmsg(db)))
-        }
-        defer { sqlite3_finalize(statement) }
-        let bind = checksum.withUnsafeBytes {
-            sqlite3_bind_blob(
-                statement,
-                1,
-                $0.baseAddress,
-                Int32(checksum.count),
-                sqliteTransient
-            )
-        }
-        guard bind == SQLITE_OK, sqlite3_step(statement) == SQLITE_DONE else {
-            throw SyncV2StoreError.sqlite(String(cString: sqlite3_errmsg(db)))
-        }
+    private static func updateMetadata(_ database: OpaquePointer, checksum: Data) throws {
+        try SQLiteExecutor.updateMetadata(database, checksum: checksum)
     }
 
     /// Kept as an idempotent migration helper for databases created before
     /// upload_transfers became part of the canonical schema. It is called
     /// only after the old metadata and schema signature have been attested.
-    private static func ensureTransferJournal(_ db: OpaquePointer, expectedSQL: Data) throws {
+    private static func ensureTransferJournal(_ database: OpaquePointer, expectedSQL: Data) throws {
         // Use the attested canonical DDL, including whitespace: schema signatures
         // compare sqlite_schema SQL exactly, not merely equivalent constraints.
         let table = try uploadTransferTableDDL(from: expectedSQL).replacingOccurrences(
             of: "CREATE TABLE upload_transfers", with: "CREATE TABLE IF NOT EXISTS upload_transfers"
         )
-        try execute(db, table)
-        try execute(db, """
+        try execute(database, table)
+        try execute(database, """
         CREATE INDEX IF NOT EXISTS upload_transfers_scope
           ON upload_transfers(server_instance_id, protocol_epoch, account_id, account_fence, work_id)
         """)
     }
 
-    private static func insertMetadata(_ db: OpaquePointer, checksum: Data) throws {
-        var statement: OpaquePointer?
-        guard sqlite3_prepare_v2(
-            db,
-            "INSERT INTO schema_meta(key,value,checksum) VALUES('schema',?,?)",
-            -1,
-            &statement,
-            nil
-        ) == SQLITE_OK else {
-            throw SyncV2StoreError.sqlite(String(cString: sqlite3_errmsg(db)))
-        }
-        defer { sqlite3_finalize(statement) }
-        sqlite3_bind_text(statement, 1, version, -1, sqliteTransient)
-        let bind = checksum.withUnsafeBytes {
-            sqlite3_bind_blob(
-                statement,
-                2,
-                $0.baseAddress,
-                Int32(checksum.count),
-                sqliteTransient
-            )
-        }
-        guard bind == SQLITE_OK, sqlite3_step(statement) == SQLITE_DONE else {
-            throw SyncV2StoreError.sqlite(String(cString: sqlite3_errmsg(db)))
-        }
+    private static func insertMetadata(_ database: OpaquePointer, checksum: Data) throws {
+        try SQLiteExecutor.insertMetadata(database, checksum: checksum)
     }
 
     private static func attest(
-        _ db: OpaquePointer,
+        _ database: OpaquePointer,
         expectedSQL: Data,
         expectedChecksum: Data,
         includeTransferJournal: Bool = true
     ) throws {
-        var statement: OpaquePointer?
-        guard sqlite3_prepare_v2(
-            db,
-            "SELECT value,checksum FROM schema_meta WHERE key='schema'",
-            -1,
-            &statement,
-            nil
-        ) == SQLITE_OK else { throw SyncV2StoreError.schemaMismatch }
-        defer { sqlite3_finalize(statement) }
-        guard sqlite3_step(statement) == SQLITE_ROW,
-              String(cString: sqlite3_column_text(statement, 0)) == version,
-              Data(
-                  bytes: sqlite3_column_blob(statement, 1),
-                  count: Int(sqlite3_column_bytes(statement, 1))
-              ) == expectedChecksum,
-              sqlite3_step(statement) == SQLITE_DONE else {
-            throw SyncV2StoreError.schemaMismatch
-        }
-        let actual = try schemaSignature(db, includeTransferJournal: includeTransferJournal)
-        let expected = try schemaSignature(for: expectedSQL, includeTransferJournal: includeTransferJournal)
-        guard actual == expected else { throw SyncV2StoreError.schemaMismatch }
+        try SQLiteExecutor.attest(
+            database,
+            expectedSQL: expectedSQL,
+            expectedChecksum: expectedChecksum,
+            includeTransferJournal: includeTransferJournal
+        )
     }
 
     private static func schemaSignature(
         for sql: Data,
         includeTransferJournal: Bool = true
     ) throws -> Data {
-        var memory: OpaquePointer?
-        guard sqlite3_open_v2(
-            ":memory:",
-            &memory,
-            SQLITE_OPEN_CREATE | SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX,
-            nil
-        ) == SQLITE_OK,
-            let memory else { throw SyncV2StoreError.schemaMismatch }
-        defer { sqlite3_close(memory) }
-        guard sqlite3_exec(memory, String(decoding: sql, as: UTF8.self), nil, nil, nil) == SQLITE_OK else {
-            throw SyncV2StoreError.schemaMismatch
-        }
-        return try schemaSignature(memory, includeTransferJournal: includeTransferJournal)
+        try SQLiteExecutor.schemaSignature(for: sql, includeTransferJournal: includeTransferJournal)
     }
 
     private static func schemaSignature(
-        _ db: OpaquePointer,
+        _ database: OpaquePointer,
         includeTransferJournal: Bool = true
     ) throws -> Data {
-        let objects = try schemaObjects(db, includeTransferJournal: includeTransferJournal)
-        var bytes = Data()
-        for object in objects {
-            for field in object {
-                bytes.append(contentsOf: field.utf8)
-                bytes.append(0)
-            }
-        }
-        return Data(hex: SHA256Digest.hex(bytes))!
+        try SQLiteExecutor.schemaSignature(database, includeTransferJournal: includeTransferJournal)
     }
 
     private static func schemaObjects(
-        _ db: OpaquePointer,
+        _ database: OpaquePointer,
         includeTransferJournal: Bool = true
     ) throws -> [[String]] {
-        var statement: OpaquePointer?
-        guard sqlite3_prepare_v2(
-            db,
-            """
-            SELECT type,name,tbl_name,COALESCE(sql,'') FROM sqlite_schema
-            WHERE type IN ('table','index','trigger','view') ORDER BY type,name
-            """,
-            -1,
-            &statement,
-            nil
-        ) == SQLITE_OK else { throw SyncV2StoreError.schemaMismatch }
-        defer { sqlite3_finalize(statement) }
-        var objects: [[String]] = []
-        var result = sqlite3_step(statement)
-        while result == SQLITE_ROW {
-            let objectName = sqlite3_column_text(statement, 1).map { String(cString: $0) } ?? ""
-            let tableName = sqlite3_column_text(statement, 2).map { String(cString: $0) } ?? ""
-            guard includeTransferJournal ||
-                (!objectName.hasPrefix("upload_transfers") && !tableName.hasPrefix("upload_transfers")) else {
-                result = sqlite3_step(statement)
-                continue
-            }
-            objects.append((0 ..< 4).map { index in
-                sqlite3_column_text(statement, Int32(index)).map {
-                    String(cString: $0)
-                } ?? ""
-            })
-            result = sqlite3_step(statement)
-        }
-        guard result == SQLITE_DONE else { throw SyncV2StoreError.schemaMismatch }
-        return objects
+        try SQLiteExecutor.schemaObjects(database, includeTransferJournal: includeTransferJournal)
     }
 }
 

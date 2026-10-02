@@ -18,7 +18,10 @@ private func initialGraph() throws -> V2RemoteSnapshotGraph {
     let store = try LocalSyncV2Store(root: root, policy: .createNew)
     let graph = try initialGraph()
     // Fail after objects/snapshots have been inserted, before current is installed.
-    try await store.exec("CREATE TEMP TRIGGER fail_install BEFORE UPDATE OF current_snapshot_id ON works BEGIN SELECT RAISE(ABORT,'injected'); END")
+    try await store
+        .exec(
+            "CREATE TEMP TRIGGER fail_install BEFORE UPDATE OF current_snapshot_id ON works BEGIN SELECT RAISE(ABORT,'injected'); END"
+        )
     await #expect(throws: (any Error).self) { try await store.installInitialGraph(graph, scope: scopeA) }
     for table in ["works", "objects", "snapshots", "history_occurrences", "inbox_batches"] {
         #expect(try await store.query(
@@ -61,7 +64,10 @@ func persistedInboxStillRejectsCorruption(version: String) async throws {
     let title = try #require(first.snapshots[0].manifest.entries.first { $0.entityKey == "work/title" })
     // Simulate on-disk corruption beyond the immutable-row trigger, in this disposable fixture only.
     try await store.exec("DROP TRIGGER objects_immutable_update")
-    try await store.exec("UPDATE objects SET bytes=zeroblob(byte_count) WHERE object_id=?", [.blob(title.objectId.bytes)])
+    try await store.exec(
+        "UPDATE objects SET bytes=zeroblob(byte_count) WHERE object_id=?",
+        [.blob(title.objectId.bytes)]
+    )
     let second = try initialGraph()
     await #expect(throws: SyncV2StoreError.invalidSnapshot) {
         try await store.installInitialGraph(second, scope: scopeA)
@@ -119,11 +125,23 @@ func initialInstallCancellationRollsBack() async throws {
 
 private extension LocalSyncV2Store {
     func installCancellationTrigger() throws {
-        let result = sqlite3_create_function_v2(db, "cancel_import_task", 0, SQLITE_UTF8, nil, { context, _, _ in
-            withUnsafeCurrentTask { $0?.cancel() }
-            sqlite3_result_null(context)
-        }, nil, nil, nil)
+        let result = sqlite3_create_function_v2(
+            executor.connection,
+            "cancel_import_task",
+            0,
+            SQLITE_UTF8,
+            nil,
+            { context, _, _ in
+                withUnsafeCurrentTask { $0?.cancel() }
+                sqlite3_result_null(context)
+            },
+            nil,
+            nil,
+            nil
+        )
         #expect(result == SQLITE_OK)
-        try exec("CREATE TEMP TRIGGER cancel_initial_install AFTER UPDATE OF current_snapshot_id ON works BEGIN SELECT cancel_import_task(); END")
+        try exec(
+            "CREATE TEMP TRIGGER cancel_initial_install AFTER UPDATE OF current_snapshot_id ON works BEGIN SELECT cancel_import_task(); END"
+        )
     }
 }

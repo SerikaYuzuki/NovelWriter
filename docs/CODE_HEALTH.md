@@ -24,7 +24,7 @@ macOSの滑らかなカーソルを通常EditorKitへ組み込み、端末の執
 ## 実装が残るもの
 
 - Sync v2全体の不具合・性能・構造・UIの課題。[全体レビュー](SYNC_REVIEW.md)。D-01の端末内自動保存・昇格は実装済み。残る項目は個別に扱う。
-- 構造整理R-08は保留。LocalSyncV2Storeのrepository分割とCommandValidationの型付きrow化は、R-03〜R-07の境界検証後に別passで行う。共有connectionとcheckpoint/installの単一transactionを維持する。
+- 構造整理R-08はpass A / Bで実装済み。型付きrowと6つの内部repositoryを共有`SQLiteExecutor`の上に配置し、公開actor・checkpoint/install等の単一transaction・SQL/schema/wireを維持する。Store内のSQL処理はrepositoryへ移し、schema migrationの判断は`Schema.swift`に残す。実機受入・公開完了とは別の構造整理。
 - 削除予約・取消のアプリ画面。サーバーAPIと720時間後のworkerは実装済み。[lifecycle](auth/v1/account-deletion.md)。
 - Package Validator / 共通fixtureの全体、Windows 11版とinstaller。[互換契約](CROSS_PLATFORM.md)。
 

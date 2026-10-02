@@ -95,6 +95,6 @@ struct SQLiteRowDecodingTests {
         let prepared = try #require(statement)
         defer { sqlite3_finalize(prepared) }
         #expect(sqlite3_step(prepared) == SQLITE_ROW)
-        return try SQLiteRow(statement: prepared)
+        return try SQLiteExecutor.readRow(prepared)
     }
 }
