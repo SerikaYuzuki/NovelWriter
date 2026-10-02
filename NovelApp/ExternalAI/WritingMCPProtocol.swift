@@ -65,6 +65,8 @@ enum WritingMCPProtocol {
                 ))
                 try await host.apply(edit, grant)
                 return try content(["applied": true, "requestId": editID.uuidString.lowercased()])
+            case "read_thumbnail", "set_thumbnail", "remove_thumbnail":
+                return try await thumbnailTool(name, arguments: arguments, capture: capture, host: host)
             case "undo_edit":
                 try requireContext(arguments, capture: capture, host: host)
                 guard let editID = (arguments["requestId"] as? String).flatMap(UUID.init(uuidString:)) else { throw WritingError.invalidEdit }
@@ -101,7 +103,7 @@ enum WritingMCPProtocol {
         return try content(output)
     }
 
-    private static func requireContext(_ arguments: [String: Any], capture: WritingCapture, host: WritingAssistantHost) throws {
+    static func requireContext(_ arguments: [String: Any], capture: WritingCapture, host: WritingAssistantHost) throws {
         guard arguments["sessionId"] as? String == host.contextID,
               (arguments["workId"] as? String)?.lowercased() == capture.workId.uuidString.lowercased() else { throw WritingError.changedScope }
     }
@@ -114,7 +116,7 @@ enum WritingMCPProtocol {
         try JSONSerialization.jsonObject(with: JSONEncoder().encode(value), options: [.fragmentsAllowed])
     }
 
-    private static func content(_ value: [String: Any]) throws -> [String: Any] {
+    static func content(_ value: [String: Any]) throws -> [String: Any] {
         let data = try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys])
         guard data.count <= 16_000_000 else { throw AssistantError.tooLarge }
         return ["content": [["type": "text", "text": String(decoding: data, as: UTF8.self)]], "isError": false]
@@ -130,14 +132,15 @@ enum WritingMCPProtocol {
         let path: [String: Any] = ["type": "array", "items": ["type": "string"]]
         let context: [String: Any] = ["workId": ["type": "string"], "sessionId": ["type": "string"], "requestId": ["type": "string"]]
         return [
-            ["name": "read_work", "description": "現在開いている作品を読む。pathsでフィールドを絞れる。配列はUUIDで指定。構成、人物、プロット、伏線、メモ、資料ノートと作成用テンプレートを返す。サムネイル画像は読み書きの対象外。",
+            ["name": "read_work", "description": "現在開いている作品を読む。pathsでフィールドを絞れる。配列はUUIDで指定。構成、人物、プロット、伏線、メモ、資料ノートと作成用テンプレートを返す。サムネイル画像は専用のread_thumbnail/set_thumbnail/remove_thumbnailで扱う。",
              "inputSchema": ["type": "object", "properties": ["paths": ["type": "array", "items": path]], "additionalProperties": false],
              "annotations": ["readOnlyHint": true, "openWorldHint": false]],
             [
                 "name": "edit_work",
                 "description": "ユーザーが今回指定した範囲だけを編集。scope.pathsは許可するパスの接頭辞。beforeに読取値、afterに新値。追加before:null、削除after:null。追加/削除は項目UUIDのパス、配列全体は同じ項目の並べ替えのみ。"
                     +
-                    "添付資料はattachments/UUID、値は{id,fileName,bytes:base64}で1件300KB以内。attachmentsの並べ替え値はUUID配列。appendOnlyは本文末尾追記。requestIdはUUID。再送時も同じID。サムネイル画像は読み書きの対象外。",
+                    "添付資料はattachments/UUID、値は{id,fileName,bytes:base64}で1件300KB以内。attachmentsの並べ替え値はUUID配列。appendOnlyは本文末尾追記。requestIdはUUID。再送時も同じID。"
+                    + "サムネイル画像はこの操作の対象外。専用のset_thumbnail/remove_thumbnailを使う。",
                 "inputSchema": ["type": "object", "properties": context.merging([
                     "scope": [
                         "type": "object",
@@ -165,7 +168,7 @@ enum WritingMCPProtocol {
                  "additionalProperties": false
              ],
              "annotations": ["readOnlyHint": false, "destructiveHint": true, "openWorldHint": false]]
-        ]
+        ] + thumbnailTools
     }
 }
 #endif

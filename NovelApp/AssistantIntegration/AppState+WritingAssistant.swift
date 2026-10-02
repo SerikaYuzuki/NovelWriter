@@ -13,7 +13,7 @@ extension AppState {
               let workUUID = UUID(uuidString: work.description) else { return nil }
         let session = documentSessionToken, account = snapshotSyncV2AccountScopeToken
         let validate = { [weak self] in
-            guard !Task.isCancelled, let self, documentSessionToken == session, matchesSnapshotSyncV2AccountScope(account),
+            guard !Task.isCancelled, let self, documentSessionToken == session, snapshotSyncV2ActiveWorkID == work, matchesSnapshotSyncV2AccountScope(account),
                   permitsDocumentInteraction else { throw WritingError.changedScope }
         }
         let context: () async throws -> SyncV2WritingContext = {
@@ -21,7 +21,7 @@ extension AppState {
             let result = try await application.writingContext(workID: work)
             try validate(); return result
         }
-        return WritingAssistantHost(contextID: "\(session)-\(account)", capture: { [weak self] in
+        var host = WritingAssistantHost(contextID: "\(session)-\(account)", capture: { [weak self] in
             try validate(); guard let self else { throw WritingError.changedScope }
             return try captureWritingDocument(workUUID: workUUID)
         }, records: { common in
@@ -40,6 +40,10 @@ extension AppState {
             guard let journal = try await application.writingEdit(id: id, context: ctx),
                   ["applied", "prepared"].contains(journal.state) else { throw WritingError.interrupted }
             let edit = try JSONDecoder().decode(WritingStoredEdit.self, from: Data(journal.payload.utf8)).prepared
+            if edit.changes.first?.path.first == "thumbnails" {
+                try await undoMCPThumbnail(id, application: application, context: ctx, validate: validate)
+                return
+            }
             try await applyWritingEdit(edit.inverse, grant: .wholeWork, application: application, context: ctx, validate: validate)
             try await application.finishWritingEdit(id: id, state: "undone", context: ctx)
         }, editState: { id in
@@ -47,9 +51,18 @@ extension AppState {
         }, editOutcome: { edit in
             try await application.writingEditOutcome(edit, context: context())
         })
+        host.readThumbnail = { [weak self] owner in
+            guard let self else { throw WritingError.changedScope }
+            return try readMCPThumbnail(owner, validate: validate)
+        }
+        host.applyThumbnail = { [weak self] request, grant in
+            try validate(); guard let self else { throw WritingError.changedScope }
+            return try await applyMCPThumbnail(request, grant: grant, application: application, context: context(), validate: validate)
+        }
+        return host
     }
 
-    private func captureWritingDocument(workUUID: UUID) throws -> WritingCapture {
+    func captureWritingDocument(workUUID: UUID) throws -> WritingCapture {
         guard permitsDocumentInteraction else { throw WritingError.changedScope }
         var captured = document
         switch activeCommittedTextCapture() {

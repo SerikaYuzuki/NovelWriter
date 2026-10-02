@@ -25,7 +25,7 @@ struct WritingMCPProtocolTests {
         let listing = try await send(request("tools/list", version: version), version: version)
         let result = try #require(listing["result"] as? [String: Any])
         let tools = try #require(result["tools"] as? [[String: Any]])
-        #expect(tools.compactMap { $0["name"] as? String } == ["read_work", "edit_work", "undo_edit"])
+        #expect(tools.compactMap { $0["name"] as? String } == ["read_work", "edit_work", "undo_edit", "read_thumbnail", "set_thumbnail", "remove_thumbnail"])
         #expect((tools[0]["description"] as? String)?.contains("サムネイル画像") == true)
         #expect((tools[1]["description"] as? String)?.contains("サムネイル画像") == true)
         if version == .july2026 {
@@ -123,7 +123,7 @@ struct WritingMCPProtocolTests {
         let input = request("tools/list", version: version), good = headers(input, version: version)
         for (field, value, status) in [("authorization", nil, 401), ("authorization", "Bearer unregistered", 401),
                                        ("host", "evil.example", 403), ("origin", "https://evil.example", 403),
-                                       ("transfer-encoding", "chunked", 403), ("content-length", "2000001", 400)] {
+                                       ("transfer-encoding", "chunked", 403), ("content-length", "12000001", 400)] {
             var broken = good; broken[field] = value
             try expectRejected(input, headers: broken, status: status)
         }
@@ -139,7 +139,7 @@ struct WritingMCPProtocolTests {
         }
         #expect(extra.status == 400)
         guard case let .rejected(large) = WritingMCPHTTPRequest.parse(
-            Data(repeating: 0, count: 2_100_001),
+            Data(repeating: 0, count: WritingMCPHTTPRequest.maximumMessageBytes + 1),
             port: port,
             authorize: authorize
         ) else {
@@ -201,6 +201,21 @@ struct WritingMCPProtocolTests {
         var encoded = headers(unicode, version: .july2026)
         encoded["mcp-name"] = "=?base64?" + Data(name.utf8).base64EncodedString() + "?="
         guard case .accepted = try parse(unicode, headers: encoded) else { Issue.record("UTF-8 encoded name rejected"); return }
+    }
+
+    @Test(arguments: [WritingMCPVersion.november2025, .july2026])
+    func largerHTTPBodyIsExclusiveToSetThumbnail(version: WritingMCPVersion) throws {
+        let image = String(repeating: "A", count: WritingMCPHTTPRequest.defaultBodyBytes + 1)
+        let set = request("tools/call", params: ["name": "set_thumbnail", "arguments": ["image": image]], version: version)
+        guard case .accepted = try parse(set, headers: headers(set, version: version)) else {
+            Issue.record("Large set_thumbnail was rejected"); return
+        }
+        let edit = request("tools/call", params: ["name": "edit_work", "arguments": ["image": image]], version: version)
+        var mirrored = headers(edit, version: version)
+        mirrored["mcp-name"] = "set_thumbnail"
+        try expectRejected(edit, headers: mirrored, status: 400)
+        let list = request("tools/list", params: ["padding": image], version: version)
+        try expectRejected(list, headers: headers(list, version: version), status: 400)
     }
 
     @Test func headerlessLegacyStillWorks() throws {

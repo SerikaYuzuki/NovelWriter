@@ -40,7 +40,7 @@ final class WritingMCPConnection {
                 if let data {
                     self.bytes.append(data)
                 }
-                guard self.bytes.count <= 2_100_000 else { self.send(status: 413); return }
+                guard self.bytes.count <= WritingMCPHTTPRequest.maximumMessageBytes else { self.send(status: 413); return }
                 if self.parse() {
                     return
                 }

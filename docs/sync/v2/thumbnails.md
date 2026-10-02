@@ -16,6 +16,10 @@ D-089と同じ予約名attachmentを用いる。名前は`fuminiwa-thumbnail-v1-
 
 棚は現在のlocal snapshotから必要時に読み、表示寸法でdecodeした画像を容量制限付きのメモリcacheに置く。読取りによって作品を開いたり、local leafを昇格したり、remoteを取得したりしない。未取得作品と表紙未設定にはSTYLEの表紙placeholderを使う。画像bytesをSyncV2LibraryItemへ入れない。
 
-予約名prefixの画像は孤立・未知versionを含めてAIチャット・校正・感想・MCPから除外する。MCPは予約名の作成・読取・置換・削除や既存IDの再利用を拒否する。添付全体の書き戻しでは除外した画像を再結合し、普通の資料編集で画像を失わない。MCPによるowner削除も同じowner削除規則を通る。原稿コピーはplain textのまま。
+予約名prefixの画像は孤立・未知versionを含めてアプリ内AIのチャット・校正・感想・送信payloadから除外する。MCPの`read_work`／`edit_work`でも予約名の作成・読取・置換・削除や既存IDの再利用を拒否する。添付全体の書き戻しでは除外した画像を再結合し、普通の資料編集で画像を失わない。MCPによるowner削除も同じowner削除規則を通る。原稿コピーはplain textのまま。
+
+2026-10-03のD-104変更により、MCP専用の`read_thumbnail`／`set_thumbnail`／`remove_thumbnail`だけは、現在の作品に存在する3種のownerの画像を扱える。作品・session・account・指定範囲を検査し、手動設定と同じNovelThumbnail処理で保存する。保存形式・予約名・切り抜き形状・寸法・Snapshot Sync v2の保存契約は不変。
+
+MCPの`undo_edit`は既存の端末内AI journalに保持した変更前後の縮小JPEGを使い、変更後と現在値が一致する場合だけ取り消す。同期する依頼記録は対象・digest・cropのみで画像を含めない。端末外へ復元したAI履歴からこのUndoは実行できず、画像自体の復旧には通常のSnapshot履歴を使う。手動の削除確認・履歴復旧の規則は上記のまま。[専用ツール・上限・Undoの詳細](../../WRITING_ASSISTANT.md#mcpのサムネイル)。
 
 TXT／Markdown／EPUBおよび可読フォルダ出力にサムネイルを含めない。作品を持ち運ぶ明示`.novelpkg` Import / ExportとSnapshot履歴・同期では通常attachmentとして保持する。旧clientにはJPEGの通常資料として見えるが、形式変更やserver対応は不要。

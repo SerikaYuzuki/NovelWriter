@@ -31,6 +31,11 @@ struct WritingAssistantHost {
     var editState: (UUID) async throws -> String? = { _ in nil }
     var editOutcome: (WritingEdit) async throws -> String? = { _ in nil }
 
+    #if os(macOS)
+    var readThumbnail: (ThumbnailOwner) async throws -> Data? = { _ in throw WritingError.unavailable }
+    var applyThumbnail: (WritingMCPThumbnailRequest, WritingGrant) async throws -> String = { _, _ in throw WritingError.unavailable }
+    #endif
+
     func captureWhenReady() async throws -> WritingCapture {
         try await WritingCompositionBoundary.capture(capture)
     }

@@ -3,6 +3,11 @@ import Foundation
 
 /// Shared by the socket adapter and network-free tests. Authentication precedes protocol dispatch.
 enum WritingMCPHTTPRequest {
+    static let maximumHeaderBytes = 16384
+    static let defaultBodyBytes = 2_000_000
+    static let thumbnailBodyBytes = 12_000_000
+    static let maximumMessageBytes = maximumHeaderBytes + thumbnailBodyBytes
+
     enum Parsed {
         case incomplete
         case rejected(WritingMCPFailure)
@@ -13,11 +18,11 @@ enum WritingMCPHTTPRequest {
         func reject(_ status: Int) -> Parsed {
             .rejected(.init(status: status, body: Data()))
         }
-        guard bytes.count <= 2_100_000 else { return reject(413) }
+        guard bytes.count <= maximumMessageBytes else { return reject(413) }
         guard let range = bytes.range(of: Data("\r\n\r\n".utf8)) else {
-            return bytes.count > 16384 ? reject(431) : .incomplete
+            return bytes.count > maximumHeaderBytes ? reject(431) : .incomplete
         }
-        guard range.lowerBound < 16384,
+        guard range.lowerBound < maximumHeaderBytes,
               let header = String(data: bytes[..<range.lowerBound], encoding: .utf8) else { return reject(400) }
         let lines = header.components(separatedBy: "\r\n")
         guard let first = lines.first else { return reject(400) }
@@ -39,11 +44,16 @@ enum WritingMCPHTTPRequest {
         guard headers["content-type"]?.split(separator: ";").first?
             .trimmingCharacters(in: .whitespaces) == "application/json",
             let rawLength = headers["content-length"], let count = Int(rawLength), count > 0,
-            count <= 2_000_000 else { return reject(400) }
+            count <= thumbnailBodyBytes else { return reject(400) }
         let offset = range.upperBound
         guard bytes.count >= offset + count else { return .incomplete }
         guard bytes.count == offset + count else { return reject(400) }
         let body = Data(bytes[offset...])
+        if count > defaultBodyBytes {
+            guard let object = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
+                  object["method"] as? String == "tools/call",
+                  (object["params"] as? [String: Any])?["name"] as? String == "set_thumbnail" else { return reject(400) }
+        }
         switch WritingMCPVersion.resolveHTTP(body, headers: headers) {
         case let .success(version): return .accepted(body, client, version)
         case let .failure(failure): return .rejected(failure)
