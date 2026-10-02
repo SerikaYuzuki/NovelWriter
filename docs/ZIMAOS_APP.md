@@ -81,7 +81,13 @@ caddy-configの同じ外部volumeを`/caddy-config`へマウントし、edgeの`
 
 ### 2回のロールバック実績
 
-利用者報告により、1回目・2回目の失敗はいずれも旧コンテナを`-legacy`から元の名前へ戻し、数分で復旧した。両回ともデータは無傷。復旧後のhealth・公開／LAN capabilities・backupについての個別の実測値や完了時刻は今回の報告には含まれていないため、追加の成功証跡は作らない。Codexは本番へ接続していない。この2回の構成移行の切戻し実績を、schema変更を伴う更新の安全性へ一般化しない。
+1回目・2回目の失敗はいずれも旧コンテナを`-legacy`から元の名前へ戻し、数分で復旧した。両回とも復旧後にpostgres／server／edge／opsのhealthy、公開capabilitiesの200を確認し、DB（246 MB、44テーブル）は無傷だった。この2回の構成移行の切戻し実績を、schema変更を伴う更新の安全性へ一般化しない。
+
+### 移行完了（2026-10-03確認）
+
+3回目は`migrate.sh`（API経由）で成功した。ZimaOS上のproject名は`delightful_samuel`。確認時点で4コンテナがhealthy・`unless-stopped`、postgresは既存volume`fuminiwa-sync-v2-role-split-data`、edgeは`-caddy-data`→`/data`と`-caddy-config`→`/caddy-config`、公開・LANのcapabilitiesが200、opsの手動backup成功、UIは認証なし401・`/icon.svg`が200。利用者がZimaOSの画面でアプリを確認した。
+
+同日、利用者の了承で片付けた：`-legacy`の4コンテナとmigrator、旧network（`fuminiwa-sync-v2-role-split-net`、`fuminiwa-sync-dev`）、空の試験volume、旧imageタグ（review／role-split-server／role-split-migrator／ops:local）、旧配置の`source/`と旧`ops/ops.env`、ZimaOSが作った空の`/DATA/AppData/postgres`と`/tmp/casaos-compose-app-*`。データを含む`releases/`（手動退避を含む）と旧開発DBのvolume`fuminiwa-sync-dev_postgres-data`は利用者の判断に残した。実際のOS再起動での自動復帰は未確認。
 
 レジストリは既設なので作り直さない。以下は将来の復旧時の構成例であり、移行コマンドには含めない：
 
