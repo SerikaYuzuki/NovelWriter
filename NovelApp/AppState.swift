@@ -193,6 +193,8 @@ final class AppState {
     @ObservationIgnored var bootstrapTask: Task<Void, Never>?
     @ObservationIgnored var manuscriptCopyNoticeDismissTask: Task<Void, Never>?
     @ObservationIgnored var hasCompletedBootstrap = false
+    var documentChangeRevision: UInt64 = 0
+    @ObservationIgnored var editorProgressAlreadyTracked = false
     @ObservationIgnored var saveCoordinator: V2DocumentSaveCoordinator!
     @ObservationIgnored let resignActiveObserver = NotificationObserverToken()
     @ObservationIgnored let systemSleepObserver = NotificationObserverToken(center: NSWorkspace.shared.notificationCenter)

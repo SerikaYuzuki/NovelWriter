@@ -9,8 +9,149 @@ import NovelCore
 import NovelTextAnalysis
 import Testing
 
+/// Timeout bounds a broken test; successful assertions wait for state, never a fixed delay.
+@MainActor
+func waitForWorkSearchState(_ predicate: @MainActor () -> Bool) async throws {
+    let deadline = ContinuousClock.now.advanced(by: .seconds(30))
+    while !predicate() {
+        try Task.checkCancellation()
+        guard ContinuousClock.now < deadline else { throw WorkSearchStateTimeout.notCompleted }
+        await Task.yield()
+    }
+}
+
+private enum WorkSearchStateTimeout: Error { case notCompleted }
+
+@MainActor
+private final class WorkSearchTestClock {
+    var delays: [Duration] = []
+    private var sleepers: [(UUID, CheckedContinuation<Void, Error>)] = []
+    private var waiter: CheckedContinuation<Duration, Never>?
+
+    func sleep(_ delay: Duration) async throws {
+        try Task.checkCancellation()
+        let id = UUID()
+        delays.append(delay)
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                if Task.isCancelled {
+                    continuation.resume(throwing: CancellationError())
+                } else {
+                    sleepers.append((id, continuation))
+                    waiter?.resume(returning: delay); waiter = nil
+                }
+            }
+        } onCancel: {
+            Task { @MainActor [weak self] in self?.cancel(id) }
+        }
+    }
+
+    private func cancel(_ id: UUID) {
+        guard let index = sleepers.firstIndex(where: { $0.0 == id }) else { return }
+        sleepers.remove(at: index).1.resume(throwing: CancellationError())
+    }
+
+    func scheduled(_ index: Int) async -> Duration {
+        if delays.count > index {
+            return delays[index]
+        }
+        return await withCheckedContinuation { waiter = $0 }
+    }
+
+    func advance() {
+        sleepers.removeFirst().1.resume()
+    }
+}
+
 @MainActor
 struct WorkSearchSessionTests {
+    @Test func hiddenChangesRetainResultsAndReappearComputesOnce() async throws {
+        let fixture = ReplacementFixture(), searches = SearchComputationCounter(), detections = SearchComputationCounter()
+        let searchClock = WorkSearchTestClock(), appearanceClock = WorkSearchTestClock()
+        let search = WorkSearchSession(search: { query, document in
+            searches.increment()
+            return WorkTextSearch.search(query: query, in: document)
+        }, sleep: searchClock.sleep)
+        let appearance = CharacterAppearanceSession(detect: { character, document in
+            detections.increment()
+            return CharacterAppearanceDetector.appearances(for: character, in: document)
+        }, sleep: appearanceClock.sleep)
+        let character = NovelCore.Character(name: "猫")
+        search.query = "猫"
+        search.setVisible(true, document: fixture.document, scope: "test")
+        appearance.setVisible(true, character: character, document: fixture.document)
+        #expect(await searchClock.scheduled(0) == .milliseconds(250))
+        #expect(await appearanceClock.scheduled(0) == .milliseconds(250))
+        searchClock.advance(); appearanceClock.advance()
+        try await waitForWorkSearchState { !search.isStale && !appearance.isStale }
+        let oldTotal = search.total, oldAppearances = appearance.appearances
+        #expect(searches.value == 1)
+        #expect(detections.value == 1)
+        search.setVisible(false, document: fixture.document, scope: "test")
+        appearance.setVisible(false, character: character, document: fixture.document)
+        for _ in 0 ..< 5 {
+            fixture.document.chapters[0].episodes[0].content += "猫"
+            search.markStale()
+            // Query changes and character changes use refresh, which must respect visibility too.
+            search.refresh(document: fixture.document, scope: "test")
+            appearance.refresh(character: character, document: fixture.document)
+        }
+        #expect(searches.value == 1)
+        #expect(detections.value == 1)
+        #expect(search.total == oldTotal)
+        #expect(appearance.appearances.map(\.source) == oldAppearances.map(\.source))
+        #expect(search.isStale)
+        #expect(!search.isSearching)
+        #expect(!appearance.isLoading)
+        #expect(searchClock.delays.count == 1)
+        #expect(appearanceClock.delays.count == 1)
+        search.setVisible(true, document: fixture.document, scope: "test")
+        appearance.setVisible(true, character: character, document: fixture.document)
+        #expect(await searchClock.scheduled(1) == .milliseconds(250))
+        #expect(await appearanceClock.scheduled(1) == .milliseconds(250))
+        searchClock.advance(); appearanceClock.advance()
+        try await waitForWorkSearchState { !search.isStale && !appearance.isStale }
+        #expect(searches.value == 2)
+        #expect(detections.value == 2)
+        #expect(search.total == oldTotal + 5)
+        #expect(!search.isStale)
+        #expect(!appearance.isStale)
+        search.setVisible(true, document: fixture.document, scope: "test")
+        appearance.setVisible(true, character: character, document: fixture.document)
+        #expect(searches.value == 2)
+        #expect(detections.value == 2)
+        #expect(!search.isSearching)
+        #expect(!appearance.isLoading)
+        #expect(searchClock.delays.count == 2)
+        #expect(appearanceClock.delays.count == 2)
+    }
+
+    @Test func visibleDocumentChangesWaitForExplicitSearch() async throws {
+        let fixture = ReplacementFixture(), computations = SearchComputationCounter()
+        let clock = WorkSearchTestClock()
+        let search = WorkSearchSession(search: { query, document in
+            computations.increment()
+            return WorkTextSearch.search(query: query, in: document)
+        }, sleep: clock.sleep)
+        search.query = "猫"
+        search.refresh(document: fixture.document, scope: "test")
+        #expect(await clock.scheduled(0) == .milliseconds(250))
+        clock.advance()
+        try await waitForWorkSearchState { !search.isStale }
+        let old = search.total
+        for _ in 0 ..< 200 {
+            search.markStale()
+        }
+        #expect(search.total == old)
+        #expect(computations.value == 1)
+        #expect(clock.delays.count == 1)
+        search.refresh(document: fixture.document, scope: "test")
+        #expect(await clock.scheduled(1) == .milliseconds(250))
+        clock.advance()
+        try await waitForWorkSearchState { !search.isStale }
+        #expect(computations.value == 2)
+    }
+
     @Test func snapshotFailureStaleTextAndScopeRejectWithoutMutation() async throws {
         let fixture = ReplacementFixture()
         let search = try await fixture.search()
@@ -150,4 +291,16 @@ func workSearchJournalCount(root: URL) throws -> Int {
     defer { sqlite3_finalize(query) }
     #expect(sqlite3_step(query) == SQLITE_ROW)
     return Int(sqlite3_column_int(query, 0))
+}
+
+private final class SearchComputationCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+    var value: Int {
+        lock.withLock { count }
+    }
+
+    func increment() {
+        lock.withLock { count += 1 }
+    }
 }

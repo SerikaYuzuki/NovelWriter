@@ -15,6 +15,7 @@ public struct WritingProgressCard: View {
                 card(work: work, now: context.date)
             }
         }
+        .onAppear { tracker.publishSnapshot() }
         .transaction { $0.animation = nil }
         .sheet(isPresented: $showsGoal) {
             if let work = tracker.workID {
@@ -49,7 +50,7 @@ public struct WritingProgressCard: View {
                 .frame(minHeight: minimumTapHeight)
             milestoneView(work: work)
             if tracker.persistenceFailed {
-                Label("進み具合を端末に記録できていません。再試行します。", systemImage: "exclamationmark.triangle")
+                Label(tracker.persistenceRetryStopped ? "進み具合を端末に記録できていません。" : "進み具合を端末に記録できていません。再試行します。", systemImage: "exclamationmark.triangle")
                     .font(.caption).foregroundStyle(FuminiwaColor.warning.color)
             }
         }
@@ -155,6 +156,23 @@ private struct WritingHeatmap: View {
     let now: Date
     @Binding var selectedDay: String?
     @State private var displayedWeeks = 16
+    @State private var dates: [HeatmapDate] = []
+
+    private struct HeatmapDate: Identifiable {
+        let date: Date
+        let id: String
+        let label: String
+    }
+
+    private func prepareDates(endingAt weekStart: Date) {
+        var date = calendar.offset(weekStart, days: -(maximumWeeks - 1) * 7)
+        dates = (0 ..< maximumWeeks * 7).map { _ in
+            let value = HeatmapDate(date: date, id: calendar.key(date), label: date.formatted(.dateTime.month().day()))
+            date = calendar.offset(date, days: 1)
+            return value
+        }
+    }
+
     private var maximumWeeks: Int {
         #if os(macOS)
         26
@@ -171,11 +189,13 @@ private struct WritingHeatmap: View {
             )
             let weekStart = calendar.calendar.dateInterval(of: .weekOfYear, for: now)?.start ?? calendar.calendar
                 .startOfDay(for: now)
-            let start = calendar.offset(weekStart, days: -(weeks - 1) * 7)
+            let visible = Array(dates.suffix(weeks * 7))
+            let values = visible.map { days[$0.id]?.added ?? 0 }
+            let weekdays = calendar.calendar.veryShortWeekdaySymbols
             HStack(alignment: .top, spacing: Spacing.extraSmall) {
                 VStack(spacing: Spacing.xxs) {
                     ForEach(0 ..< 7, id: \.self) { row in
-                        Text(calendar.calendar.veryShortWeekdaySymbols[(calendar.calendar.firstWeekday - 1 + row) % 7])
+                        Text(weekdays[(calendar.calendar.firstWeekday - 1 + row) % 7])
                             .font(FuminiwaType.metadata).dynamicTypeSize(...DynamicTypeSize.large)
                             .frame(width: Spacing.outer, height: Spacing.medium)
                     }
@@ -184,12 +204,16 @@ private struct WritingHeatmap: View {
                     ForEach(0 ..< weeks, id: \.self) { week in
                         VStack(spacing: Spacing.xxs) {
                             ForEach(0 ..< 7, id: \.self) { row in
-                                cell(calendar.offset(start, days: week * 7 + row))
+                                let index = week * 7 + row
+                                if index < visible.count {
+                                    cell(visible[index], value: values[index])
+                                }
                             }
                         }
                     }
                 }
             }
+            .onChange(of: weekStart, initial: true) { _, value in prepareDates(endingAt: value) }
             .onChange(of: weeks, initial: true) { _, value in displayedWeeks = value }
         }
         .frame(height: Spacing.medium * 7 + Spacing.xxs * 6)
@@ -197,29 +221,25 @@ private struct WritingHeatmap: View {
     }
 
     private var summary: String {
-        let weekStart = calendar.calendar.dateInterval(of: .weekOfYear, for: now)?.start
-            ?? calendar.calendar.startOfDay(for: now)
-        let start = calendar.offset(weekStart, days: -(displayedWeeks - 1) * 7)
-        let visible = (0 ..< (displayedWeeks * 7)).map { calendar.offset(start, days: $0) }.filter { $0 <= now }
-        let written = visible.count(where: { (days[calendar.key($0)]?.added ?? 0) > 0 })
-        let sum = visible.reduce(0) { $0 + (days[calendar.key($1)]?.added ?? 0) }
+        let visible = dates.suffix(displayedWeeks * 7).filter { $0.date <= now }
+        let written = visible.count(where: { (days[$0.id]?.added ?? 0) > 0 })
+        let sum = visible.reduce(0) { $0 + (days[$1.id]?.added ?? 0) }
         return "過去\(displayedWeeks)週で\(written)日執筆、合計\(sum.formatted())字"
     }
 
-    @ViewBuilder private func cell(_ date: Date) -> some View {
-        let key = calendar.key(date)
-        let value = days[key]?.added ?? 0
+    @ViewBuilder private func cell(_ day: HeatmapDate, value: Int) -> some View {
+        let date = day.date
         let opacity = value == 0 ? 0 : value < 500 ? 0.25 : value < 2000 ? 0.45 : value < 5000 ? 0.7 : 1
         let shape = RoundedRectangle(cornerRadius: Spacing.xxs)
             .fill(value == 0 ? FuminiwaColor.sunken.color : FuminiwaColor.accent.color.opacity(opacity))
             .frame(width: Spacing.medium, height: Spacing.medium)
             .opacity(date > now ? 0 : 1)
         #if os(macOS)
-        shape.help("\(date.formatted(.dateTime.month().day())) +\(value.formatted())字")
+        shape.help("\(day.label) +\(value.formatted())字")
         #else
         shape.contentShape(Rectangle()).onTapGesture {
             if date <= now {
-                selectedDay = key
+                selectedDay = day.id
             }
         }
         #endif

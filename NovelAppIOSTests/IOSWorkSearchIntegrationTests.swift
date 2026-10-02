@@ -2,12 +2,59 @@ import Foundation
 @testable import FUMINIWAIOS
 import NovelCore
 import NovelTextAnalysis
+import Observation
 import SwiftUI
 import Testing
 import UIKit
 
 @MainActor
 struct IOSWorkSearchIntegrationTests {
+    @Test func pushedEditorLeavesSearchStaleUntilReturn() async throws {
+        let defaults = try #require(UserDefaults(suiteName: "IOSWorkSearchVisibility.\(UUID())"))
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = IOSDocumentStore(userDefaults: defaults, libraryRoot: root)
+        await store.bootstrap()
+        #expect(await store.makeNewDocument())
+        let chapter = try #require(store.selectedChapterID), episode = try #require(store.selectedEpisodeID)
+        store.document.updateEpisodeContent("猫猫", for: episode, in: chapter)
+        store.markDocumentChanged()
+        #expect(await store.saveNow())
+        store.workSearch.query = "猫"
+        let probe = SearchVisibilityProbe()
+        let controller = UIHostingController(rootView: SearchVisibilityHost(store: store, probe: probe))
+        let scene = try #require(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 430, height: 932)
+        window.rootViewController = controller; window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil }
+        try await waitForWorkSearchState { !store.workSearch.isStale }
+        #expect(store.workSearch.total == 2)
+        #expect(!store.workSearch.isStale)
+        probe.path = [true]
+        try await waitForWorkSearchState {
+            store.workSearch.isStale && store.editorCommandSession.captureActiveCommittedText() == .captured("猫猫")
+        }
+        #expect(store.editorCommandSession.hasActiveEditorSurface)
+        for index in 1 ... 5 {
+            let content = String(repeating: "猫", count: 2 + index)
+            #expect(store.editorCommandSession.applyProofreading(
+                expectedText: String(repeating: "猫", count: 1 + index), replacement: content
+            ))
+            try await waitForWorkSearchState {
+                store.document.episode(episode)?.episode.content == content
+            }
+            #expect(store.workSearch.total == 2)
+            #expect(store.workSearch.isStale)
+            #expect(!store.workSearch.isSearching)
+        }
+        probe.path = []
+        try await waitForWorkSearchState { !store.workSearch.isStale }
+        #expect(store.workSearch.total == 7)
+        #expect(!store.workSearch.isStale)
+        #expect(await store.saveNow())
+    }
+
     @Test func editorReplacementUndoNoProgressOrAIAndScopedJump() async throws {
         let defaults = try #require(UserDefaults(suiteName: "IOSWorkSearchTests.\(UUID())"))
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -74,5 +121,23 @@ struct IOSWorkSearchIntegrationTests {
         #expect(store.currentWorkTextSelectionRequest == nil)
         #expect(await !(store.selectWorkTextMatch(chapterID: chapter, episodeID: target.id, source: target.content,
                                                   range: NSRange(location: 0, length: 1), expectedScope: scope)))
+    }
+}
+
+@MainActor @Observable
+private final class SearchVisibilityProbe {
+    var path: [Bool] = []
+}
+
+private struct SearchVisibilityHost: View {
+    let store: IOSDocumentStore
+    @Bindable var probe: SearchVisibilityProbe
+    var body: some View {
+        NavigationStack(path: $probe.path) {
+            IOSWorkSearchView(store: store)
+                .navigationDestination(for: Bool.self) { _ in
+                    IOSEditorPane(store: store, userDefaults: store.userDefaults)
+                }
+        }
     }
 }

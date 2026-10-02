@@ -109,23 +109,28 @@ struct WritingProgressTests {
         var document = manuscript("あいう\nえ")
         let episode = document.chapters[0].episodes[0].id, chapter = document.chapters[0].id
         tracker.install(document, workID: work)
+        tracker.publishSnapshot()
         #expect(tracker.total == 4)
         for content in ["あいうえおか\n", "あい", "うえ", "うえお"] {
             tracker.manualChange(document: document, workID: work, episodeID: episode, content: content)
             document.updateEpisodeContent(content, for: episode, in: chapter)
             tracker.synchronize(document, workID: work)
         }
+        tracker.publishSnapshot()
         #expect(tracker.days(for: work)["2026-10-02"] == WritingDay(added: 3, net: -1))
         #expect(tracker.episodeCount(episode) == 3)
         // AI/MCP and its Undo only synchronize; open/import/remote install only install.
         document.updateEpisodeContent(String(repeating: "文", count: 10100), for: episode, in: chapter)
         tracker.synchronize(document, workID: work)
+        tracker.publishSnapshot()
         #expect(tracker.days(for: work)["2026-10-02"] == WritingDay(added: 3, net: -1))
         #expect(tracker.milestones(for: work).first?.reachedAt == nil)
         #expect(tracker.notice == nil)
         tracker.install(document, workID: work)
+        tracker.publishSnapshot()
         #expect(tracker.days(for: work)["2026-10-02"]?.added == 3)
         let other = UUID(); tracker.install(document, workID: other)
+        tracker.publishSnapshot()
         #expect(tracker.days(for: other).isEmpty)
         #expect(tracker.milestones(for: other).first?.reachedAt == nil)
     }
@@ -149,6 +154,7 @@ struct WritingProgressTests {
         default: break // Simulate a replacement path that forgot to notify the tracker.
         }
         tracker.manualChange(document: document, workID: work, episodeID: episode, content: remoteContent + "一")
+        tracker.publishSnapshot()
         #expect(tracker.days(for: work)["2026-10-02"] == WritingDay(added: 1, net: 1))
         #expect(tracker.total == 10001)
         #expect(tracker.episodeCount(other) == 1)
@@ -169,6 +175,7 @@ struct WritingProgressTests {
             tracker.manualChange(document: doc, workID: work, episodeID: episode, content: content)
             doc.updateEpisodeContent(content, for: episode, in: chapter)
         }
+        tracker.publishSnapshot()
         #expect(tracker.milestones(for: work).count == 2)
         #expect(tracker.milestones(for: work).allSatisfy { $0.reachedAt == time })
         #expect(tracker.days(for: work)["2026-10-02"]?.added == 4) // Redo adds again.
@@ -187,6 +194,7 @@ struct WritingProgressTests {
         doc.updateEpisodeContent("一", for: episode, in: doc.chapters[0].id)
         time = instant("2026-10-01T15:00:00Z")
         tracker.manualChange(document: doc, workID: work, episodeID: episode, content: "一二")
+        tracker.publishSnapshot()
         #expect(tracker.days(for: work)["2026-10-01"]?.added == 1)
         #expect(tracker.days(for: work)["2026-10-02"]?.added == 1)
     }
@@ -198,6 +206,7 @@ struct WritingProgressTests {
         let goal = try #require(WritingGoal(characters: 10, deadline: "2026-10-04"))
         tracker.setGoal(goal, for: work)
         #expect(tracker.notice == nil)
+        tracker.publishSnapshot()
         #expect(tracker.milestones(for: work).first?.reachedAt == nil)
         let reopened = WritingProgressTracker(defaults: prefs)
         reopened.install(manuscript(""), workID: work)
@@ -241,12 +250,14 @@ struct WritingProgressTests {
         tracker.install(document, workID: work)
         tracker.manualChange(document: document, workID: work, episodeID: document.chapters[0].episodes[0].id,
                              content: String(repeating: "文", count: 10000))
+        tracker.publishSnapshot()
         #expect(tracker.total == 10000)
         #expect(tracker.days(for: work)["2026-10-02"] == WritingDay(added: 1, net: 1))
         #expect(tracker.notice == nil) // History is not loaded, so an old milestone cannot notify again.
         let flush = Task { await tracker.flush() }
         await persistence.release()
         await flush.value
+        tracker.publishSnapshot()
         #expect(tracker.days(for: work)["2026-10-02"] == WritingDay(added: 11, net: 11))
         #expect(tracker.milestones(for: work).first?.reachedAt == time)
         let saved = await persistence.savedRecords()
@@ -262,6 +273,7 @@ struct WritingProgressTests {
         tracker.manualChange(document: doc, workID: work, episodeID: episode, content: "abc")
         await tracker.flush()
         #expect(tracker.persistenceFailed)
+        tracker.publishSnapshot()
         #expect(tracker.total == 3)
         await store.recover()
         doc.updateEpisodeContent("abc", for: episode, in: doc.chapters[0].id)
@@ -314,6 +326,7 @@ struct WritingProgressTests {
         #expect(tracker.notice == nil)
         await tracker.flush()
         #expect(!tracker.persistenceFailed)
+        tracker.publishSnapshot()
         #expect(tracker.days(for: work)["2026-10-02"]?.added == 12)
         #expect(tracker.milestones(for: work).first?.reachedAt == time)
         let saved = try await persistence.load()
@@ -329,6 +342,7 @@ struct WritingProgressTests {
         tracker.install(doc, workID: work)
         tracker.manualChange(document: doc, workID: work, episodeID: doc.chapters[0].episodes[0].id, content: "本文")
         await tracker.flush()
+        tracker.publishSnapshot()
         #expect(tracker.total == 2)
         #expect(tracker.persistenceFailed)
     }

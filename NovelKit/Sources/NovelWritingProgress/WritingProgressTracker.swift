@@ -51,10 +51,16 @@ public final class WritingProgressTracker {
     public private(set) var goal: WritingGoal?
     public private(set) var notice: WritingProgressNotice?
     public private(set) var persistenceFailed = false
+    public private(set) var persistenceRetryStopped = false
     public let calendar: WritingCalendar
     @ObservationIgnored private let now: @MainActor () -> Date
     @ObservationIgnored private let preferences: WritingGoalPreferences
     @ObservationIgnored private var persistence: (any WritingProgressPersistence)?
+    @ObservationIgnored private var currentRecords = WritingProgressRecords()
+    @ObservationIgnored private var currentTotal = 0
+    @ObservationIgnored private var publishTask: Task<Void, Never>?
+    @ObservationIgnored private let sleep: @MainActor (Duration) async throws -> Void
+    @ObservationIgnored private var retrySeconds = 3
     @ObservationIgnored private var pending = WritingProgressRecords()
     @ObservationIgnored private var counts: [EpisodeID: (content: String, count: Int)] = [:]
     @ObservationIgnored private var connectionTask: Task<Void, Never>?
@@ -68,10 +74,11 @@ public final class WritingProgressTracker {
     public init(
         defaults: UserDefaults,
         calendar: WritingCalendar = WritingCalendar(),
-        now: @escaping @MainActor () -> Date = { Date() }
+        now: @escaping @MainActor () -> Date = { Date() },
+        sleep: @escaping @MainActor (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
     ) {
         preferences = WritingGoalPreferences(defaults: defaults)
-        self.calendar = calendar; self.now = now
+        self.calendar = calendar; self.now = now; self.sleep = sleep
     }
 
     /// Composition schedules local history loading without making startup or manuscript saves wait.
@@ -90,18 +97,19 @@ public final class WritingProgressTracker {
         do {
             let stored = try await store.load()
             var merged = stored
-            merged.merge(records)
-            records = merged
+            merged.merge(currentRecords)
+            currentRecords = merged
             loaded = true
             persistenceFailed = false
-        } catch { persistenceFailed = true }
+        } catch { handlePersistenceFailure(error) }
+        publishSnapshot()
         scheduleFlush()
     }
 
     public func install(_ document: NovelDocument, workID: UUID) {
         noticeTask?.cancel(); notice = nil
         if self.workID != workID {
-            counts.removeAll(); total = 0
+            counts.removeAll(); currentTotal = 0
         }
         self.workID = workID
         goal = preferences.goal(for: workID)
@@ -122,8 +130,9 @@ public final class WritingProgressTracker {
                 value += count
             }
         }
-        counts = next; total = value
+        counts = next; currentTotal = value
         recordExistingMilestones()
+        publishSnapshot()
     }
 
     /// Native AI replacement emits a synchronous onTextChange too. Keep its normal
@@ -135,32 +144,32 @@ public final class WritingProgressTracker {
     }
 
     /// Reuse counts only for the current content; repair an unreported document replacement first.
-    public func manualChange(document: NovelDocument, workID: UUID, episodeID: EpisodeID, content: String) {
+    public func manualChange(document: NovelDocument, workID: UUID, episodeID: EpisodeID, content: String, previousContent: String? = nil) {
         if self.workID != workID {
             install(document, workID: workID)
         }
-        guard let episode = document.episode(episodeID)?.episode, episode.content != content else { return }
-        if counts[episodeID]?.content != episode.content {
+        guard let oldContent = previousContent ?? document.episode(episodeID)?.episode.content else { return }
+        if counts[episodeID]?.content != oldContent {
             // A missed remote/AI install must not become manual progress or a dated milestone.
             synchronize(document, workID: workID)
         }
-        let oldCount = counts[episodeID].flatMap { $0.content == episode.content ? $0.count : nil }
-            ?? ManuscriptMetrics.countCharacters(in: episode.content)
+        let oldCount = counts[episodeID]?.count ?? ManuscriptMetrics.countCharacters(in: oldContent)
         let newCount = ManuscriptMetrics.countCharacters(in: content)
-        let oldTotal = total
-        total += newCount - oldCount
+        let oldTotal = currentTotal
+        currentTotal += newCount - oldCount
         counts[episodeID] = (content, newCount)
-        guard uncountedEditorChangeDepth == 0 else { recordExistingMilestones(); return }
+        guard uncountedEditorChangeDepth == 0 else { recordExistingMilestones(); schedulePublication(); return }
+        guard newCount != oldCount else { return }
         let timestamp = now()
         let day = calendar.key(timestamp)
         var delta = WritingDay(); delta.record(delta: newCount - oldCount)
-        records.days[workID, default: [:]][day, default: WritingDay()].merge(delta)
+        currentRecords.days[workID, default: [:]][day, default: WritingDay()].merge(delta)
         pending.days[workID, default: [:]][day, default: WritingDay()].merge(delta)
         let arrivals = WritingThresholds.arrivals(
             old: oldTotal,
-            new: total,
+            new: currentTotal,
             goal: goal?.characters,
-            recorded: Set(records.milestones[workID, default: [:]].keys)
+            recorded: Set(currentRecords.milestones[workID, default: [:]].keys)
         )
         for threshold in arrivals {
             recordMilestone(threshold, date: timestamp)
@@ -175,6 +184,7 @@ public final class WritingProgressTracker {
                 self?.notice = nil
             }
         }
+        schedulePublication()
         scheduleFlush()
     }
 
@@ -195,12 +205,13 @@ public final class WritingProgressTracker {
         guard workID == work else { return }
         goal = value
         recordExistingMilestones()
+        publishSnapshot()
     }
 
     private func recordExistingMilestones() {
         guard let workID else { return }
-        for threshold in WritingThresholds.candidates(through: total, goal: goal?.characters)
-            where threshold <= total && records.milestones[workID]?[threshold] == nil {
+        for threshold in WritingThresholds.candidates(through: currentTotal, goal: goal?.characters)
+            where threshold <= currentTotal && currentRecords.milestones[workID]?[threshold] == nil {
             recordMilestone(threshold, date: nil)
         }
         scheduleFlush()
@@ -209,14 +220,45 @@ public final class WritingProgressTracker {
     private func recordMilestone(_ threshold: Int, date: Date?) {
         guard let workID else { return }
         let value = WritingMilestone(threshold: threshold, reachedAt: date)
-        records.milestones[workID, default: [:]][threshold] = value
+        currentRecords.milestones[workID, default: [:]][threshold] = value
         pending.milestones[workID, default: [:]][threshold] = value
     }
 
+    /// Publish only at the bounded UI cadence, save, install or presentation boundary.
+    public func publishSnapshot() {
+        publishTask?.cancel(); publishTask = nil
+        if records != currentRecords {
+            records = currentRecords
+        }
+        if total != currentTotal {
+            total = currentTotal
+        }
+    }
+
+    private func schedulePublication() {
+        guard publishTask == nil else { return }
+        publishTask = Task { [weak self] in
+            guard let sleep = self?.sleep else { return }
+            do { try await sleep(.seconds(3)) } catch { return }
+            self?.publishSnapshot()
+        }
+    }
+
+    private func handlePersistenceFailure(_ error: Error) {
+        persistenceFailed = true
+        if case WritingProgressStoreError.unsupportedVersion = error {
+            persistenceRetryStopped = true
+            flushTask?.cancel(); flushTask = nil
+        } else {
+            retrySeconds = min(180, retrySeconds * 2)
+        }
+    }
+
     private func scheduleFlush() {
-        guard persistence != nil, !pending.isEmpty, flushTask == nil else { return }
+        guard persistence != nil, !persistenceRetryStopped, !pending.isEmpty, flushTask == nil else { return }
         flushTask = Task { [weak self] in
-            do { try await Task.sleep(for: .seconds(3)) } catch { return }
+            guard let sleep = self?.sleep, let seconds = self?.retrySeconds else { return }
+            do { try await sleep(.seconds(seconds)) } catch { return }
             self?.flushTask = nil
             await self?.flush()
         }
@@ -224,6 +266,7 @@ public final class WritingProgressTracker {
 
     /// Errors are contained here; manuscript saves never await this operation.
     public func flush() async {
+        publishSnapshot()
         await connectionTask?.value
         if flushing {
             await withCheckedContinuation { flushWaiters.append($0) }
@@ -232,19 +275,22 @@ public final class WritingProgressTracker {
             }
             return
         }
-        guard let persistence, !pending.isEmpty else { return }
+        guard let persistence, !persistenceRetryStopped, !pending.isEmpty else { return }
+        flushTask?.cancel(); flushTask = nil
         flushing = true
         let batch = pending; pending = WritingProgressRecords()
         do {
             if !loaded {
                 var stored = try await persistence.load()
-                stored.merge(records)
-                records = stored
+                stored.merge(currentRecords)
+                currentRecords = stored
                 loaded = true
             }
             try await persistence.append(batch)
             persistenceFailed = false
-        } catch { pending.merge(batch); persistenceFailed = true }
+            retrySeconds = 3
+        } catch { pending.merge(batch); handlePersistenceFailure(error) }
+        publishSnapshot()
         flushing = false
         let waiters = flushWaiters
         flushWaiters.removeAll()
@@ -253,7 +299,8 @@ public final class WritingProgressTracker {
     }
 
     public func requestFlush() {
-        guard !pending.isEmpty else { return }
+        publishSnapshot()
+        guard !persistenceRetryStopped, persistence != nil, !pending.isEmpty else { return }
         Task { await flush() }
     }
 }

@@ -211,7 +211,8 @@ extension AppState {
     func handleSaveEvent(_ event: V2DocumentSaveCoordinator.SaveEvent) {
         switch event {
         case .dirty:
-            if let workID = currentSnapshotSyncV2WorkID {
+            documentChangeRevision &+= 1
+            if !editorProgressAlreadyTracked, let workID = currentSnapshotSyncV2WorkID {
                 writingProgress.synchronize(document, workID: workID.rawValue)
             }
             saveState = .unsaved

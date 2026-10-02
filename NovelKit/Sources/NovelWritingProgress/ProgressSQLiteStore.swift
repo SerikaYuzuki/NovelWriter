@@ -1,7 +1,7 @@
 import CSQLite
 import Foundation
 
-public struct WritingProgressRecords: Sendable {
+public struct WritingProgressRecords: Equatable, Sendable {
     public var days: [UUID: [String: WritingDay]] = [:]
     public var milestones: [UUID: [Int: WritingMilestone]] = [:]
     public init() {}

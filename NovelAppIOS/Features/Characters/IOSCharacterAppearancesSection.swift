@@ -40,11 +40,11 @@ struct IOSCharacterAppearancesSection: View {
                 }
             }
         }
-        .onAppear { refresh() }
-        .onChange(of: store.document.chapters) { _, _ in refresh() }
+        .onAppear { appearanceSession.setVisible(true, character: character, document: store.document) }
+        .onChange(of: store.localEditGeneration) { _, _ in refresh() }
         .onChange(of: character) { _, _ in refresh() }
         .onChange(of: store.workSearchScope) { _, _ in refresh() }
-        .onDisappear { appearanceSession.cancel() }
+        .onDisappear { appearanceSession.setVisible(false, character: character, document: store.document) }
     }
 
     private func refresh() {

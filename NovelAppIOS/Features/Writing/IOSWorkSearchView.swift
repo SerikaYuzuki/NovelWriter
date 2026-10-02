@@ -20,6 +20,12 @@ struct IOSWorkSearchView: View {
                 }
                 Text("\(search.total)件").monospacedDigit()
             }
+            if search.isStale, !search.isSearching {
+                Section {
+                    Text("本文が変わりました。結果を更新してください。").foregroundStyle(.secondary)
+                    Button("再検索") { refresh() }
+                }
+            }
             WorkSearchResults(search: search, onJump: jump)
                 .disabled(search.isReplacing)
             if let message = search.message {
@@ -47,10 +53,12 @@ struct IOSWorkSearchView: View {
                     search.query = initialQuery
                 }
             }
-            refresh()
+            guard scope == store.workSearchScope else { search.invalidate(); return }
+            search.setVisible(true, document: store.document, scope: store.workSearchScope)
         }
+        .onDisappear { search.setVisible(false, document: store.document, scope: store.workSearchScope) }
         .onChange(of: search.query) { _, _ in refresh() }
-        .onChange(of: store.document.chapters) { _, _ in confirmingReplacement = false; refresh() }
+        .onChange(of: store.localEditGeneration) { _, _ in confirmingReplacement = false; search.markStale() }
         .onChange(of: store.workSearchScope) { _, _ in confirmingReplacement = false; refresh() }
         .navigationDestination(isPresented: $showingEditor) {
             IOSEditorPane(store: store, userDefaults: store.userDefaults)
@@ -74,7 +82,7 @@ struct IOSWorkSearchView: View {
                             confirmingReplacement = false
                             Task { _ = await search.replace(using: host) }
                         }
-                        .disabled(search.includedCount == 0 || search.isSearching || search.isReplacing)
+                        .disabled(search.includedCount == 0 || search.isSearching || search.isReplacing || search.isStale)
                     }
                 }
             }
@@ -88,7 +96,7 @@ struct IOSWorkSearchView: View {
         Button { confirmingReplacement = true } label: {
             Text("\(search.includedCount)件を置換…").frame(minHeight: 44)
         }
-        .disabled(search.includedCount == 0 || search.isSearching || search.isReplacing)
+        .disabled(search.includedCount == 0 || search.isSearching || search.isReplacing || search.isStale)
         if search.canUndo {
             Button { Task { _ = await search.undo(using: store.workReplacementHost) } } label: {
                 Text("元に戻す").frame(minHeight: 44)

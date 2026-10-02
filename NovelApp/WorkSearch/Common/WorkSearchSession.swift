@@ -26,10 +26,44 @@ final class WorkSearchSession {
     private(set) var isReplacing = false
     var message: String?
     private(set) var scope = ""
-    private var revision = UUID()
+    private(set) var isStale = true
+    @ObservationIgnored private var isVisible = true
+    @ObservationIgnored private let search: @Sendable (String, NovelDocument) -> [EpisodeTextMatches]
+    @ObservationIgnored private let sleep: @MainActor (Duration) async throws -> Void
+    @ObservationIgnored private var revision = UUID()
     @ObservationIgnored private var searchTask: Task<Void, Never>?
     private var undoChanges: [EpisodeTextChange] = []
     private var undoScope = ""
+
+    init(search: @escaping @Sendable (String, NovelDocument) -> [EpisodeTextMatches] = {
+        WorkTextSearch.search(query: $0, in: $1)
+    }, sleep: @escaping @MainActor (Duration) async throws -> Void = { try await Task.sleep(for: $0) }) {
+        self.search = search
+        self.sleep = sleep
+    }
+
+    func setVisible(_ visible: Bool, document: NovelDocument, scope: String) {
+        isVisible = visible
+        if visible {
+            if isStale || self.scope != scope {
+                refresh(document: document, scope: scope)
+            }
+        } else {
+            markStale()
+        }
+    }
+
+    /// Retain the last results. Changes during typing never start a whole-work search.
+    func markStale() {
+        guard !isStale || isSearching || searchTask != nil else { return }
+        searchTask?.cancel(); searchTask = nil; revision = UUID()
+        if !isStale {
+            isStale = true
+        }
+        if isSearching {
+            isSearching = false
+        }
+    }
 
     var total: Int {
         results.reduce(0) { $0 + $1.matches.count }
@@ -44,33 +78,39 @@ final class WorkSearchSession {
     }
 
     func invalidate() {
-        searchTask?.cancel()
+        searchTask?.cancel(); searchTask = nil
         revision = UUID()
         results = []; excluded = [:]; undoChanges = []
         isSearching = false
+        isStale = true
         message = "作品またはアカウントが変わりました。検索画面を開き直してください。"
     }
 
     func refresh(document: NovelDocument, scope: String) {
+        guard isVisible else { markStale(); return }
         searchTask?.cancel()
         revision = UUID()
         if self.scope != scope {
             self.scope = scope
+            results = []
             undoChanges = []
             message = nil
         }
-        results = []
+        isStale = true
         excluded = [:]
         isSearching = !query.isEmpty
-        guard !query.isEmpty else { return }
-        let query = query, revision = revision
+        guard !query.isEmpty else { results = []; isStale = false; return }
+        let query = query, revision = revision, search = search
         searchTask = Task { [weak self] in
-            do { try await Task.sleep(for: .milliseconds(250)) } catch { return }
-            let worker = Task.detached(priority: .userInitiated) { WorkTextSearch.search(query: query, in: document) }
+            guard let sleep = self?.sleep else { return }
+            do { try await sleep(.milliseconds(250)) } catch { return }
+            let worker = Task.detached(priority: .userInitiated) { search(query, document) }
             let value = await withTaskCancellationHandler { await worker.value } onCancel: { worker.cancel() }
             guard !Task.isCancelled, let self, self.revision == revision, self.scope == scope else { return }
+            searchTask = nil
             results = value
             isSearching = false
+            isStale = false
         }
     }
 
@@ -89,7 +129,7 @@ final class WorkSearchSession {
     /// 検索結果は確認時点の値。検索後に一話でも変わっていたら全体を中止。
     @discardableResult
     func replace(using host: WorkReplacementHost) async -> Bool {
-        guard !isReplacing, !isSearching, host.scope == scope, host.validate() else { return false }
+        guard !isReplacing, !isSearching, !isStale, host.scope == scope, host.validate() else { return false }
         message = nil
         let results = results, replacement = replacement, excluded = excluded
         isReplacing = true

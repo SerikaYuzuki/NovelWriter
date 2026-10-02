@@ -186,11 +186,12 @@ private struct CharacterSheetView: View {
             .frame(maxWidth: 920, alignment: .leading)
         }
         .background(FuminiwaColor.paper.color)
-        .onChange(of: appState.document.chapters, initial: true) { _, _ in refreshAppearances() }
+        .onAppear { appearanceSession.setVisible(true, character: appState.selectedCharacter, document: appState.document) }
+        .onChange(of: appState.documentChangeRevision) { _, _ in refreshAppearances() }
         .onChange(of: appState.selectedCharacter) { _, _ in refreshAppearances() }
         .onChange(of: appState.workSearchScope) { _, _ in refreshAppearances() }
         .onDisappear {
-            appearanceSession.cancel()
+            appearanceSession.setVisible(false, character: appState.selectedCharacter, document: appState.document)
             appState.commitCharacterEditing()
         }
     }

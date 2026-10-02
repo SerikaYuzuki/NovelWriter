@@ -11,6 +11,26 @@ import Testing
 
 @MainActor
 struct WritingProgressIntegrationTests {
+    @Test func manualInputSkipsAllEpisodeSynchronization() {
+        let state = AppState(dependencies: AppDependencies(userDefaults: makeIsolatedTestUserDefaults()),
+                             initialStartupState: .ready)
+        var document = NovelDocument.newDocument()
+        document.chapters[0].episodes.append(Episode(title: "別の話", content: "別"))
+        let work = WorkID(UUID()), chapter = document.chapters[0].id, episode = document.chapters[0].episodes[0].id
+        let other = document.chapters[0].episodes[1].id
+        #expect(state.installV2Document(document, workID: work, createdAt: Date()))
+        // A changed, unreported second episode is a sentinel for an all-episode scan.
+        state.document.updateEpisodeContent("別の変更", for: other, in: chapter)
+        state.updateEpisodeContent("文", for: episode, in: chapter)
+        #expect(state.writingProgress.episodeCount(other) == 1)
+        #expect(state.writingProgress.total == 1) // Published snapshot is still the installed total.
+        state.writingProgress.publishSnapshot()
+        #expect(state.writingProgress.total == 2)
+        state.markDocumentDirty()
+        #expect(state.writingProgress.episodeCount(other) == 4)
+        #expect(state.writingProgress.total == 5)
+    }
+
     @Test func guardedManualEntryAndExcludedMutations() {
         let state = AppState(
             dependencies: AppDependencies(userDefaults: makeIsolatedTestUserDefaults()),
@@ -34,17 +54,21 @@ struct WritingProgressIntegrationTests {
             in: chapter,
             expectedEditorContentGeneration: generation &+ 1
         )
+        state.writingProgress.publishSnapshot()
         #expect(state.writingProgress.days(for: work.rawValue).values.first?.added == 3)
         state.document.updateEpisodeContent(String(repeating: "文", count: 10000), for: episode, in: chapter)
         state.markDocumentDirty() // AI/MCP path
+        state.writingProgress.publishSnapshot()
         #expect(state.writingProgress.days(for: work.rawValue).values.first?.added == 3)
         #expect(state.writingProgress.milestones(for: work.rawValue).first?.reachedAt == nil)
         #expect(state.writingProgress.notice == nil)
         #expect(state.installV2Document(state.document, workID: work, createdAt: Date()))
         state.updateEpisodeContent("古いsession", for: episode, in: chapter, expectedSession: session)
+        state.writingProgress.publishSnapshot()
         #expect(state.writingProgress.days(for: work.rawValue).values.first?.added == 3)
         let other = WorkID(UUID())
         #expect(state.installV2Document(state.document, workID: other, createdAt: Date()))
+        state.writingProgress.publishSnapshot()
         #expect(state.writingProgress.days(for: other.rawValue).isEmpty)
     }
 
@@ -61,12 +85,14 @@ struct WritingProgressIntegrationTests {
         document.updateEpisodeContent(remoteContent, for: episode, in: chapter)
         if notifyInstall {
             #expect(state.installV2Document(document, workID: work, createdAt: Date()))
+            state.writingProgress.publishSnapshot()
             #expect(state.writingProgress.total == 10000)
         } else {
             state.document = document
         }
         #expect(state.writingProgress.notice == nil)
         state.updateEpisodeContent(remoteContent + "一", for: episode, in: chapter)
+        state.writingProgress.publishSnapshot()
         #expect(state.writingProgress.days(for: work.rawValue).values.first?.added == 1)
         #expect(state.writingProgress.days(for: work.rawValue).values.first?.net == 1)
         #expect(state.writingProgress.total == 10001)
@@ -106,13 +132,16 @@ struct WritingProgressIntegrationTests {
         defer { window.close() }
         let host = try #require(state.writingAssistantHost)
         try await host.apply(edit, WritingGrant(paths: [path]))
+        state.writingProgress.publishSnapshot()
         #expect(state.writingProgress.total == 10000)
         #expect(state.writingProgress.days(for: work.rawValue).isEmpty)
         #expect(state.writingProgress.notice == nil)
         try await host.undo(edit.id)
+        state.writingProgress.publishSnapshot()
         #expect(state.writingProgress.total == 0)
         #expect(state.writingProgress.days(for: work.rawValue).isEmpty)
         state.updateEpisodeContent("手入力", for: episode, in: chapter)
+        state.writingProgress.publishSnapshot()
         #expect(state.writingProgress.days(for: work.rawValue).values.first?.added == 3)
     }
 

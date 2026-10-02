@@ -10,6 +10,30 @@ import UIKit
 
 @MainActor
 struct IOSWritingProgressIntegrationTests {
+    @Test func manualInputSkipsAllEpisodeSynchronization() async throws {
+        let defaults = try #require(UserDefaults(suiteName: "IOSWritingProgressTests.\(UUID())"))
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = IOSDocumentStore(userDefaults: defaults, libraryRoot: root)
+        await store.bootstrap()
+        #expect(await store.makeNewDocument())
+        let chapter = try #require(store.selectedChapterID), episode = try #require(store.selectedEpisodeID)
+        store.document.chapters[0].episodes.append(Episode(title: "別の話", content: "別"))
+        store.markDocumentChanged()
+        let other = store.document.chapters[0].episodes[1].id
+        // A changed, unreported second episode is a sentinel for an all-episode scan.
+        store.document.updateEpisodeContent("別の変更", for: other, in: chapter)
+        store.updateEpisodeContent("文", chapterID: chapter, episodeID: episode)
+        #expect(store.writingProgress.episodeCount(other) == 1)
+        #expect(store.writingProgress.total == 1)
+        store.writingProgress.publishSnapshot()
+        #expect(store.writingProgress.total == 2)
+        store.markDocumentChanged()
+        #expect(store.writingProgress.episodeCount(other) == 4)
+        #expect(store.writingProgress.total == 5)
+        #expect(await store.saveNow())
+    }
+
     @Test func guardedManualEntryAndInstallExcludeOtherSources() async throws {
         let defaults = try #require(UserDefaults(suiteName: "IOSWritingProgressTests.\(UUID())"))
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -24,9 +48,11 @@ struct IOSWritingProgressIntegrationTests {
         store.updateEpisodeContent("三文字", chapterID: chapter, episodeID: episode)
         store.advanceEditorContentGeneration()
         store.updateEpisodeContent("古い入力", chapterID: chapter, episodeID: episode, expectedEditingToken: token)
+        store.writingProgress.publishSnapshot()
         #expect(store.writingProgress.days(for: work.rawValue).values.first?.added == 3)
         store.document.updateEpisodeContent(String(repeating: "文", count: 10000), for: episode, in: chapter)
         store.markDocumentChanged()
+        store.writingProgress.publishSnapshot()
         #expect(store.writingProgress.days(for: work.rawValue).values.first?.added == 3)
         #expect(store.writingProgress.notice == nil)
         #expect(store.writingProgress.milestones(for: work.rawValue).first?.reachedAt == nil)
@@ -54,6 +80,7 @@ struct IOSWritingProgressIntegrationTests {
                 generation: 1, snapshotID: nil
             )
             #expect(store.installSnapshotSyncV2Opened(opened, value: document, preservingSelection: true))
+            store.writingProgress.publishSnapshot()
             #expect(store.writingProgress.total == 10000)
             #expect(store.selectedChapterID == chapter)
             #expect(store.selectedEpisodeID == episode)
@@ -64,6 +91,7 @@ struct IOSWritingProgressIntegrationTests {
         #expect(store.writingProgress.notice == nil)
         let token = try #require(store.currentEpisodeEditingToken)
         store.updateEpisodeContent(remoteContent + "一", chapterID: chapter, episodeID: episode, expectedEditingToken: token)
+        store.writingProgress.publishSnapshot()
         #expect(store.writingProgress.days(for: work.rawValue).values.first?.added == 1)
         #expect(store.writingProgress.days(for: work.rawValue).values.first?.net == 1)
         #expect(store.writingProgress.total == 10001)
@@ -108,13 +136,16 @@ struct IOSWritingProgressIntegrationTests {
         #expect(store.editorCommandSession.hasActiveEditorSurface)
         let host = try #require(store.writingAssistantHost)
         try await host.apply(edit, WritingGrant(paths: [path]))
+        store.writingProgress.publishSnapshot()
         #expect(store.writingProgress.total == 10000)
         #expect(store.writingProgress.days(for: work.rawValue).isEmpty)
         #expect(store.writingProgress.notice == nil)
         try await host.undo(edit.id)
+        store.writingProgress.publishSnapshot()
         #expect(store.writingProgress.total == 0)
         #expect(store.writingProgress.days(for: work.rawValue).isEmpty)
         store.updateEpisodeContent("手入力", chapterID: chapter, episodeID: episode)
+        store.writingProgress.publishSnapshot()
         #expect(store.writingProgress.days(for: work.rawValue).values.first?.added == 3)
         #expect(await store.saveNow())
     }

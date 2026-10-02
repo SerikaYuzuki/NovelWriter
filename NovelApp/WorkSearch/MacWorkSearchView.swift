@@ -34,9 +34,15 @@ struct MacWorkSearchView: View {
                 Text("\(search.total)件").font(.caption).monospacedDigit()
                 Spacer()
                 Button("\(search.includedCount)件を置換…") { confirmingReplacement = true }
-                    .disabled(search.includedCount == 0 || search.isSearching || search.isReplacing)
+                    .disabled(search.includedCount == 0 || search.isSearching || search.isReplacing || search.isStale)
             }
             .padding(.horizontal, Spacing.medium)
+            if search.isStale, !search.isSearching {
+                HStack {
+                    Text("本文が変わりました。").font(.caption)
+                    Button("再検索") { refresh() }
+                }.padding(.horizontal, Spacing.medium)
+            }
             List {
                 WorkSearchResults(search: search, onJump: jump)
                     .disabled(search.isReplacing)
@@ -53,9 +59,10 @@ struct MacWorkSearchView: View {
         }
         .padding(.top, Spacing.medium)
         .workbenchGlassChromeStyle()
-        .onAppear { refresh(); queryFocused = true }
+        .onAppear { search.setVisible(true, document: appState.document, scope: appState.workSearchScope); queryFocused = true }
+        .onDisappear { search.setVisible(false, document: appState.document, scope: appState.workSearchScope) }
         .onChange(of: search.query) { _, _ in confirmingReplacement = false; refresh() }
-        .onChange(of: appState.document.chapters) { _, _ in confirmingReplacement = false; refresh() }
+        .onChange(of: appState.documentChangeRevision) { _, _ in confirmingReplacement = false; search.markStale() }
         .onChange(of: appState.workSearchScope) { _, _ in confirmingReplacement = false; refresh() }
         .onExitCommand { search.isPresented = false }
         .confirmationDialog("\(search.includedCount)件を置換しますか？", isPresented: $confirmingReplacement) {
