@@ -2,6 +2,7 @@ import copy
 import importlib.util
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import tempfile
@@ -14,6 +15,9 @@ render = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(render)
 SERVER_REF = '127.0.0.1:5000/fuminiwa-sync-v2-server:role-split-20261003'
 OPS_REF = '127.0.0.1:5000/fuminiwa-sync-v2-ops:ops-ui-20261003'
+SERVER_CHECK = ('code="$(curl --silent --show-error --output /dev/null '
+                "--write-out '%{http_code}' --header 'x-fuminiwa-client-version: 0.1.0' "
+                'http://127.0.0.1:8092/v1/auth/capabilities || true)"; test "$code" = 200')
 
 
 def fixture():
@@ -21,7 +25,7 @@ def fixture():
     for index, (role, name) in enumerate(render.NAMES.items()):
         items[role] = {'Name': '/' + name, 'Image': 'sha256:' + str(index) * 64,
                        'State': {'Running': True}, 'Config': {'Env': ['PATH=/usr/bin'],
-                       'Healthcheck': {'Test': ['CMD-SHELL', 'code=$(probe); test "$code" = 200'],
+                       'Healthcheck': {'Test': ['CMD', 'ops-healthcheck'],
                                       'Interval': 5000000000, 'Timeout': 5000000000, 'Retries': 12},
                        'User': '10001' if role == 'server' else '',
                        'Entrypoint': ['/usr/local/bin/server'] if role == 'server' else ['/entrypoint']},
@@ -32,7 +36,11 @@ def fixture():
                        'Mounts': []}
     env = {key: 'configured-value' for key in render.REQUIRED_ENV}
     env.update(FUMINIWA_RUNTIME_MODE='production', FUMINIWA_SYNC_V2_POSTGRES_HOST='postgres',
-               FUMINIWA_SYNC_V2_BIND='0.0.0.0:8092', RUST_LOG='info', SPECIAL_LITERAL='literal${UNSET}$value')
+               FUMINIWA_SYNC_V2_BIND='0.0.0.0:8092', RUST_LOG='info', SPECIAL_LITERAL='concrete-value')
+    items['server']['Config']['Healthcheck']['Test'] = ['CMD-SHELL', SERVER_CHECK]
+    items['postgres']['Config']['Healthcheck']['Test'] = ['CMD-SHELL', 'pg_isready -U fuminiwa_sync_v2_bootstrap -d fuminiwa_sync_v2']
+    items['edge']['Config']['Healthcheck']['Test'] = ['CMD-SHELL', "wget -q -S --spider http://127.0.0.1:2019/config/ 2>&1 | grep -Eq 'HTTP/[0-9.]+ 200'"]
+    items['edge']['Config']['Env'].append('XDG_CONFIG_HOME=/config')
     for name in render.SERVER_SECRETS:
         target = '/run/secrets/' + name
         env[render.FILE_ENV[name]] = target
@@ -87,7 +95,8 @@ class RenderTests(unittest.TestCase):
                          ['fuminiwa-sync-v2-role-split-data:/var/lib/postgresql/data'])
         self.assertEqual(document['services']['edge']['volumes'][:2],
                          ['fuminiwa-sync-v2-role-split-caddy-data:/data',
-                          'fuminiwa-sync-v2-role-split-caddy-config:/config'])
+                          'fuminiwa-sync-v2-role-split-caddy-config:/caddy-config'])
+        self.assertEqual(document['services']['edge']['environment']['XDG_CONFIG_HOME'], '/caddy-config')
         self.assertEqual(document['services']['edge']['volumes'][-1]['type'], 'bind')
         self.assertTrue(all(v['type'] == 'bind' for v in document['services']['ops']['volumes']))
         self.assertEqual(document['services']['server']['healthcheck']['interval'], '5s')
@@ -95,8 +104,9 @@ class RenderTests(unittest.TestCase):
         self.assertEqual(document['services']['postgres']['image'], 'postgres@sha256:' + 'a' * 64)
         self.assertEqual(document['services']['edge']['image'], 'caddy@sha256:' + 'b' * 64)
         self.assertEqual(document['services']['server']['image'], SERVER_REF)
-        self.assertEqual(document['services']['server']['environment']['SPECIAL_LITERAL'], 'literal$${UNSET}$$value')
-        self.assertIn('$$code', document['services']['server']['healthcheck']['test'][1])
+        self.assertEqual(document['services']['server']['environment']['SPECIAL_LITERAL'], 'concrete-value')
+        self.assertTrue(document['services']['server']['healthcheck']['test'][1].startswith('test "$$(curl '))
+        self.assertNotIn('$$code', document['services']['server']['healthcheck']['test'][1])
         self.assertEqual(document['secrets']['google-client-secret']['file'], render.BASE + '/runtime-secrets/google-client-secret')
         self.assertEqual(document['services']['edge']['volumes'][-1]['source'], '/DATA/AppData/fuminiwa-sync/config/Caddyfile')
         self.assertEqual(document['services']['ops']['ports'], ['8790:8790'])
@@ -293,6 +303,89 @@ else:
         document = self.document(items, images)
         self.assertEqual(document['services']['server']['healthcheck']['start_period'], '10s')
         self.assertEqual(document['services']['server']['healthcheck']['start_interval'], '2s')
+
+    def test_healthcheck_keeps_semantics_after_two_interpolation_passes(self):
+        def interpolate(command):
+            # Independent model of the observed $$ / $name / ${name} handling.
+            return re.sub(r'\$\$|\$\{[^}]*\}|\$[A-Za-z_][A-Za-z0-9_]*',
+                          lambda match: '$' if match[0] == '$$' else '', command)
+        document = self.document()
+        generated = document['services']['server']['healthcheck']['test'][1]
+        final = interpolate(interpolate(generated))
+        broken = interpolate(interpolate(SERVER_CHECK.replace('$', '$$')))
+        self.assertIn('test "" = 200', broken)
+        self.assertIn('test "$(curl ', final)
+        with tempfile.TemporaryDirectory() as temporary:
+            fake = Path(temporary) / 'curl'
+            fake.write_text('#!/usr/bin/env python3\nimport os,sys\nsys.stdout.write(os.environ["FAKE_HTTP_CODE"])\nsys.exit(int(os.environ["FAKE_CURL_EXIT"]))\n')
+            fake.chmod(0o700)
+            for output, exit_code in (('200', 0), ('200', 7), ('401', 0), ('500', 0), ('000', 7), ('', 7)):
+                env = dict(os.environ, PATH=temporary + os.pathsep + os.environ['PATH'],
+                           FAKE_HTTP_CODE=output, FAKE_CURL_EXIT=str(exit_code))
+                original = subprocess.run(['sh', '-c', SERVER_CHECK], env=env, capture_output=True)
+                updated = subprocess.run(['sh', '-c', final], env=env, capture_output=True)
+                self.assertEqual(updated.returncode, original.returncode, (output, exit_code))
+                self.assertEqual(updated.returncode == 0, output == '200')
+                if output == '200':
+                    self.assertNotEqual(subprocess.run(['sh', '-c', broken], env=env, capture_output=True).returncode, 0)
+        for role in ('postgres', 'edge', 'ops'):
+            self.assertEqual(document['services'][role]['healthcheck']['test'], fixture()[0][role]['Config']['Healthcheck']['Test'])
+        braced = SERVER_CHECK.replace('"$code"', '"${code}"')
+        self.assertEqual(render.variable_free_healthcheck(['CMD-SHELL', braced]),
+                         render.variable_free_healthcheck(['CMD-SHELL', SERVER_CHECK]))
+
+    def test_unknown_healthcheck_variables_and_environment_references_fail_generation(self):
+        for command in ('test "$unknown" = 200', 'code=$(probe); test "$code" = 200',
+                        SERVER_CHECK + '; echo done', SERVER_CHECK.replace('curl --silent', 'curl $OPTIONS --silent'),
+                        'echo "$1"', 'echo "$$"', 'code=$(curl); test $code = 200'):
+            items, images = fixture()
+            items['server']['Config']['Healthcheck']['Test'] = ['CMD-SHELL', command]
+            with self.subTest(command=command), self.assertRaises(render.RenderError):
+                self.document(items, images)
+        for value in ('literal${UNSET}', '$value', '$1'):
+            items, images = fixture()
+            items['server']['Config']['Env'].append('UNSUPPORTED_LITERAL=' + value)
+            with self.subTest(value=value), self.assertRaises(render.RenderError):
+                self.document(items, images)
+
+    def test_self_check_rejects_variable_references_and_config_targets_before_publish(self):
+        mutations = [lambda d: d['services']['server']['healthcheck'].update(test=['CMD-SHELL', 'test "$$code" = 200']),
+                     lambda d: d['services']['ops']['environment'].update(TEST='$${VALUE}'),
+                     lambda d: d['services']['ops']['environment'].update(TEST='${VALUE}'),
+                     lambda d: d['services']['ops']['volumes'].append({'type': 'bind', 'source': '/tmp/config', 'target': '/config'}),
+                     lambda d: d['services']['ops']['volumes'].append('fuminiwa-sync-v2-role-split-caddy-config:/config')]
+        for mutate in mutations:
+            document = self.document()
+            mutate(document)
+            with self.subTest(mutation=mutate), tempfile.TemporaryDirectory() as temporary:
+                output = Path(temporary) / 'compose.yml'
+                output.write_text('previous')
+                with patch.object(render.subprocess, 'run') as compose:
+                    with self.assertRaises(render.RenderError):
+                        render.save_validated(document, output)
+                    compose.assert_not_called()
+                self.assertEqual(output.read_text(), 'previous')
+        contents = render.dump_yaml(self.document())
+        self.assertIsNone(re.search(r'\$\$[A-Za-z_{]|\$\{', contents))
+
+    def test_caddy_config_volume_moves_without_changing_volume_or_relative_contents(self):
+        items, images = fixture()
+        old = next(m for m in items['edge']['Mounts'] if m['Destination'] == '/config')
+        document = self.document(items, images)
+        ref = document['services']['edge']['volumes'][1]
+        self.assertEqual(ref, old['Name'] + ':/caddy-config')
+        # XDG_CONFIG_HOME/caddy is the same root-relative caddy directory,
+        # so autosave.json is neither copied nor renamed inside the volume.
+        self.assertEqual(document['services']['edge']['environment']['XDG_CONFIG_HOME'] + '/caddy/autosave.json',
+                         '/caddy-config/caddy/autosave.json')
+        old['Destination'] = '/caddy-config'
+        items['edge']['Config']['Env'][-1] = 'XDG_CONFIG_HOME=/caddy-config'
+        self.assertEqual(self.document(items, images), document)
+        old['RW'] = False
+        self.assertEqual(self.document(items, images)['services']['edge']['volumes'][1], ref + ':ro')
+        old['Name'] = 'wrong-config'
+        with self.assertRaises(render.RenderError):
+            self.document(items, images)
 
 
 if __name__ == '__main__':

@@ -2,7 +2,7 @@
   "services": {
     "postgres": {"container_name": "fuminiwa-sync-v2-role-split-postgres", "restart": "unless-stopped", "networks": ["sync"], "volumes": ["fuminiwa-sync-v2-role-split-data:/var/lib/postgresql/data"]},
     "server": {"container_name": "fuminiwa-sync-v2-role-split-server", "restart": "unless-stopped", "networks": ["sync"], "depends_on": {"postgres": {"condition": "service_healthy"}}},
-    "edge": {"container_name": "fuminiwa-sync-v2-role-split-edge", "restart": "unless-stopped", "networks": ["sync"], "depends_on": {"server": {"condition": "service_healthy"}}, "ports": ["8443:8443"], "volumes": ["fuminiwa-sync-v2-role-split-caddy-data:/data", "fuminiwa-sync-v2-role-split-caddy-config:/config"]},
+    "edge": {"container_name": "fuminiwa-sync-v2-role-split-edge", "restart": "unless-stopped", "networks": ["sync"], "depends_on": {"server": {"condition": "service_healthy"}}, "ports": ["8443:8443"], "volumes": ["fuminiwa-sync-v2-role-split-caddy-data:/data", "fuminiwa-sync-v2-role-split-caddy-config:/caddy-config"]},
     "ops": {"container_name": "fuminiwa-sync-v2-ops", "restart": "unless-stopped", "networks": ["ops-ui"], "stop_grace_period": "5m"}
   },
   "volumes": {

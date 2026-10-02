@@ -19,7 +19,7 @@
 - UIインポートは常にpullし、`pull_policy: never`を無視する。ローカルのみのimageは使えない。loopbackレジストリからのpullは成功済み。
 - file-backed top-level secrets（実際にはbind）、短い書式のexternal volume、service_healthy依存、unless-stoppedは試験済み。長い書式のnamed volumeは以下の本番試験で失敗した。
 - top-level nameは無視され、project名はランダムになる。全サービスにcontainer_nameを指定する。
-- `.env`は読まれない。生成物には具体値を入れる。Composeの`$`は`$$`にescapeして、元の値を保存する。
+- `.env`は読まれない。生成物には具体値を入れる。2重展開があるためシェル変数参照を禁止し、healthcheckのコマンド置換だけを`$$(...)`で出力する。変数を使わずに意味を保てない設定は生成失敗にする。
 - 保存先は`/var/lib/casaos/apps/<random>/docker-compose.yml`（root 0600）。インストール・更新・削除はZimaOS UIで行う。そこへ直接書き込まない。
 - reckyは999:1000、dockerグループ、sudo不可。既存secretをホストから読まず、必要な新しいコピーだけrootの一時コンテナで作成する。
 
@@ -48,9 +48,38 @@
     "external": true
 ```
 
-生成物の自己検査で、長い書式のnamed volume、名前の不一致、named volumeのbindへの置換・欠落を拒否する。`docker compose config -q`の成功だけではZimaOSがインポート後にどう書き換えるかを保証できない。再インポート後には、postgresの`/var/lib/postgresql/data`、edgeの`/data`／`/config`をinspectし、**Typeがvolume、Nameが期待する既存volume名**であることを先に確認する。bindになっていたら新構成を成功扱いにしない。
+生成物の自己検査で、長い書式のnamed volume、名前の不一致、named volumeのbindへの置換・欠落を拒否する。`docker compose config -q`の成功だけではZimaOSがインポート後にどう書き換えるかを保証できない。現在の再インポート後の確認先は、postgresの`/var/lib/postgresql/data`、edgeの`/data`／`/caddy-config`。**Typeがvolume、Nameが期待する既存volume名**であることを先に確認する。bindになっていたら新構成を成功扱いにしない。
 
-今回のロールバック実績について、切戻し後のhealth、公開／LAN capabilities、backupの確認結果は本依頼の報告に含まれていない。以下の切戻し手順と実際の実行結果を区別し、確認結果の引継ぎ待ちとして記録する。Codexは本番へ接続しておらず、復旧完了を確認していない。
+### 2回目の本番インポート：2重展開と/config書換え
+
+利用者が2回目の本番インポートで確認した結果。短い書式への修正でpostgresの`fuminiwa-sync-v2-role-split-data`とedgeの`/data`（caddy-data）は既存volumeのまま正しくマウントされた。次の2点が残った。
+
+- **composeの変数展開が2回行われる。** YAMLのserver healthcheckは`code="$$(curl ...)"; test "$$code" = 200`だったが、実際のコンテナでは`code="$(curl ...)"; test "" = 200`になった。serverは常にunhealthyで、service_healthy依存のedgeが起動しなかった。`$$(`は2回展開後も`$(`として残り、コマンド置換は動いた。
+- **ターゲット/configが予約されたbind先へ書き換えられる。** caddy-configは短い書式でも`/DATA/AppData/postgres/config`へのbindになった。今回の最初のservice名はpostgres。利用者の報告では置換先の形式は`/DATA/AppData/<最初のservice名>/config`。
+
+healthcheckは既存のHTTPコード比較の形を認識して、curlのオプションと`|| true`を保ったまま直接比較に変換する。認識できないシェル変数参照を勝手に書き換えない。生成した構造とYAML全体に対し、`$$`の後が英字・`_`・`{`となる箇所、`${`、その他の変数参照があれば拒否する。環境値やパスに同じ形式が含まれる場合も失敗する。
+
+```yaml
+"healthcheck":
+  "test":
+    - "CMD-SHELL"
+    - "test \"$$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' --header 'x-fuminiwa-client-version: 0.1.0' http://127.0.0.1:8092/v1/auth/capabilities || true)\" = 200"
+```
+
+caddy-configの同じ外部volumeを`/caddy-config`へマウントし、edgeの`XDG_CONFIG_HOME`を`/caddy-config`へ上書きする。Caddyの保存先は[XDG_CONFIG_HOME配下のcaddy directory](https://caddyserver.com/docs/conventions#configuration-directory)なので、volume内の`caddy/autosave.json`等の相対位置は変わらない。中身のコピー・移動・初期化はしない。`/data`と明示的なCaddyfile参照（`/etc/caddy/Caddyfile`）も引き継ぐ。
+
+```yaml
+"environment":
+  "XDG_CONFIG_HOME": "/caddy-config"
+"volumes":
+  - "fuminiwa-sync-v2-role-split-caddy-config:/caddy-config"
+```
+
+全サービスのvolume／bindターゲットに`/config`がないことも自己検査する。インポート後はedgeの新しいvolume名、XDG_CONFIG_HOME、autosave先を確認する。旧コンテナのinspectでは従来の`/config`の既存volumeを取得し、出力では新しいターゲットを使用する。
+
+### 2回のロールバック実績
+
+利用者報告により、1回目・2回目の失敗はいずれも旧コンテナを`-legacy`から元の名前へ戻し、数分で復旧した。両回ともデータは無傷。復旧後のhealth・公開／LAN capabilities・backupについての個別の実測値や完了時刻は今回の報告には含まれていないため、追加の成功証跡は作らない。Codexは本番へ接続していない。この2回の構成移行の切戻し実績を、schema変更を伴う更新の安全性へ一般化しない。
 
 レジストリは既設なので作り直さない。以下は将来の復旧時の構成例であり、移行コマンドには含めない：
 
@@ -188,7 +217,7 @@ docker logs --tail 100 fuminiwa-sync-v2-ops
 docker stats --no-stream fuminiwa-sync-v2-ops
 ```
 
-4コンテナはrunning／healthy／unless-stopped。旧imageとのID一致・external volumeの名前・secretとCaddyfileの新参照先も読む。capabilitiesの2経路はともに**200**、UI未認証は401、正しいBasicで200。画面から「今すぐバックアップ」を1回実行し、実行中のボタン無効・二重POST拒否、完了後のlast-success・新backup名／サイズ、opsログexit 0を確認する。UIやhealthの成功は原稿・account isolationの実機受入を代替しない。
+4コンテナはrunning／healthy／unless-stopped。旧imageとのID一致・external volumeの名前・secretとCaddyfileの新参照先も読む。edgeの`/caddy-config`が既存caddy-config volumeであり、XDG_CONFIG_HOMEも`/caddy-config`であることを確認する。serverの実際のhealthcheckに空の比較や変数参照が残っていないこと、edgeのautosave先が`/caddy-config/caddy/autosave.json`であることも読む。capabilitiesの2経路はともに**200**、UI未認証は401、正しいBasicで200。画面から「今すぐバックアップ」を1回実行し、実行中のボタン無効・二重POST拒否、完了後のlast-success・新backup名／サイズ、opsログexit 0を確認する。UIやhealthの成功は原稿・account isolationの実機受入を代替しない。
 
 次の03:17 JSTの定期成功、ホスト再起動後の4コンテナ／registry復帰とhealth、UI、次回予定は別の受入として確認する。停止中の予定は追いかけ実行しない。ops healthは非rootのPID 1 cron・起動済みUIの生存・36時間未満のbackup成功を判定する。
 
@@ -243,6 +272,8 @@ docker build -f SyncServerV2/ops/Dockerfile -t fuminiwa-sync-v2-ops:test .
 
 fake Dockerテストは認証、CSRF、操作の限定、秘密の非表示、Web／CLIの排他、inspect生成、欠落拒否、秘密を読まないこと、volume／digest／container_name、config検証前のatomic置換、prepareの操作範囲を扱う。初回実装のローカル検証では既存backup／opsを含む31テストと`./Scripts/check.sh`全段が成功した。
 
-本番インポート後のvolume修正では、YAML出力・短い書式・外部名とkeyの一致・クォート・時間表記・自己検査の拒否ケースを追加し、既存分を含む35テストが成功した。生成compose全体と特殊文字を独立したYAMLパーサーでも読めることを確認した。この追加確認にだけ一時的なPyYAML環境を使い、生成スクリプト・単体テスト・imageへの依存追加は行っていない。今回`check.sh`は再実行せず、指定されたPythonテスト全件を検証範囲とした。
+1回目の本番インポート後のvolume修正では、YAML出力・短い書式・外部名とkeyの一致・クォート・時間表記・自己検査の拒否ケースを追加し、既存分を含む35テストが成功した。生成compose全体と特殊文字を独立したYAMLパーサーでも読めることを確認した。この追加確認にだけ一時的なPyYAML環境を使い、生成スクリプト・単体テスト・imageへの依存追加は行っていない。
+
+2回目の修正では39テストが成功した。2重展開を模擬したあと、fake curlを使って元のhealthcheckと修正版を実際のshellで実行し、200／401／500／通信失敗の終了判定が一致することを確認した。変換不能な参照・生成物の変数参照・全サービスの/configターゲットの拒否、Caddy volume名と内部の相対位置の維持も検証した。今回`check.sh`は再実行せず、指定されたPythonテスト全件を検証範囲とした。
 
 ローカルにDocker CLIがないため実imageのbuildと実Composeのconfig検証は未実施。fake CLIによるconfig呼出の確認とは区別する。修正版のZimaOS UIインポート、volume名のinspect、LAN到達、待機CPU、停止時の処理、実backup／翌日の定期成功／再起動は別途Claude側で実施する。

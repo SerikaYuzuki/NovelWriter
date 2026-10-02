@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import subprocess
 import tempfile
 
@@ -40,8 +41,10 @@ FILE_ENV = {'runtime-password': 'FUMINIWA_SYNC_V2_POSTGRES_PASSWORD_FILE',
 EXTERNAL_MOUNTS = {
     'postgres': {'/var/lib/postgresql/data': 'fuminiwa-sync-v2-role-split-data'},
     'edge': {'/data': 'fuminiwa-sync-v2-role-split-caddy-data',
-             '/config': 'fuminiwa-sync-v2-role-split-caddy-config'},
+             '/caddy-config': 'fuminiwa-sync-v2-role-split-caddy-config'},
 }
+SOURCE_TARGETS = {('edge', '/caddy-config'): '/config'}
+SHELL_REFERENCE = re.compile(r'\$[A-Za-z_{0-9@*#?$!-]')
 
 
 class RenderError(ValueError):
@@ -98,7 +101,8 @@ def bind(source, target, read_only=True):
 
 
 def literal(value):
-    # Compose must not expand $FOO or ${...} from inspected concrete values.
+    # Only command substitutions survive ZimaOS's two interpolation passes.
+    # Unsupported dollar references fail the final whole-document check.
     if isinstance(value, str):
         return value.replace('$', '$$')
     if isinstance(value, list):
@@ -106,6 +110,48 @@ def literal(value):
     if isinstance(value, dict):
         return {k: literal(v) for k, v in value.items()}
     return value
+
+
+def variable_free_healthcheck(test):
+    if test[0] == 'CMD-SHELL' and len(test) == 2 and isinstance(test[1], str):
+        command = test[1]
+        if SHELL_REFERENCE.search(command):
+            # Recognize the existing HTTP-200 check only. Inline the exact
+            # substitution, retaining curl flags and its optional || true.
+            # Arbitrary shell programs cannot be rewritten without a parser.
+            match = re.fullmatch(
+                r'\s*code=(?P<quote>"?)\$\((?P<body>.+)\)(?P=quote)\s*;\s*'
+                r'test\s+"\$(?:code|\{code\})"\s+=\s+200\s*', command, re.DOTALL)
+            if not match:
+                raise RenderError('healthcheck variable expression cannot be converted')
+            body = match['body']
+            try:
+                arguments = shlex.split(body)
+            except ValueError:
+                raise RenderError('healthcheck substitution cannot be converted') from None
+            if (SHELL_REFERENCE.search(body) or any(char in body for char in '"`;()')
+                    or not arguments or arguments[0] != 'curl'):
+                raise RenderError('healthcheck substitution cannot be converted')
+            command = 'test "$(' + body + ')" = 200'
+        return ['CMD-SHELL', command]
+    if any(isinstance(part, str) and SHELL_REFERENCE.search(part) for part in test):
+        raise RenderError('healthcheck variable expression cannot be converted')
+    return test
+
+
+def check_no_variable_references(value):
+    if isinstance(value, str):
+        # Explicit requested guards plus rejection of positional/special refs.
+        # The only supported doubled dollar is $$(command substitution).
+        if re.search(r'\$\$[A-Za-z_{]|\$\{|\$\$(?!\()|\$[A-Za-z_0-9@*#?!-]', value):
+            raise RenderError('unsupported variable reference in generated Compose')
+    elif isinstance(value, dict):
+        for key, child in value.items():
+            check_no_variable_references(key)
+            check_no_variable_references(child)
+    elif isinstance(value, list):
+        for child in value:
+            check_no_variable_references(child)
 
 
 def duration(nanoseconds):
@@ -195,6 +241,8 @@ def check_volume_contract(document):
         found = {}
         for entry in service.get('volumes', []):
             if isinstance(entry, dict):
+                if entry.get('target') == '/config':
+                    raise RenderError('mount target /config is reserved by ZimaOS')
                 if entry.get('type') != 'bind':
                     raise RenderError('named volumes must use short syntax')
                 if entry.get('target') in expected:
@@ -203,6 +251,8 @@ def check_volume_contract(document):
             if not isinstance(entry, str):
                 raise RenderError('invalid volume entry')
             parts = entry.split(':')
+            if len(parts) >= 2 and parts[1] == '/config':
+                raise RenderError('mount target /config is reserved by ZimaOS')
             if (len(parts) not in (2, 3) or (len(parts) == 3 and parts[2] != 'ro')
                     or parts[0] not in names or expected.get(parts[1]) != parts[0]
                     or parts[1] in found):
@@ -231,7 +281,7 @@ def settings(item, role):
         raise RenderError('disabled healthcheck')
     result = {'environment': environment(item), 'read_only': host['ReadonlyRootfs'],
               'cap_drop': caps, 'security_opt': host['SecurityOpt'],
-              'healthcheck': {'test': test}}
+              'healthcheck': {'test': variable_free_healthcheck(test)}}
     if host.get('CapAdd'):
         result['cap_add'] = host['CapAdd']
     for source, target in (('Interval', 'interval'), ('Timeout', 'timeout'),
@@ -284,6 +334,12 @@ def render(items, images, server_image, ops_image, ui_password, caddyfile, ui_ho
     for role, repo in (('postgres', 'postgres'), ('edge', 'caddy')):
         services[role]['image'] = digest(images[items[role]['Image']], repo)
     services['server']['image'], services['ops']['image'] = server_image, ops_image
+    # The existing volume still contains caddy/autosave.json at its root-relative
+    # location; move the mount and XDG root together, without copying any data.
+    old_config_home = environment(items['edge']).get('XDG_CONFIG_HOME')
+    if old_config_home not in (None, '/config', '/caddy-config'):
+        raise RenderError('unexpected Caddy configuration home')
+    services['edge']['environment']['XDG_CONFIG_HOME'] = '/caddy-config'
     server_env = environment(items['server'])
     for key in REQUIRED_ENV:
         need(server_env.get(key), 'server environment field ' + key)
@@ -294,7 +350,7 @@ def render(items, images, server_image, ops_image, ui_password, caddyfile, ui_ho
     runtime_dir = None
     allowed = {'postgres': {'/var/lib/postgresql/data'},
                'server': {'/run/secrets/' + name for name in SERVER_SECRETS},
-               'edge': {'/data', '/config', '/etc/caddy/Caddyfile'},
+               'edge': {'/data', '/config', '/caddy-config', '/etc/caddy/Caddyfile'},
                'ops': {'/var/run/docker.sock', '/backups', '/run/secrets/backup-aes256.key',
                        '/run/secrets/backup-config.json', '/run/secrets/ops-ui-password'}}
     for role, item in items.items():
@@ -305,7 +361,15 @@ def render(items, images, server_image, ops_image, ui_password, caddyfile, ui_ho
                 raise RenderError('unsupported mount in ' + role)
     for role, mounts in EXTERNAL_MOUNTS.items():
         for target, name in mounts.items():
-            current = mount(items[role], target, 'volume')
+            source_target = SOURCE_TARGETS.get((role, target), target)
+            # Preparation can also run after a successful app migration.
+            if role == 'edge' and target == '/caddy-config':
+                candidates = [m for m in items[role]['Mounts']
+                              if m['Destination'] in ('/config', '/caddy-config')]
+                if len(candidates) != 1:
+                    raise RenderError('missing or ambiguous Caddy config mount')
+                source_target = candidates[0]['Destination']
+            current = mount(items[role], source_target, 'volume')
             if current.get('Name') != name or type(current.get('RW')) is not bool:
                 raise RenderError('unexpected external volume name/permissions')
             base = name + ':' + target
@@ -362,12 +426,16 @@ def render(items, images, server_image, ops_image, ui_password, caddyfile, ui_ho
     services['ops'].pop('command', None)
     template['x-casaos']['port_map'] = str(ui_port)
     template['x-casaos']['icon'] = f'http://{ui_host}:{ui_port}/icon.svg'
+    check_no_variable_references(template)
+    check_volume_contract(template)
     return template
 
 
 def save_validated(document, destination):
     check_volume_contract(document)
+    check_no_variable_references(document)
     contents = dump_yaml(document)
+    check_no_variable_references(contents)
     destination = Path(destination)
     # Write a private candidate beside the output; only replace after config -q.
     with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', newline='\n',
