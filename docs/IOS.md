@@ -49,3 +49,5 @@ domain/store/workerはNovelKitで共有し、iOS側は入力・navigation・File
 ## サムネイル
 
 作品情報の表紙、人物詳細、世界観ノート詳細から写真（PhotosPicker）またはFilesの画像を選ぶ。対象形状の切り抜きsheetで位置・拡大率を調整後に保存する。置換・削除は画像の長押しmenuと詳細のmenuにあり、削除は確認付き。棚・人物・世界観の行は縮小画像またはSTYLEのplaceholderを表示する。[保存契約](sync/v2/thumbnails.md)。
+
+作品ホームはWorkInfoSummary直後に「進み具合」Sectionを置く。今日の加筆量・純増、幅に収まる最大16週のカレンダー、継続と今週、目標／任意の締切、最近の到達と一覧を共通カードで表示する。カレンダーのタップはカード内の1行へ日別値を表示し、VoiceOverはグリッド全体を要約する。目標設定・変更・削除はsheetから行う。本文画面には文字数も到達通知も常設しない。

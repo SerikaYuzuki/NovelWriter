@@ -182,6 +182,16 @@ macOSは[ContentView](../NovelApp/Application/ContentView.swift)から作品選�
 
 Appleログイン、削除予約・取消API、720時間後の削除workerは実装済み。自宅サーバーで日次暗号化backupを1暦年保持する。予約・取消のアプリ画面と別機器への退避は未対応。通常の再認証・session復旧と独自のアカウント回復サービスは区別する。[AUTH](AUTH.md)と[運用](ACCOUNT_RETENTION_OPERATIONS.md)を参照。
 
+### 6.7 執筆の進み具合（端末内）
+
+`NovelWritingProgress`は日別加筆量・純増、継続、目標、区切りの到達を両Appで共有する。加筆量は手入力の本文変更ごとの`max(0, 新字数−旧字数)`の合計、純増は差分の合計。字数は改行を除く既存`ManuscriptMetrics`規則。既存guardを通ったmacOS／iOSの`updateEpisodeContent`だけが計上し、EditorKit内のhookは追加しない。通常Undo／Redoもこの入口を通り、Redoは再加算する。
+
+AI／MCP編集とそのUndo、open／import／remote install／復元、話の追加・削除・移動は計上しない。AIのネイティブ置換から同期的に届くonTextChangeも、App側の呼出区間で集計だけを抑止し、モデル反映・保存は維持する。全体字数の既存超過は日付なしの「以前に到達」とし、手入力で下から跨いだ区切りだけを一度通知する。標準の1万・3万・5万・10万・15万・20万、以後10万ごとと目標値を区切りにする。
+
+集計キーはpayloadのdocument IDではなく作品WorkIDと端末のローカル暦日（0:00区切り）。直前の話別字数を保持し、通常は変更話の新字数だけを数える。本文差し替え時はinstall／synchronizeで更新し、手入力時にキャッシュ本文との不一致を見つけた場合も文書全体の字数を再同期してから差分を計上する。日別値と到達記録はruntimeと同じlocal rootの独立WAL `writing-progress.sqlite`（user_version=1）、目標・任意の締切は`fuminiwa.progress.goal.<workID>`のUserDefaults JSONへ保存する。初回履歴読込は独立Taskで開始し、起動・本文保存・document transitionは完了を待たない。集計flushだけが履歴読込の完了を待ち、読込中の加筆を一度だけ併合する。未計上値がない保存ではflush Taskを作らない。SQLiteは別actorで3秒ごと／保存時にまとめて書き、macOS終了・iOS backgroundでもflushする。失敗はメモリ保持と再試行へ閉じ込め、本文保存の成功条件や待機条件にしない。端末外への同期・package出力は行わず、v2 schema／wire／fixtureを増やさない。
+
+継続は書いた日数を数え、完了した未執筆日が2日続くと途切れる。今日の未執筆では途切れず、1日休みは継続する。締切までの日数は今日を含め、必要日量は残り字数を日数で割って切り上げる。
+
 ## 7. 未実装・将来の機能
 
 作品全体検索・置換、人物関係グラフ、時系列ビュー、PDF出力、追加provider SDK、Windows実装は現在の利用可能機能に含めない。追加時に目的と受入条件を定める。UIに未実装placeholderを置いて完成に見せない（D-040）。

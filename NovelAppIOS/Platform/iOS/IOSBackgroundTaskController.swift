@@ -92,6 +92,7 @@ extension IOSDocumentStore {
         let flushTask = Task { @MainActor [weak self] in
             guard let self else { return false }
             let flushed = await flushDeviceSyncForBackground(waitForRemote: false)
+            await writingProgress.flush()
             await captureAutomaticSnapshotForBackground()
             return flushed
         }

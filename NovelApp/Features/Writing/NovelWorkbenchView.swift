@@ -132,7 +132,9 @@ struct NovelWorkbenchView: View {
                       appState.selectedEpisodeID == episodeID,
                       appState.snapshotSyncV2AccountScopeToken == account,
                       appState.permitsDocumentInteraction else { return false }
-                return appState.editorCommandSession.applyProofreading(expectedText: manuscript.content, replacement: replacement)
+                return appState.writingProgress.withUncountedEditorChange {
+                    appState.editorCommandSession.applyProofreading(expectedText: manuscript.content, replacement: replacement)
+                }
             },
             saveFeedback: { feedback in
                 await appState.saveAssistantFeedback(feedback, session: session, account: account)
@@ -640,6 +642,7 @@ private struct ProjectInfoView: View {
                         MacThumbnailEditor(owner: ThumbnailOwner(.work, appState.document.id), title: appState.document.title)
                         WorkInfoSummary(document: appState.document, showsCover: false)
                     }
+                    WritingProgressCard(tracker: appState.writingProgress)
                     GroupBox("編集") {
                         VStack(alignment: .leading, spacing: 8) {
                             WorkbenchLabeledField("作品タイトル") {

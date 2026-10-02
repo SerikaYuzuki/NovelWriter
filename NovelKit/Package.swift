@@ -8,6 +8,7 @@ let package = Package(
         .iOS(.v17)
     ],
     products: [
+        .library(name: "NovelWritingProgress", targets: ["NovelWritingProgress"]),
         .library(name: "NovelThumbnail", targets: ["NovelThumbnail"]),
         .library(name: "NovelWritingSupport", targets: ["NovelWritingSupport"]),
         .library(name: "NovelWritingStore", targets: ["NovelWritingStore"]),
@@ -26,6 +27,8 @@ let package = Package(
         .library(name: "PreviewSupport", targets: ["PreviewSupport"])
     ],
     targets: [
+        .target(name: "NovelWritingProgress", dependencies: ["NovelCore", "CSQLite"]),
+        .testTarget(name: "NovelWritingProgressTests", dependencies: ["NovelWritingProgress", "NovelCore"]),
         .target(name: "NovelThumbnail", dependencies: ["NovelCore"]),
         .testTarget(name: "NovelThumbnailTests", dependencies: ["NovelThumbnail", "NovelStorage"]),
         .target(name: "NovelWritingSupport", dependencies: ["NovelCore", "NovelThumbnail"]),
@@ -96,7 +99,7 @@ let package = Package(
         ),
         .target(
             name: "NovelUI",
-            dependencies: ["NovelCore", "NovelThumbnail"]
+            dependencies: ["NovelCore", "NovelThumbnail", "NovelWritingProgress"]
         ),
         .target(
             name: "PreviewSupport",

@@ -99,7 +99,10 @@ extension AppState {
                        let old = current.document.chapters.flatMap(\.episodes).first(where: { $0.id == id }),
                        let new = replacement.chapters.flatMap(\.episodes).first(where: { $0.id == id }), old.content != new.content {
                         if case .captured = self.activeCommittedTextCapture() {
-                            guard self.editorCommandSession.applyProofreading(expectedText: old.content, replacement: new.content) else { throw WritingError.changedTarget }
+                            let applied = self.writingProgress.withUncountedEditorChange {
+                                self.editorCommandSession.applyProofreading(expectedText: old.content, replacement: new.content)
+                            }
+                            guard applied else { throw WritingError.changedTarget }
                         } else {
                             self.editorContentGeneration &+= 1
                         }

@@ -571,6 +571,9 @@ extension AppState {
         guard let chapter = document.chapters.first(where: { $0.id == chapterID }),
               let episode = chapter.episodes.first(where: { $0.id == episodeID }),
               episode.content != content else { return }
+        if let workID = currentSnapshotSyncV2WorkID {
+            writingProgress.manualChange(document: document, workID: workID.rawValue, episodeID: episodeID, content: content)
+        }
         document.updateEpisodeContent(content, for: episodeID, in: chapterID)
         saveCoordinator.markDirty()
         saveCoordinator.scheduleDebouncedSave()

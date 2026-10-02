@@ -212,50 +212,52 @@ private struct EditorAccessoryBar: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Button {
-                requestOperation(.punctuation("……"))
-            } label: {
-                Text("……")
-            }
-            .help("三点リーダーを挿入")
+            HStack(spacing: 8) {
+                Button {
+                    requestOperation(.punctuation("……"))
+                } label: {
+                    Text("……")
+                }
+                .help("三点リーダーを挿入")
 
-            Button {
-                requestOperation(.punctuation("――"))
-            } label: {
-                Text("――")
-            }
-            .help("ダッシュを挿入")
+                Button {
+                    requestOperation(.punctuation("――"))
+                } label: {
+                    Text("――")
+                }
+                .help("ダッシュを挿入")
 
-            Button {
-                requestOperation(.ruby)
-            } label: {
-                Text("ルビ")
-            }
-            .help("なろう形式のルビを追加")
+                Button {
+                    requestOperation(.ruby)
+                } label: {
+                    Text("ルビ")
+                }
+                .help("なろう形式のルビを追加")
 
-            Button {
-                requestOperation(.bouten)
-            } label: {
-                Text("傍点")
+                Button {
+                    requestOperation(.bouten)
+                } label: {
+                    Text("傍点")
+                }
+                .disabled(!commandSession.hasNonEmptySelection)
+                .help("なろう形式の傍点を追加")
             }
-            .disabled(!commandSession.hasNonEmptySelection)
-            .help("なろう形式の傍点を追加")
-
+            .disabled(
+                !isEnabled ||
+                    !commandSession.hasActiveEditorSurface ||
+                    commandSession.isDocumentTransitionPrepared ||
+                    commandSession.pendingCommand != nil ||
+                    pendingOperation != nil ||
+                    notationSheet != nil
+            )
             Spacer()
+            WritingAccessoryProgressView()
         }
         .buttonStyle(.bordered)
         .controlSize(.small)
         .padding(8)
         .background(backgroundColor)
         .overlay(alignment: .top) { Divider() }
-        .disabled(
-            !isEnabled ||
-                !commandSession.hasActiveEditorSurface ||
-                commandSession.isDocumentTransitionPrepared ||
-                commandSession.pendingCommand != nil ||
-                pendingOperation != nil ||
-                notationSheet != nil
-        )
         .onChange(of: commandSession.selectionSnapshot) { _, snapshot in
             guard let pendingOperation, snapshot?.id == pendingOperation.id else { return }
             handleSelectionSnapshot(snapshot, for: pendingOperation)

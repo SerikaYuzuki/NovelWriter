@@ -7,6 +7,7 @@ import NovelSyncV2
 import NovelSyncV2Application
 import NovelSyncV2PortableBridge
 import NovelSyncV2Runtime
+import NovelWritingProgress
 import Observation
 
 enum IOSStartupState: Equatable { case loading, library, ready, recovery(message: String) }
@@ -245,6 +246,7 @@ final class IOSDocumentStore {
     static var testRuntimeConfigurations: [URL: TestRuntimeConfiguration] = [:]
     #endif
 
+    let writingProgress: WritingProgressTracker
     var document: NovelDocument
     var documentCreatedAt: Date
     var documentURL: URL
@@ -441,6 +443,7 @@ final class IOSDocumentStore {
         libraryRoot: URL? = nil,
         runtimeComposition: IOSRuntimeComposition = .currentBuild()
     ) {
+        writingProgress = WritingProgressTracker(defaults: userDefaults)
         self.portableBridge = portableBridge
         self.fileManager = fileManager
         self.userDefaults = userDefaults

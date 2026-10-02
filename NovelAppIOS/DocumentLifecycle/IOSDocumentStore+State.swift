@@ -27,6 +27,9 @@ extension IOSDocumentStore {
               !isDocumentTransitionInProgress,
               !syncV2AccountTransitionInProgress,
               syncV2KeepBothPendingWorkID == nil else { return }
+        if let workID = syncV2ActiveWorkID {
+            writingProgress.synchronize(document, workID: workID.rawValue)
+        }
         localEditGeneration &+= 1
         saveCoordinator.markDirty()
         saveCoordinator.scheduleDebouncedSave()

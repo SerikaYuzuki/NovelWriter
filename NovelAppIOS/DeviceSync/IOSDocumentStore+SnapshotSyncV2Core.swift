@@ -5,6 +5,7 @@ import NovelSyncV2
 import NovelSyncV2Application
 import NovelSyncV2PortableBridge
 import NovelSyncV2Runtime
+import NovelWritingProgress
 import OSLog
 
 private let snapshotSyncV2StartupLogger = Logger(
@@ -87,6 +88,8 @@ extension IOSDocumentStore {
                     Self.testRuntimeApplications[key] = application
                     snapshotSyncV2Application = application
                 }
+                let progressRoot = Self.testRuntimeConfigurations[key]?.localRoot.url ?? configuration.localRoot.url
+                writingProgress.requestConnection(WritingProgressSQLiteStore(root: progressRoot))
                 #else
                 guard case .production = runtimeComposition else {
                     throw SyncV2ApplicationError.invalidRuntimeMode
@@ -102,6 +105,7 @@ extension IOSDocumentStore {
                     snapshotSyncV2Application = try await SnapshotSyncV2Runtime.makeApplication(
                         mode: .production(configuration)
                     )
+                    writingProgress.requestConnection(WritingProgressSQLiteStore(root: configuration.localRoot.url))
                 } else {
                     snapshotSyncV2Application = nil
                 }
