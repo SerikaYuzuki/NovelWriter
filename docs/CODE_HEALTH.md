@@ -57,3 +57,23 @@ NovelThumbnailが予約名・所有者判定とImageIO／CoreGraphicsでの縮�
 作品全体検索・置換と人物の登場話一覧は両OSで共有ロジックを使う。検索結果の件数上限・ページングは設けず、全一致を保持してListで表示するため、非常に多い一致では結果メモリと描画負荷が残る。置換の一時Undoは直前一回だけで、編集済みの話は戻さず明示履歴へ案内する。検索後の対象本文変更は全体中止で統一する。通常のネイティブUndo／Redoの集計は第1弾の一般規則を維持し、置換と検索画面からの「元に戻す」は集計しない。実機IME・Dynamic Type・VoiceOver、二端末同期の受入は別途必要。
 
 表記・記号チェックは端末内の手動解析。Apple CFStringTokenizerの語分割・読みはOS辞書に依存し、同音異義語や固有名詞の誤検出・見逃しがある。人物名は同じ文字種・長さ・1字差・少ない出現に限定し、別の登録人物名は候補から除く。ひらがなの人物読みも同じ文字種内で照合するが、未知語の分割次第では拾えない。無視・件数の多数派表示で利用者が判断し、検出器は差し替え可能にした。ルビの親字は語として調べ、傍点で文字ごとに分かれた表記は語分割の限界が残る。結果の件数上限・ページングは設けず、多数の指摘ではメモリ・List描画負荷が残る。同数では置換を提案せず、3表記以上の組は最少数→最多数を入力する。個別無視は位置・文脈を含むため周辺の編集で再指摘され得る。実機VoiceOver・長時間IME・iPadの受入は別途必要。
+
+## 執筆中の負荷（2026-10-03）
+
+AI記録の同期は両OS共通の`WritingSyncScheduler`へ集約した。AI画面表示中10秒、非表示時5分、前面復帰・表示開始・記録追加後にwakeし、失敗は20秒から最大10分へバックオフする。チャット内の重複10秒ループも除いた。[同期間隔と他端末への影響](WRITING_ASSISTANT.md)。iOSの話一覧は表示・読み上げで同じ`ManuscriptCountCache`値を使う。
+
+Apple M4 Max / macOS、Releaseの合成日本語文書を1字ずつ変更して計測。初回を除き、encode・比較・SQLite transactionは5回、公開checkpoint全体は3回の中央値（ms）。以下はencode再利用を取り下げた後の既存経路の再計測値。phaseと公開全体は別のcheckpointを測るため、中央値の合計は一致しない。
+
+| 文書 | encode | 比較 | SQLite | checkpoint全体 |
+| --- | ---: | ---: | ---: | ---: |
+| 10万字 / 100話 | 8.64 | 22.30 | 31.30 | 62.40 |
+| 30万字 / 150話 | 15.48 | 44.27 | 73.40 | 133.28 |
+| 100万字 / 300話 | 38.72 | 116.07 | 229.94 | 387.56 |
+
+最初の既存経路の公開全体は順に61.79 / 127.78 / 376.23msだった。今回も比較・SQLite書込が支配的で、30万字の全体は20ms目安を超える。変更のない話のencode再利用を試したが、全体時間の安定した短縮は確認できなかったため、今回は見送った。codec・store・cache専用のconformance変更は起点へ戻した。計測ハーネスだけをcacheに依存せず残す。次の候補は比較・SQLite書込の削減（既存snapshot読込・digest/closure検証、transaction内decode/検証とobject照合）。canonical出力、保存の成立条件、世代検査、durabilityの順序を維持する必要がある。CPU時間・実消費電力や実機の温度改善は未計測。
+
+30万字/150行の一覧字数処理は、既存の2回走査7.80msから1回のキャッシュ参照0.037msへ（10回中央値、変更話1件、warm cache。SwiftUI描画全体は含めない）。指定iPhone 17 Pro Maxシミュレータで10万字の話は、通常文字入力のshouldChange 0.005ms、didChange 2.308ms、合計中央値2.314ms・最大2.802ms（5回warm-up後20回）。UITextStorageの置換は別に0.035ms。実キーボード・IME・App側モデル反映・レイアウト全体は含まない。5ms目安を下回るため、EditorKitの全文取得・比較は測定だけとし、実装を変更しない。実機と長時間IME・Undo、二端末AI同期は別途受入する。
+
+再計測は`cd NovelKit && FUMINIWA_TYPING_BENCHMARK=1 swift test -c release --filter 'typingEnergyCheckpointBenchmark|typingEnergyOutlineCountBenchmark'`。iOSのdelegate計測はEditorKitの`IOSTextAdapterIntegrationTests`に含む（destinationは指定端末）。
+
+cache取り下げ後はNovelKit全744件、checkpoint計測1件、macOS App全231件、指定Pro MaxのiOS App全189件、Python/Swift/Rustのconformance、SwiftFormat/SwiftLintで成功。両OSのAppテストは初回実行で通過した。前回のiOS Appテストは初回に検索遷移とsidebarの2件が失敗し、無変更の再実行では成功した。再現性の揺れの原因は未特定。PostgreSQL integrationは既存ゲートの方針により未実施。

@@ -15,9 +15,10 @@ struct IOSAssistantFeedbackOutline: View {
     var body: some View {
         let session = store.currentDocumentSessionToken
         let account = store.snapshotSyncV2AccountScope
-        AssistantFeedbackList(records: store.assistantFeedback, selection: $selection, usesNavigationLinks: usesNavigationLinks) { record in
+        AssistantFeedbackList(records: store.assistantFeedback, selection: $selection, usesNavigationLinks: usesNavigationLinks, writingHost: store.writingAssistantHost) { record in
             guard let session else { return false }
             return await store.deleteAssistantFeedback(record, session: session, account: account)
         }.id("\(String(describing: session))-\(account)")
+            .modifier(WritingSyncVisibility(host: store.writingAssistantHost))
     }
 }

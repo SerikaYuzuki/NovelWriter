@@ -87,6 +87,7 @@ struct AssistantPanelView: View {
                 .frame(maxHeight: .infinity)
             }
         }
+        .modifier(WritingSyncVisibility(host: writingHost))
         .padding(16)
         .frame(minWidth: 300, idealWidth: 360, maxWidth: .infinity, maxHeight: .infinity)
         .background(FuminiwaColor.paper.color)
@@ -154,7 +155,7 @@ struct AssistantPanelView: View {
                 let preferences = AssistantPreferences(defaults: defaults)
                 let configuration: AssistantConfiguration
                 if let writingHost {
-                    try? await writingHost.synchronize()
+                    try? await writingHost.synchronizeNow()
                     try await WritingPrompts.migrateIfNeeded(host: writingHost, defaults: defaults)
                     let prompt = try await WritingPrompts.effective(host: writingHost, defaults: defaults, purpose: chosenPurpose)
                     configuration = try AssistantConfiguration(endpoint: preferences.endpoint, model: preferences.model(chosenPurpose),

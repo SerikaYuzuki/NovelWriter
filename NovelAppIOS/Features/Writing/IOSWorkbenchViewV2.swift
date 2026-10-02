@@ -73,7 +73,6 @@ struct IOSAdaptiveWritingView: View {
             }
         }
         .modifier(IOSWritingToolPresentationModifier(store: store, destination: $toolDestination))
-        .modifier(WritingSyncPulse(host: store.writingAssistantHost))
         .environment(\.horizontalSizeClass, effectiveHorizontalSizeClass)
         .onAppear {
             if presentedHorizontalSizeClass == nil {
@@ -199,6 +198,7 @@ struct IOSAdaptiveWritingView: View {
             )
         case .feedback:
             AssistantFeedbackDetail(record: store.assistantFeedback.first { $0.id == selectedFeedbackID })
+                .modifier(WritingSyncVisibility(host: store.writingAssistantHost))
         case .references:
             IOSReferenceDetailView(
                 store: store,
@@ -408,6 +408,7 @@ private struct IOSEpisodeOutlineRow: View {
     let episode: Episode
 
     var body: some View {
+        let count = ManuscriptCountCache.shared.count(episode)
         HStack(spacing: 16) {
             Image(systemName: "doc.text")
                 .foregroundStyle(FuminiwaColor.accent.color)
@@ -416,7 +417,7 @@ private struct IOSEpisodeOutlineRow: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(episode.title.isEmpty ? "名称未設定の話" : episode.title)
                     .foregroundStyle(.primary)
-                Text("\(ManuscriptMetrics.countCharacters(in: episode.content))字")
+                Text("\(count)字")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
@@ -432,7 +433,7 @@ private struct IOSEpisodeOutlineRow: View {
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
         .accessibilityLabel(episode.title.isEmpty ? "名称未設定の話" : episode.title)
-        .accessibilityValue("\(ManuscriptMetrics.countCharacters(in: episode.content))字")
+        .accessibilityValue("\(count)字")
         .accessibilityHint("本文を開きます。")
     }
 }
@@ -452,6 +453,7 @@ struct IOSWorkbenchView: View {
                 destination(route)
             }
         }
+        .modifier(WritingSyncPulse(host: store.writingAssistantHost))
         .onAppear {
             if let session = store.currentDocumentSessionToken {
                 navigation.documentDidChange(to: session)
