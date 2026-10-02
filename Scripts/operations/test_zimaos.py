@@ -79,6 +79,19 @@ class RenderTests(unittest.TestCase):
             self.assertEqual(document['services'][role]['container_name'], name)
             self.assertEqual(document['services'][role]['restart'], 'unless-stopped')
         self.assertTrue(all(v['external'] for v in document['volumes'].values()))
+        self.assertEqual(document['volumes'], {
+            'fuminiwa-sync-v2-role-split-' + suffix: {
+                'name': 'fuminiwa-sync-v2-role-split-' + suffix, 'external': True}
+            for suffix in ('data', 'caddy-data', 'caddy-config')})
+        self.assertEqual(document['services']['postgres']['volumes'],
+                         ['fuminiwa-sync-v2-role-split-data:/var/lib/postgresql/data'])
+        self.assertEqual(document['services']['edge']['volumes'][:2],
+                         ['fuminiwa-sync-v2-role-split-caddy-data:/data',
+                          'fuminiwa-sync-v2-role-split-caddy-config:/config'])
+        self.assertEqual(document['services']['edge']['volumes'][-1]['type'], 'bind')
+        self.assertTrue(all(v['type'] == 'bind' for v in document['services']['ops']['volumes']))
+        self.assertEqual(document['services']['server']['healthcheck']['interval'], '5s')
+        self.assertEqual(document['services']['server']['healthcheck']['timeout'], '5s')
         self.assertEqual(document['services']['postgres']['image'], 'postgres@sha256:' + 'a' * 64)
         self.assertEqual(document['services']['edge']['image'], 'caddy@sha256:' + 'b' * 64)
         self.assertEqual(document['services']['server']['image'], SERVER_REF)
@@ -121,7 +134,8 @@ class RenderTests(unittest.TestCase):
                 command = run.call_args.args[0]
                 self.assertEqual(command[:4], ['docker', 'compose', '--env-file', '/dev/null'])
                 self.assertEqual(command[-2:], ['config', '-q'])
-                self.assertEqual(set(json.loads(destination.read_text())['services']), set(render.NAMES))
+                self.assertEqual(destination.read_text(), render.dump_yaml(self.document()))
+                self.assertTrue(destination.read_text().startswith('"services":\n'))
             self.assertEqual([p.name for p in Path(temporary).iterdir()], ['compose.yml'])
 
     def test_cli_uses_fake_docker_inspect_json_and_config_validation(self):
@@ -141,7 +155,7 @@ class RenderTests(unittest.TestCase):
                                      '--server-image', SERVER_REF, '--ops-image', OPS_REF,
                                      '--output', str(destination)], capture_output=True, env=env)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertEqual(json.loads(destination.read_text()), self.document())
+            self.assertEqual(destination.read_text(), render.dump_yaml(self.document()))
             # A missing secret mount fails without ever printing inspect contents.
             data[render.NAMES['server']][0]['Mounts'].pop()
             fixture_path.write_text(json.dumps(data))
@@ -196,7 +210,89 @@ else:
             self.assertIn(['push', SERVER_REF], args)
             self.assertIn(['push', OPS_REF], args)
             self.assertTrue(all(a[0] not in ('stop', 'start', 'rename', 'rm', 'update', 'run') for a in args))
-            self.assertEqual(json.loads(destination.read_text()), self.document())
+            self.assertEqual(destination.read_text(), render.dump_yaml(self.document()))
+
+    def test_yaml_output_quotes_strings_and_preserves_scalar_types(self):
+        document = {'services': {'ops': {
+            'environment': {'ON': 'yes', 'NUMBER': '0123', 'EMPTY': '',
+                            'SPECIAL': 'quote" slash\\\nnew: node # comment\t${VALUE}',
+                            'UNICODE': 'ふみにわ🌱\x85\u2028\u2029\x7f'},
+            'volumes': ['external:/data:ro', {'type': 'bind', 'source': '/a: b#c', 'read_only': True}],
+            'healthcheck': {'interval': '5s', 'retries': 12},
+            'read_only': False, 'null': None, 'empty_map': {}, 'empty_list': []}}}
+        expected = r'''"services":
+  "ops":
+    "environment":
+      "ON": "yes"
+      "NUMBER": "0123"
+      "EMPTY": ""
+      "SPECIAL": "quote\" slash\\\nnew: node # comment\t${VALUE}"
+      "UNICODE": "ふみにわ🌱\u0085\u2028\u2029\u007f"
+    "volumes":
+      - "external:/data:ro"
+      -
+        "type": "bind"
+        "source": "/a: b#c"
+        "read_only": true
+    "healthcheck":
+      "interval": "5s"
+      "retries": 12
+    "read_only": false
+    "null": null
+    "empty_map": {}
+    "empty_list": []
+'''
+        self.assertEqual(render.dump_yaml(document), expected)
+        for invalid in ({1: 'key'}, {'value': 1.5}, {'value': float('nan')}, {'value': '\ud800'}):
+            with self.subTest(invalid=invalid), self.assertRaises(render.RenderError):
+                render.dump_yaml(invalid)
+
+    def test_read_only_named_volume_uses_short_ro_suffix(self):
+        items, images = fixture()
+        items['postgres']['Mounts'][0]['RW'] = False
+        document = self.document(items, images)
+        self.assertEqual(document['services']['postgres']['volumes'],
+                         ['fuminiwa-sync-v2-role-split-data:/var/lib/postgresql/data:ro'])
+        render.check_volume_contract(document)
+
+    def test_self_check_rejects_long_volume_wrong_names_and_bind_substitution(self):
+        original = self.document()
+        name = 'fuminiwa-sync-v2-role-split-data'
+        mutations = [lambda d: d['services']['postgres'].update(volumes=[{'type': 'volume', 'source': name, 'target': '/var/lib/postgresql/data'}]),
+                     lambda d: d['volumes'][name].update(name='wrong-name'),
+                     lambda d: d['volumes'].update(db=d['volumes'].pop(name)),
+                     lambda d: d['volumes'][name].update(external=False),
+                     lambda d: d['volumes'][name].update(external=1),
+                     lambda d: d['volumes'].update({name: None}),
+                     lambda d: d['services']['postgres'].update(volumes=[]),
+                     lambda d: d['services']['postgres'].update(volumes=['db:/var/lib/postgresql/data']),
+                     lambda d: d['services']['postgres'].update(volumes=[{'type': 'bind', 'source': '/tmp/casaos/db', 'target': '/var/lib/postgresql/data'}])]
+        for mutate in mutations:
+            document = copy.deepcopy(original)
+            mutate(document)
+            with self.subTest(mutation=mutate), tempfile.TemporaryDirectory() as temporary:
+                output = Path(temporary) / 'compose.yml'
+                output.write_text('previous')
+                with patch.object(render.subprocess, 'run') as compose:
+                    with self.assertRaises(render.RenderError):
+                        render.save_validated(document, output)
+                    compose.assert_not_called()
+                self.assertEqual(output.read_text(), 'previous')
+                self.assertEqual(list(Path(temporary).iterdir()), [output])
+
+    def test_health_durations_are_readable_exact_and_never_ns(self):
+        for value, expected in ((5_000_000_000, '5s'), (300_000_000_000, '5m'),
+                                (3_600_000_000_000, '1h'), (1_500_000_000, '1.5s'),
+                                (250_000_000, '250ms'), (1000, '1us'), (123, '0.123us')):
+            self.assertEqual(render.duration(value), expected)
+        for value in (0, -1, True, '5000000000', 1.5):
+            with self.assertRaises(render.RenderError):
+                render.duration(value)
+        items, images = fixture()
+        items['server']['Config']['Healthcheck'].update(StartPeriod=10_000_000_000, StartInterval=2_000_000_000)
+        document = self.document(items, images)
+        self.assertEqual(document['services']['server']['healthcheck']['start_period'], '10s')
+        self.assertEqual(document['services']['server']['healthcheck']['start_interval'], '2s')
 
 
 if __name__ == '__main__':

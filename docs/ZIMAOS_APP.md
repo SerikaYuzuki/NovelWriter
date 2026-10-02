@@ -9,19 +9,48 @@
 | 要素 | 場所・役割 |
 | --- | --- |
 | 管理画面 | `SyncServerV2/ops/ops_web.py`。Python標準ライブラリ、既定8790。cronは引き続きSupercronic／PID 1 |
-| アプリ雛形 | `SyncServerV2/zimaos/app-compose.template.yml`。JSON互換のYAML、4サービスとexternal volume／ネットワーク／x-casaos |
-| 生成 | `SyncServerV2/zimaos/render_app_compose.py`。旧コンテナとimageのinspect、具体値の埋込、`docker compose config -q` |
+| アプリ雛形 | `SyncServerV2/zimaos/app-compose.template.yml`。内部読込用のJSON、4サービスとexternal volume／ネットワーク／x-casaos |
+| 生成 | `SyncServerV2/zimaos/render_app_compose.py`。旧コンテナとimageのinspect、具体値の埋込、文字列をクォートしたblock YAML出力、volume自己検査、`docker compose config -q` |
 | 準備 | `SyncServerV2/zimaos/prepare.sh`。opsだけをbuild、稼働serverのimage IDをtag／push、compose生成 |
 | レジストリ | アプリ外の`fuminiwa-registry`。`registry:2`、`127.0.0.1:5000:5000`、volume `fuminiwa-registry-data`、restart unless-stopped |
 
 2026-10-03にClaudeがZimaOS **v1.7.0**で確認した条件（利用者からの引継ぎ）：
 
 - UIインポートは常にpullし、`pull_policy: never`を無視する。ローカルのみのimageは使えない。loopbackレジストリからのpullは成功済み。
-- file-backed top-level secrets（実際にはbind）、external volume、service_healthy依存、unless-stoppedは試験済み。
+- file-backed top-level secrets（実際にはbind）、短い書式のexternal volume、service_healthy依存、unless-stoppedは試験済み。長い書式のnamed volumeは以下の本番試験で失敗した。
 - top-level nameは無視され、project名はランダムになる。全サービスにcontainer_nameを指定する。
 - `.env`は読まれない。生成物には具体値を入れる。Composeの`$`は`$$`にescapeして、元の値を保存する。
 - 保存先は`/var/lib/casaos/apps/<random>/docker-compose.yml`（root 0600）。インストール・更新・削除はZimaOS UIで行う。そこへ直接書き込まない。
 - reckyは999:1000、dockerグループ、sudo不可。既存secretをホストから読まず、必要な新しいコピーだけrootの一時コンテナで作成する。
+
+### 本番インポートで判明したvolumeの書換え
+
+2026-10-03の利用者報告による実測。JSON形式の生成composeでnamed volumeを長い書式（`type: volume`／`source: db`等）にすると、ZimaOSがbindへ書き換えた。
+
+| 対象 | インポート後のbind先 | 結果 |
+| --- | --- | --- |
+| postgresの`db` | `/tmp/casaos-compose-app-<n>/db` | 空のdirectoryを参照し、postgresが初期化できず再起動ループ |
+| edgeの`caddy-data` | `/tmp/casaos-compose-app-<n>/caddy-data` | 既存Caddy volumeを参照しなかった |
+| edgeの`caddy-config` | `/DATA/AppData/postgres/config` | 既存Caddy volumeを参照しなかった |
+
+長い書式の`type: bind`（secret、Caddyfile、opsの各bind）とtop-level `secrets: file:`は正しく扱われた。一方、事前のYAML試験アプリでは`probe-data:/data:ro`と`external: true`／`name: fuminiwa-casaos-probe-data`の組合せで、既存volumeがそのままマウントされた。この比較だけでは、JSON形式と長い書式それぞれの影響を切り分けられない。今回の修正では両方を変更する。
+
+インポート用composeはblock YAMLにし、named volumeを短い書式に限定する。top-level volumesのkeyとnameは既存の外部volume名そのものに揃える。文字列はすべてdouble quoteで囲み、改行・引用符・非表示文字をescapeする。healthcheck時間は`5s`／`5m`等で表し、nsの精度は小数表記で保つ。
+
+```yaml
+"services":
+  "postgres":
+    "volumes":
+      - "fuminiwa-sync-v2-role-split-data:/var/lib/postgresql/data"
+"volumes":
+  "fuminiwa-sync-v2-role-split-data":
+    "name": "fuminiwa-sync-v2-role-split-data"
+    "external": true
+```
+
+生成物の自己検査で、長い書式のnamed volume、名前の不一致、named volumeのbindへの置換・欠落を拒否する。`docker compose config -q`の成功だけではZimaOSがインポート後にどう書き換えるかを保証できない。再インポート後には、postgresの`/var/lib/postgresql/data`、edgeの`/data`／`/config`をinspectし、**Typeがvolume、Nameが期待する既存volume名**であることを先に確認する。bindになっていたら新構成を成功扱いにしない。
+
+今回のロールバック実績について、切戻し後のhealth、公開／LAN capabilities、backupの確認結果は本依頼の報告に含まれていない。以下の切戻し手順と実際の実行結果を区別し、確認結果の引継ぎ待ちとして記録する。Codexは本番へ接続しておらず、復旧完了を確認していない。
 
 レジストリは既設なので作り直さない。以下は将来の復旧時の構成例であり、移行コマンドには含めない：
 
@@ -107,7 +136,7 @@ SyncServerV2/zimaos/prepare.sh role-split-20261003 ops-ui-20261003 \
 docker compose --env-file /dev/null -f "$base/ops/zimaos-app-compose.yml" config -q
 ```
 
-出力は0600。server環境（imageの既定値も含む）・secretのホストパス・既存volumeをinspectから取得し、postgres／caddyは稼働imageのRepoDigestで固定する。serverのタグが旧image IDと一致しない、inline credential、secret mount／必須設定／health／安全設定の欠落、想定外のmount、Compose検証失敗では出力を置換しない。secret内容と`.env`は読まない。既存出力は検証成功時のみatomicに置換する。
+出力は0600のblock YAML。server環境（imageの既定値も含む）・secretのホストパス・既存volumeをinspectから取得し、postgres／caddyは稼働imageのRepoDigestで固定する。named volumeの短い書式はinspectのRWも引き継ぎ、読み取り専用なら`:ro`を付ける。serverのタグが旧image IDと一致しない、inline credential、secret mount／必須設定／health／安全設定の欠落、想定外のmount、volume自己検査・Compose検証失敗では出力を置換しない。secret内容と`.env`は読まない。既存出力は検証成功時のみatomicに置換する。
 
 生成物には非公開の配置・認証client ID等が含まれる。Gitへ入れず、UIインポートにだけ使う。UI用port等を変える場合は直接生成スクリプトの`--ui-port`／`--ui-host`／`--ui-password-file`／`--caddyfile`を指定する。
 
@@ -143,6 +172,9 @@ docker rename fuminiwa-sync-v2-ops fuminiwa-sync-v2-ops-legacy
 for name in fuminiwa-sync-v2-role-split-postgres fuminiwa-sync-v2-role-split-server fuminiwa-sync-v2-role-split-edge fuminiwa-sync-v2-ops; do
   docker inspect "$name" --format '{{.Name}} {{.State.Status}} {{.State.Health.Status}} {{.HostConfig.RestartPolicy.Name}}'
 done
+# named volumeがbindへ書き換えられていないことを先に確認。
+docker inspect fuminiwa-sync-v2-role-split-postgres fuminiwa-sync-v2-role-split-edge \
+  --format '{{.Name}}{{range .Mounts}}{{printf "\n"}}{{.Destination}} {{.Type}} {{.Name}}{{end}}'
 curl --fail --silent --show-error --output /dev/null --write-out '%{http_code}\n' \
   -H 'x-fuminiwa-client-version: 0.1.0' https://sync.serika.work/v1/auth/capabilities
 # <CA.pem>を実際に信頼するCaddy CAの公開証明書へ置き換える。-kで代用しない。
@@ -209,4 +241,8 @@ python3 -m unittest discover -s Scripts/operations -p 'test_*.py' -v
 docker build -f SyncServerV2/ops/Dockerfile -t fuminiwa-sync-v2-ops:test .
 ```
 
-fake Dockerテストは認証、CSRF、操作の限定、秘密の非表示、Web／CLIの排他、inspect生成、欠落拒否、秘密を読まないこと、volume／digest／container_name、config検証前のatomic置換、prepareの操作範囲を扱う。2026-10-03のローカル検証では既存backup／opsを含む31テストと`./Scripts/check.sh`全段が成功した。ローカルにDocker CLIがないため実imageのbuildと実Composeのconfig検証は未実施。fake CLIによるconfig呼出の確認とは区別する。ZimaOS UIインポート、LAN到達、待機CPU、停止時の処理、実backup／翌日の定期成功／再起動は別途Claude側で実施する。
+fake Dockerテストは認証、CSRF、操作の限定、秘密の非表示、Web／CLIの排他、inspect生成、欠落拒否、秘密を読まないこと、volume／digest／container_name、config検証前のatomic置換、prepareの操作範囲を扱う。初回実装のローカル検証では既存backup／opsを含む31テストと`./Scripts/check.sh`全段が成功した。
+
+本番インポート後のvolume修正では、YAML出力・短い書式・外部名とkeyの一致・クォート・時間表記・自己検査の拒否ケースを追加し、既存分を含む35テストが成功した。生成compose全体と特殊文字を独立したYAMLパーサーでも読めることを確認した。この追加確認にだけ一時的なPyYAML環境を使い、生成スクリプト・単体テスト・imageへの依存追加は行っていない。今回`check.sh`は再実行せず、指定されたPythonテスト全件を検証範囲とした。
+
+ローカルにDocker CLIがないため実imageのbuildと実Composeのconfig検証は未実施。fake CLIによるconfig呼出の確認とは区別する。修正版のZimaOS UIインポート、volume名のinspect、LAN到達、待機CPU、停止時の処理、実backup／翌日の定期成功／再起動は別途Claude側で実施する。

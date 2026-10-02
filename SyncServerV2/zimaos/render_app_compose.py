@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Inspect old containers, preserve runtime settings, validate a concrete Compose.
 
-The template/output use JSON-compatible YAML, avoiding a YAML dependency.
+The template is JSON; output is block YAML with quoted strings, stdlib only.
 No secret contents, .env, source compose or CasaOS app files are read.
 """
 import argparse
@@ -37,6 +37,11 @@ FILE_ENV = {'runtime-password': 'FUMINIWA_SYNC_V2_POSTGRES_PASSWORD_FILE',
             'auth-token-hmac-key': 'FUMINIWA_AUTH_TOKEN_HMAC_KEY_FILE',
             'apple-sign-in-key.p8': 'FUMINIWA_APPLE_PRIVATE_KEY_FILE',
             'google-client-secret': 'FUMINIWA_GOOGLE_CLIENT_SECRET_FILE'}
+EXTERNAL_MOUNTS = {
+    'postgres': {'/var/lib/postgresql/data': 'fuminiwa-sync-v2-role-split-data'},
+    'edge': {'/data': 'fuminiwa-sync-v2-role-split-caddy-data',
+             '/config': 'fuminiwa-sync-v2-role-split-caddy-config'},
+}
 
 
 class RenderError(ValueError):
@@ -103,6 +108,110 @@ def literal(value):
     return value
 
 
+def duration(nanoseconds):
+    if type(nanoseconds) is not int or nanoseconds <= 0:
+        raise RenderError('invalid healthcheck duration')
+    for unit, scale in (('h', 3600 * 10**9), ('m', 60 * 10**9)):
+        if nanoseconds % scale == 0:
+            return str(nanoseconds // scale) + unit
+    for unit, digits in (('s', 9), ('ms', 6), ('us', 3)):
+        scale = 10**digits
+        if nanoseconds >= scale or unit == 'us':
+            whole, fraction = divmod(nanoseconds, scale)
+            suffix = ('.' + f'{fraction:0{digits}d}'.rstrip('0')) if fraction else ''
+            return str(whole) + suffix + unit
+
+
+def yaml_quote(value):
+    # JSON escapes are valid in YAML double quotes. Keep Unicode characters
+    # (including non-BMP characters) intact, but escape YAML 1.1 line breaks
+    # and non-printable characters so no scalar can create another YAML node.
+    if any(0xD800 <= ord(char) <= 0xDFFF for char in value):
+        raise RenderError('invalid Unicode scalar')
+    quoted = json.dumps(value, ensure_ascii=False)
+    return re.sub(r'[\x7f-\x9f\u2028\u2029\ufffe\uffff]',
+                  lambda match: f'\\u{ord(match[0]):04x}', quoted)
+
+
+def dump_yaml(document):
+    """Small block-YAML emitter for JSON-shaped Compose data; no implicit strings."""
+    lines = []
+
+    def scalar(value):
+        if isinstance(value, str):
+            return yaml_quote(value)
+        if value is None:
+            return 'null'
+        if type(value) is bool:
+            return 'true' if value else 'false'
+        if type(value) is int:
+            return str(value)
+        if value == {} and isinstance(value, dict):
+            return '{}'
+        if value == [] and isinstance(value, list):
+            return '[]'
+        raise RenderError('unsupported YAML value type')
+
+    def emit(value, indent=0):
+        prefix = ' ' * indent
+        if isinstance(value, dict) and value:
+            for key, child in value.items():
+                if not isinstance(key, str):
+                    raise RenderError('YAML keys must be strings')
+                head = prefix + yaml_quote(key) + ':'
+                if isinstance(child, (dict, list)) and child:
+                    lines.append(head)
+                    emit(child, indent + 2)
+                else:
+                    lines.append(head + ' ' + scalar(child))
+        elif isinstance(value, list) and value:
+            for child in value:
+                if isinstance(child, (dict, list)) and child:
+                    lines.append(prefix + '-')
+                    emit(child, indent + 2)
+                else:
+                    lines.append(prefix + '- ' + scalar(child))
+        else:
+            lines.append(prefix + scalar(value))
+
+    emit(document)
+    return '\n'.join(lines) + '\n'
+
+
+def check_volume_contract(document):
+    """Fail closed before publishing if a template regresses CasaOS mounts."""
+    names = {name for mounts in EXTERNAL_MOUNTS.values() for name in mounts.values()}
+    volumes = document.get('volumes', {})
+    if not isinstance(volumes, dict) or set(volumes) != names or any(
+                                    not isinstance(volumes[name], dict)
+                                    or set(volumes[name]) != {'name', 'external'}
+                                    or volumes[name]['name'] != name
+                                    or volumes[name]['external'] is not True for name in names):
+        raise RenderError('external volume keys/names differ from expected names')
+    if not set(EXTERNAL_MOUNTS).issubset(document['services']):
+        raise RenderError('missing external volume service')
+    for role, service in document['services'].items():
+        expected = EXTERNAL_MOUNTS.get(role, {})
+        found = {}
+        for entry in service.get('volumes', []):
+            if isinstance(entry, dict):
+                if entry.get('type') != 'bind':
+                    raise RenderError('named volumes must use short syntax')
+                if entry.get('target') in expected:
+                    raise RenderError('expected named volume replaced by bind')
+                continue
+            if not isinstance(entry, str):
+                raise RenderError('invalid volume entry')
+            parts = entry.split(':')
+            if (len(parts) not in (2, 3) or (len(parts) == 3 and parts[2] != 'ro')
+                    or parts[0] not in names or expected.get(parts[1]) != parts[0]
+                    or parts[1] in found):
+                raise RenderError('unexpected short volume reference')
+            found[parts[1]] = parts[0]
+        if found != expected:
+            raise RenderError('missing expected external volume mount')
+
+
 def settings(item, role):
     config, host = item['Config'], item['HostConfig']
     if host.get('Privileged') or host.get('NetworkMode') == 'host':
@@ -128,7 +237,7 @@ def settings(item, role):
     for source, target in (('Interval', 'interval'), ('Timeout', 'timeout'),
                            ('StartPeriod', 'start_period'), ('StartInterval', 'start_interval')):
         if health.get(source):
-            result['healthcheck'][target] = str(health[source]) + 'ns'
+            result['healthcheck'][target] = duration(health[source])
     if health.get('Retries'):
         result['healthcheck']['retries'] = health['Retries']
     if host.get('Tmpfs'):
@@ -194,11 +303,15 @@ def render(items, images, server_image, ops_image, ui_password, caddyfile, ui_ho
                 continue
             if m['Destination'] not in allowed[role]:
                 raise RenderError('unsupported mount in ' + role)
-    for role, target, name in (('postgres', '/var/lib/postgresql/data', 'fuminiwa-sync-v2-role-split-data'),
-                                ('edge', '/config', 'fuminiwa-sync-v2-role-split-caddy-config'),
-                                ('edge', '/data', 'fuminiwa-sync-v2-role-split-caddy-data')):
-        if mount(items[role], target, 'volume').get('Name') != name:
-            raise RenderError('unexpected external volume')
+    for role, mounts in EXTERNAL_MOUNTS.items():
+        for target, name in mounts.items():
+            current = mount(items[role], target, 'volume')
+            if current.get('Name') != name or type(current.get('RW')) is not bool:
+                raise RenderError('unexpected external volume name/permissions')
+            base = name + ':' + target
+            services[role]['volumes'] = [base + ('' if current['RW'] else ':ro')
+                                         if entry == base else entry
+                                         for entry in services[role]['volumes']]
     for name in SERVER_SECRETS:
         target = '/run/secrets/' + name
         m = mount(items['server'], target, 'bind')
@@ -253,13 +366,15 @@ def render(items, images, server_image, ops_image, ui_password, caddyfile, ui_ho
 
 
 def save_validated(document, destination):
+    check_volume_contract(document)
+    contents = dump_yaml(document)
     destination = Path(destination)
     # Write a private candidate beside the output; only replace after config -q.
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', prefix='.app-compose-',
+    with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', newline='\n',
+                                     suffix='.yml', prefix='.app-compose-',
                                      dir=destination.parent, delete=False) as candidate:
         path = Path(candidate.name)
-        json.dump(document, candidate, ensure_ascii=False, indent=2)
-        candidate.write('\n')
+        candidate.write(contents)
     try:
         result = subprocess.run(['docker', 'compose', '--env-file', '/dev/null', '-f', str(path),
                                  'config', '-q'], capture_output=True, timeout=60, check=False)
