@@ -39,7 +39,7 @@ extension AppState {
 
     func performSnapshotDataMutation(
         expectedSession: DocumentSessionToken? = nil,
-        operation: () async -> Bool
+        operation: @MainActor () async -> Bool
     ) async -> Bool {
         let session = expectedSession ?? documentSessionToken
         let account = snapshotSyncV2AccountScopeToken

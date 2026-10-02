@@ -55,6 +55,8 @@ toolbar非表示・項目削除後も、章・人物・世界観・プロット�
 
 話内検索は現在の話本文だけが対象。標準toolbar検索欄を使い、Cmd+Fでfocus、Return／Cmd+Gで次、Shift+Cmd+Gで前へ進む。話切替で結果カーソルをresetする。Outlineにfocusがある場合はCmd+FをOutline絞り込みへ送り、queryを共有しない。
 
+編集menuの「作品全体を検索…」（⌘⇧F）はOutline列を作品全体の本文検索へ切り替える。検索欄・置換欄・章→話別の件数と文脈を表示し、本文を見たまま一致箇所へジャンプできる。Esc／閉じるで通常Outlineへ戻る。入口はmenuにあり、toolbar項目は追加しない。話内検索（⌘F／workbench.search）とOutline絞り込みのquery・focus分岐は独立して維持する。
+
 検索欄は最小160pt、目安260pt、最大320pt。該当なしは一時表示やaccessibility通知で示し、toolbarを二段にしない。
 
 ## 7. 操作の安全境界

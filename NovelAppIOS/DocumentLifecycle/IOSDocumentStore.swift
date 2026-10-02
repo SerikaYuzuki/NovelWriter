@@ -341,6 +341,10 @@ final class IOSDocumentStore {
         )
     }
 
+    let workSearch = WorkSearchSession()
+    var workTextSelectionRequest: EditorSelectionRequest?
+    var workTextSelectionToken: IOSEpisodeEditingToken?
+
     let editorCommandSession: EditorCommandSession
     /// The only package boundary owned by the iOS app. Normal document
     /// lifecycle and attachment editing never receive a package repository;

@@ -133,6 +133,8 @@ final class AppState {
         }
     }
 
+    let workSearch = WorkSearchSession()
+
     var outlinePresentation = OutlinePresentationState()
     var attachments: [Attachment]
     @ObservationIgnored var snapshotSyncV2Attachments: [SyncAttachment]

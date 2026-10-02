@@ -234,6 +234,7 @@ struct IOSAdaptiveWritingView: View {
 }
 
 private struct IOSWritingOutlineList: View {
+    @State private var showingWorkSearch = false
     let store: IOSDocumentStore
     let openEpisode: (ChapterID, EpisodeID) -> Void
 
@@ -256,6 +257,7 @@ private struct IOSWritingOutlineList: View {
             }
         }
         .navigationTitle("執筆")
+        .navigationDestination(isPresented: $showingWorkSearch) { IOSWorkSearchView(store: store) }
         .overlay {
             if store.document.chapters.isEmpty {
                 ContentUnavailableView {
@@ -281,6 +283,15 @@ private struct IOSWritingOutlineList: View {
                 } label: {
                     Label("章を追加", systemImage: "plus")
                 }
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    let scope = store.workSearchScope
+                    Task {
+                        guard await store.prepareForEditorSurfaceDeparture(), store.workSearchScope == scope else { return }
+                        showingWorkSearch = true
+                    }
+                } label: { Label("作品全体を検索", systemImage: "text.magnifyingglass") }
             }
             ToolbarItem(placement: .topBarTrailing) {
                 EditButton()
@@ -559,6 +570,7 @@ struct IOSEditorPane: View {
                         editorContentGeneration: editingToken.editorContentGeneration
                     ),
                     initialText: episode.content,
+                    selectionRequest: store.currentWorkTextSelectionRequest,
                     commandSession: store.editorCommandSession,
                     selectionContextMenuCommands: [
                         EditorSelectionContextMenuCommand(title: "選択範囲をコピー", systemImageName: "doc.on.clipboard") { snapshot in

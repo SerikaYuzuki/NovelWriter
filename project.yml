@@ -134,6 +134,8 @@ targets:
       - package: NovelKit
         product: NovelWritingProgress
       - package: NovelKit
+        product: NovelTextAnalysis
+      - package: NovelKit
         product: NovelStorage
       - package: NovelKit
         product: EditorKit
@@ -208,6 +210,7 @@ targets:
       - path: NovelApp/ConnectivityRecovery.swift
       - path: NovelApp/HistoryFetchControls.swift
       - path: NovelApp/SyncPresentation
+      - path: NovelApp/WorkSearch/Common
       - path: NovelApp/WritingAssistant
         excludes:
           - ResizableAssistantLayout.swift
@@ -224,6 +227,8 @@ targets:
         product: NovelWritingSupport
       - package: NovelKit
         product: NovelWritingProgress
+      - package: NovelKit
+        product: NovelTextAnalysis
       - package: NovelKit
         product: NovelStorage
       - package: NovelKit
@@ -267,6 +272,7 @@ targets:
     platform: iOS
     deploymentTarget: "17.0"
     sources:
+      - path: NovelAppTests/WorkSearchSessionTests.swift
       - path: NovelAppTests/AssistantClientTests.swift
       - path: NovelAppTests/AssistantChatContextTests.swift
       - path: NovelAppTests/AssistantConversationTests.swift

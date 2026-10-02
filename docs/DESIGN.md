@@ -49,6 +49,7 @@
 | `NovelSyncV2PortableBridge` | 検証済みpackageとv2作品の明示Import / Export変換 |
 | `NovelAuth` / `NovelAuthApple` | session / HTTP認証とApple・Keychain境界 |
 | `NovelWritingSupport` / `NovelWritingStore` | AI記録・範囲付き編集の値型と検証 / 本文と独立したSQLite・outbox・Undo journal |
+| `NovelTextAnalysis` | 全話本文の検索・置換計算と人物の登場検出（Foundation / NovelCoreのみ） |
 | `NovelStorage` / `NovelExport` | package codec / 配布用原稿の生成 |
 | `EditorKit` / `NovelUI` / `PreviewSupport` | 本文エディタ / 共有UI / 固定previewデータ |
 | `SyncServerV2/` | `/v2`同期、`auth_v1`認証、PostgreSQL、運用境界 |
@@ -192,9 +193,21 @@ AI／MCP編集とそのUndo、open／import／remote install／復元、話の�
 
 継続は書いた日数を数え、完了した未執筆日が2日続くと途切れる。今日の未執筆では途切れず、1日休みは継続する。締切までの日数は今日を含め、必要日量は残り字数を日数で割って切り上げる。
 
+### 6.9 作品全体の検索・置換と人物の登場
+
+検索は章・話の配列順に全話本文だけを対象とし、話名・メモ・人物設定は含めない。FoundationのcaseInsensitiveによるプレーン文字列一致とUTF-16範囲はEditorKit.TextSearchと同じ。前後20書記素の文脈を示す。検索・登場検出は250ms debounce後にバックグラウンドで計算し、文書変更・query変更・session/account変更で古い結果を破棄する。
+
+置換は一致ごとの除外（既定は全件）と件数確認を経て、document gate内でIME確定→端末保存→明示checkpoint（explicit）→適用→端末保存と進む。明示履歴に保存できなければ本文を変更しない。検索時から対象話の本文が一つでも変わっていたら全体を中止し、再検索を促す。適用前後のWorkID/session/accountを固定し、本文一致はUTF-8 bytesで確認する。置換結果の計算もバックグラウンドで行う。
+
+開いている話はEditorCommandSession.applyProofreadingを通す一回のネイティブ編集としてUndoを保つ。入力停止は明示checkpoint完了まで維持し、同期的な適用区間だけ再開して直後に停止し、全対象話を一回の文書変更として保存する。AI編集のjournal・記録laneへは書かず、withUncountedEditorChangeとdirty時のsynchronizeで進み具合の手入力集計から除外する。
+
+直前の置換一回を戻す一時操作は、置換後の本文と一致する話だけを一回の変更・保存で戻す。後から編集された話は保持し、置換前の履歴からの復元を案内する。作品/session/account切替やアプリ終了をまたいで保持しない。保存失敗では変更本文とdirty状態を保持し、再保存を案内する。
+
+人物の登場は名前と読みを同じ照合規則で検索し、話ごとの回数・最初／最後の話を表示する。重なる名前／読みは一回と数える。既存の名前・読みの照合語は維持し、ジャンプは名前優先から本文内で最初の一致へ変更する（最初の登場位置を選択するため）。人物名の変更は本文へ自動反映せず、人物詳細menuの「本文の名前を置換…」で検索語を入力した検索画面を開く。モデル・同期schemaは追加しない。
+
 ## 7. 未実装・将来の機能
 
-作品全体検索・置換、人物関係グラフ、時系列ビュー、PDF出力、追加provider SDK、Windows実装は現在の利用可能機能に含めない。追加時に目的と受入条件を定める。UIに未実装placeholderを置いて完成に見せない（D-040）。
+人物関係グラフ、時系列ビュー、PDF出力、追加provider SDK、Windows実装は現在の利用可能機能に含めない。追加時に目的と受入条件を定める。UIに未実装placeholderを置いて完成に見せない（D-040）。
 
 ## 8. 実装ルール
 

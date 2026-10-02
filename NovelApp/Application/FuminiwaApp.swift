@@ -435,6 +435,12 @@ private struct WorkbenchFindCommands: View {
         }
         .keyboardShortcut("f", modifiers: .command)
 
+        Button("作品全体を検索…") {
+            Task { await appState.presentWorkSearch() }
+        }
+        .keyboardShortcut("f", modifiers: [.command, .shift])
+        .disabled(!appState.permitsDocumentInteraction)
+
         Button("次を検索") {
             guard appState.workspaceSelection.section == .structure else { return }
             editorSearchSession.jump(direction: .forward, in: appState.selectedEpisode)
