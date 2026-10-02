@@ -405,7 +405,7 @@ private struct SnapshotRestoreCommands: View {
                 Text("スナップショットはありません")
             } else {
                 ForEach(presenter.snapshots) { item in
-                    Button(item.entry.reason) {
+                    Button(HistoryPresentation().label(item.entry)) {
                         Task { await presenter.restore(item) }
                     }
                 }

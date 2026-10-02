@@ -11,6 +11,7 @@ struct HistoryFetchControls: View {
     var progressNote: String?
     var rowDate: Date?
     var rowKind: String?
+    var historyItem: SyncV2HistoryItem?
     var announcesStatus = true
     var restore: (() async -> Void)?
     @State private var state: SyncV2HistoryFetchState = .paused
@@ -23,12 +24,14 @@ struct HistoryFetchControls: View {
             if let rowDate, let rowKind {
                 HStack(spacing: Spacing.group) {
                     VStack(alignment: .leading, spacing: Spacing.extraSmall) {
-                        Text(rowDate.formatted(date: .abbreviated, time: .shortened))
-                            .font(.body)
-                            .foregroundStyle(FuminiwaColor.textPrimary.color)
-                        Text(rowKind)
-                            .font(FuminiwaType.rowSecondary)
-                            .foregroundStyle(FuminiwaColor.textSecondary.color)
+                        if let historyItem {
+                            SnapshotHistoryLabel(item: historyItem)
+                        } else {
+                            Text(HistoryPresentation().time(rowDate)).font(.body)
+                                .accessibilityLabel(HistoryPresentation().fullDate(rowDate))
+                            Text(rowKind).font(FuminiwaType.rowSecondary)
+                                .foregroundStyle(FuminiwaColor.textSecondary.color)
+                        }
                         if !available {
                             Text(state == .running ? progressNote ?? state.label : state.label)
                                 .font(.caption)
@@ -54,6 +57,10 @@ struct HistoryFetchControls: View {
                 Text(available ? "この版を復元しますか？" : "履歴の取得")
                     .font(.headline)
                 Text(available ? "現在の内容を履歴に残してから、選んだ版へ戻します。" : SyncV2HistoryFetchState.restoreNotice)
+                if let rowDate, let rowKind {
+                    Text(HistoryPresentation().fullDate(rowDate) + "・" + rowKind)
+                        .font(.body)
+                }
                 if available {
                     Button("復元") {
                         showsRestore = false
@@ -114,6 +121,7 @@ struct HistoryFetchControls: View {
         #if os(iOS)
             .frame(minWidth: 44, minHeight: 44)
         #endif
+            .accessibilityLabel(historyItem.map { "復元・" + HistoryPresentation().label($0) } ?? "復元")
             .accessibilityHint(available ? "選んだ版への復元を確認します" : SyncV2HistoryFetchState.restoreNotice)
     }
 

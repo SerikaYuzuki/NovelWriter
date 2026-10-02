@@ -1,4 +1,5 @@
 import NovelSyncV2
+import NovelSyncV2Application
 import NovelUI
 import SwiftUI
 
@@ -15,44 +16,48 @@ struct IOSSnapshotHistoryView: View {
                     Text("履歴を読み込むと、復元対象を選べます。")
                         .font(.caption)
                         .foregroundStyle(FuminiwaColor.textSecondary.color)
-                } else {
-                    ForEach(store.syncV2HistoryItems, id: \.occurrenceID) { entry in
-                        if let application = store.snapshotSyncV2Application,
-                           let workID = store.syncV2ActiveWorkID {
-                            let session = store.currentDocumentSessionToken
-                            let scope = store.snapshotSyncV2AccountScope
-                            HistoryFetchControls(application: application, workID: workID, snapshotID: entry.snapshotID,
-                                                 rowDate: entry.createdAt, rowKind: entry.displayReason,
-                                                 announcesStatus: entry.occurrenceID == store.syncV2HistoryItems.first?.occurrenceID) {
-                                guard store.currentDocumentSessionToken == session,
-                                      store.snapshotSyncV2AccountScope == scope else { return }
-                                _ = await store.restoreSnapshotSyncV2(snapshotID: entry.snapshotID.rawValue)
-                            }
-                            .surfaceCard()
-                            .listRowSeparator(.hidden)
-                            .listRowBackground(Color.clear)
-                            .listRowInsets(EdgeInsets(top: Spacing.extraSmall, leading: Spacing.outer,
-                                                      bottom: Spacing.extraSmall, trailing: Spacing.outer))
-                        } else {
-                            VStack(alignment: .leading, spacing: Spacing.extraSmall) {
-                                Text(entry.createdAt.formatted(date: .abbreviated, time: .shortened))
-                                Text(entry.displayReason).font(FuminiwaType.rowSecondary)
-                            }
+                }
+            }
+            if !store.syncV2HistoryItems.isEmpty {
+                SnapshotHistorySections(items: store.syncV2HistoryItems) { entry in
+                    if let application = store.snapshotSyncV2Application,
+                       let workID = store.syncV2ActiveWorkID {
+                        let session = store.currentDocumentSessionToken
+                        let scope = store.snapshotSyncV2AccountScope
+                        let newest = entry.occurrenceID == store.syncV2HistoryItems.first?.occurrenceID
+                        HistoryFetchControls(
+                            application: application, workID: workID, snapshotID: entry.snapshotID,
+                            rowDate: entry.createdAt, rowKind: HistoryPresentation().subtitle(entry),
+                            historyItem: entry,
+                            announcesStatus: newest
+                        ) {
+                            guard store.currentDocumentSessionToken == session,
+                                  store.snapshotSyncV2AccountScope == scope else { return }
+                            _ = await store.restoreSnapshotSyncV2(snapshotID: entry.snapshotID.rawValue)
                         }
-                    }
-                    if store.syncV2HistoryCursor != nil {
-                        Button("履歴をさらに読み込む") {
-                            Task {
-                                if let workID = store.syncV2ActiveWorkID {
-                                    _ = await store.refreshSnapshotHistory(
-                                        for: workID, reset: false
-                                    )
-                                }
-                            }
-                        }
-                        .disabled(!store.canRefreshSnapshotHistory)
+                        .surfaceCard()
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(Color.clear)
+                        .listRowInsets(EdgeInsets(top: Spacing.extraSmall, leading: Spacing.outer,
+                                                  bottom: Spacing.extraSmall, trailing: Spacing.outer))
+                    } else {
+                        SnapshotHistoryLabel(item: entry)
                     }
                 }
+                if store.syncV2HistoryCursor != nil {
+                    Button("履歴をさらに読み込む") {
+                        Task {
+                            if let workID = store.syncV2ActiveWorkID {
+                                _ = await store.refreshSnapshotHistory(
+                                    for: workID, reset: false
+                                )
+                            }
+                        }
+                    }
+                    .disabled(!store.canRefreshSnapshotHistory)
+                }
+            }
+            Section {
                 Button("履歴を更新") {
                     Task {
                         if let workID = store.syncV2ActiveWorkID {

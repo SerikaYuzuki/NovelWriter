@@ -180,6 +180,7 @@ targets:
     deploymentTarget: "14.0"
     sources:
       - path: NovelAppTests
+      - path: NovelKit/Tests/NovelSyncV2ApplicationTests/HistoryPresentationTests.swift
       - path: NovelKit/Tests/NovelUITests/ThemeContrastTests.swift
       - path: NovelKit/Tests/NovelThumbnailTests/SyntheticThumbnailImage.swift
     dependencies:
@@ -267,7 +268,9 @@ targets:
       - path: NovelAppTests/AssistantConversationTests.swift
       - path: NovelAppTests/V2DocumentSaveCoordinatorTests.swift
       - path: NovelAppTests/SyncSessionControllerTests.swift
+      - path: NovelAppTests/SnapshotHistoryPresentationTests.swift
       - path: NovelAppIOSTests
+      - path: NovelKit/Tests/NovelSyncV2ApplicationTests/HistoryPresentationTests.swift
       - path: NovelKit/Tests/NovelUITests/ThemeContrastTests.swift
       - path: NovelKit/Tests/NovelThumbnailTests/SyntheticThumbnailImage.swift
     dependencies:

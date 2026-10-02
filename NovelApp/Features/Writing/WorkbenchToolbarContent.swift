@@ -1,6 +1,7 @@
 import AppKit
 import NovelCore
 import NovelSyncV2Application
+import NovelUI
 import Observation
 import SwiftUI
 
@@ -90,7 +91,7 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
                 .help("スナップショットの保存・一覧")
                 .popover(isPresented: isPresented(.snapshots), arrowEdge: .bottom) {
                     SnapshotPopover(overlayState: overlayState)
-                        .frame(width: 360, height: 320)
+                        .frame(width: 420, height: 420)
                 }
             }
             .customizationBehavior(.default)
@@ -278,18 +279,53 @@ struct SnapshotPopover: View {
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                List(presenter.snapshots) { item in
-                    Button(item.entry.reason) {
-                        presenter.requestRestore(item)
-                        overlayState.presented = nil
+                List {
+                    SnapshotHistorySections(items: presenter.snapshots.map(\.entry)) { entry in
+                        if let request = presenter.snapshots.first(where: { $0.id == entry.occurrenceID }) {
+                            if let application = appState.snapshotSyncV2Application,
+                               let workID = appState.currentSnapshotSyncV2WorkID {
+                                let scope = appState.snapshotSyncV2AccountScopeToken
+                                HistoryFetchControls(
+                                    application: application, workID: workID, snapshotID: entry.snapshotID,
+                                    rowDate: entry.createdAt,
+                                    rowKind: HistoryPresentation().subtitle(entry),
+                                    historyItem: entry,
+                                    announcesStatus: entry.occurrenceID == presenter.snapshots.first?.id
+                                ) {
+                                    guard appState.matchesSnapshotSyncV2AccountScope(scope) else { return }
+                                    presenter.requestRestore(request)
+                                    guard presenter.snapshotPendingRestore == request else { return }
+                                    await presenter.restore(request)
+                                    overlayState.presented = nil
+                                }
+                            } else {
+                                Button {
+                                    presenter.requestRestore(request)
+                                } label: {
+                                    SnapshotHistoryLabel(item: entry)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
                     }
-                    .buttonStyle(.plain)
-                    .lineLimit(1)
                 }
                 .listStyle(.plain)
             }
         }
         .padding(12)
+        .confirmationDialog("この版を復元しますか？", isPresented: Binding(
+            get: { presenter.snapshotPendingRestore != nil && appState.snapshotSyncV2Application == nil },
+            set: {
+                if !$0 {
+                    presenter.snapshotPendingRestore = nil
+                }
+            }
+        ), presenting: presenter.snapshotPendingRestore) { request in
+            Button("復元") { Task { await presenter.restore(request); overlayState.presented = nil } }
+            Button("キャンセル", role: .cancel) { presenter.snapshotPendingRestore = nil }
+        } message: { request in
+            Text(HistoryPresentation().label(request.entry) + "\n現在の内容を履歴に残してから、選んだ版へ戻します。")
+        }
         .task {
             await presenter.refresh()
         }
@@ -408,6 +444,12 @@ final class SnapshotMenuPresenter {
     }
 
     func restore(_ request: SnapshotRestoreRequest) async {
+        guard request.session == appState.documentSessionToken,
+              snapshots.contains(where: { $0.id == request.id && $0.session == request.session }) else {
+            snapshotPendingRestore = nil
+            restoreErrorMessage = "作品が切り替わったため、スナップショット一覧を更新してください。"
+            return
+        }
         snapshotPendingRestore = nil
         let success = await appState.restoreSnapshotV2(snapshotID: request.entry.snapshotID)
         await refresh()

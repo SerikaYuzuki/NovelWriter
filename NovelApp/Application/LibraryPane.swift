@@ -480,32 +480,35 @@ private struct SnapshotHistorySheet: View {
                     description: Text("この端末の履歴とオンライン履歴を、利用できる範囲で表示します。")
                 )
             } else {
-                List(appState.snapshotSyncHistory, id: \.occurrenceID) { entry in
-                    if let application = appState.snapshotSyncV2Application,
-                       let workID = appState.currentSnapshotSyncV2WorkID {
-                        let session = appState.documentSessionToken
-                        let scope = appState.snapshotSyncV2AccountScopeToken
-                        HistoryFetchControls(application: application, workID: workID, snapshotID: entry.snapshotID,
-                                             rowDate: entry.createdAt,
-                                             rowKind: entry.displayReason + (entry.pinned ? "・保持" : ""),
-                                             announcesStatus: entry.occurrenceID == appState.snapshotSyncHistory.first?.occurrenceID) {
-                            guard appState.documentSessionToken == session,
-                                  appState.matchesSnapshotSyncV2AccountScope(scope) else { return }
-                            if await appState.restoreSnapshotV2(snapshotID: entry.snapshotID) {
-                                dismiss()
+                List {
+                    SnapshotHistorySections(items: appState.snapshotSyncHistory) { entry in
+                        if let application = appState.snapshotSyncV2Application,
+                           let workID = appState.currentSnapshotSyncV2WorkID {
+                            let session = appState.documentSessionToken
+                            let scope = appState.snapshotSyncV2AccountScopeToken
+                            let newest = entry.occurrenceID == appState.snapshotSyncHistory.first?.occurrenceID
+                            HistoryFetchControls(
+                                application: application, workID: workID, snapshotID: entry.snapshotID,
+                                rowDate: entry.createdAt,
+                                rowKind: HistoryPresentation().subtitle(entry),
+                                historyItem: entry,
+                                announcesStatus: newest
+                            ) {
+                                guard appState.documentSessionToken == session,
+                                      appState.matchesSnapshotSyncV2AccountScope(scope) else { return }
+                                if await appState.restoreSnapshotV2(snapshotID: entry.snapshotID) {
+                                    dismiss()
+                                }
                             }
+                            .surfaceCard()
+                            .listRowSeparator(.hidden)
+                            .listRowBackground(Color.clear)
+                        } else {
+                            SnapshotHistoryLabel(item: entry)
+                                .surfaceCard()
+                                .listRowSeparator(.hidden)
+                                .listRowBackground(Color.clear)
                         }
-                        .surfaceCard()
-                        .listRowSeparator(.hidden)
-                        .listRowBackground(Color.clear)
-                    } else {
-                        VStack(alignment: .leading, spacing: Spacing.extraSmall) {
-                            Text(entry.createdAt.formatted(date: .abbreviated, time: .shortened))
-                            Text(entry.displayReason).font(FuminiwaType.rowSecondary)
-                        }
-                        .surfaceCard()
-                        .listRowSeparator(.hidden)
-                        .listRowBackground(Color.clear)
                     }
                 }
                 .listStyle(.plain)
