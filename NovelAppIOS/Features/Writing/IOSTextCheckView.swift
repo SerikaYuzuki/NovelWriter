@@ -3,6 +3,7 @@ import SwiftUI
 
 struct IOSTextCheckView: View {
     let store: IOSDocumentStore
+    var onOpenEditor: (() -> Void)?
     @State private var showingIgnored = false
     @State private var showingEditor = false
     @State private var showingReplacement = false
@@ -37,7 +38,7 @@ struct IOSTextCheckView: View {
             }
         }
         .navigationDestination(isPresented: $showingEditor) { IOSEditorPane(store: store, userDefaults: store.userDefaults) }
-        .navigationDestination(isPresented: $showingReplacement) { IOSWorkSearchView(store: store) }
+        .navigationDestination(isPresented: $showingReplacement) { IOSWorkSearchView(store: store, onOpenEditor: onOpenEditor) }
         .sheet(isPresented: $showingIgnored) {
             NavigationStack {
                 TextCheckIgnoredList(session: session)
@@ -58,7 +59,11 @@ struct IOSTextCheckView: View {
         Task {
             if await store.selectWorkTextMatch(chapterID: occurrence.result.chapterID, episodeID: occurrence.result.id,
                                                source: occurrence.result.source, range: occurrence.match.range, expectedScope: scope) {
-                showingEditor = true
+                if let onOpenEditor {
+                    onOpenEditor()
+                } else {
+                    showingEditor = true
+                }
             } else if scope == store.workSearchScope {
                 synchronize(); store.textCheck.message = "本文が変わりました。「チェック」を押してください。"
             }

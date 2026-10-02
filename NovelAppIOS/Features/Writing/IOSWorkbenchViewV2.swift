@@ -46,6 +46,7 @@ struct IOSAdaptiveWritingView: View {
     let openEpisode: (ChapterID, EpisodeID) -> Void
     let expectedSession: IOSDocumentSessionToken?
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @State private var toolDestination: IOSWritingTool?
     @State private var regularProjectSection: IOSRegularProjectSection? = .writing
     @State private var presentedHorizontalSizeClass: UserInterfaceSizeClass?
     @State private var selectedPlotItem: IOSPlotSelection?
@@ -68,9 +69,10 @@ struct IOSAdaptiveWritingView: View {
             if effectiveHorizontalSizeClass == .regular {
                 regularLayout
             } else {
-                IOSWritingOutlineList(store: store, openEpisode: openEpisode)
+                IOSWritingOutlineList(store: store, openEpisode: openEpisode, presentTool: presentTool)
             }
         }
+        .modifier(IOSWritingToolPresentationModifier(store: store, destination: $toolDestination))
         .modifier(WritingSyncPulse(host: store.writingAssistantHost))
         .environment(\.horizontalSizeClass, effectiveHorizontalSizeClass)
         .onAppear {
@@ -123,7 +125,7 @@ struct IOSAdaptiveWritingView: View {
     private var regularContent: some View {
         switch regularProjectSection ?? .writing {
         case .writing:
-            IOSWritingOutlineList(store: store) { chapterID, episodeID in
+            IOSWritingOutlineList(store: store, openEpisode: { chapterID, episodeID in
                 Task {
                     guard await store.selectEpisodeAfterDeviceSyncDeparture(
                         chapterID: chapterID,
@@ -131,7 +133,7 @@ struct IOSAdaptiveWritingView: View {
                     ) else { return }
                     openEpisode(chapterID, episodeID)
                 }
-            }
+            }, presentTool: presentTool)
         case .plot:
             IOSPlotOutlineView(
                 store: store,
@@ -231,17 +233,23 @@ struct IOSAdaptiveWritingView: View {
             }
         )
     }
+
+    private func presentTool(_ destination: IOSWritingTool) {
+        let scope = store.workSearchScope
+        Task {
+            guard await store.prepareForEditorSurfaceDeparture(), store.workSearchScope == scope else { return }
+            if destination == .textCheck {
+                store.synchronizeTextCheck()
+            }
+            toolDestination = destination
+        }
+    }
 }
 
 private struct IOSWritingOutlineList: View {
-    private enum ToolDestination: Hashable {
-        case workSearch
-        case textCheck
-    }
-
-    @State private var toolDestination: ToolDestination?
     let store: IOSDocumentStore
     let openEpisode: (ChapterID, EpisodeID) -> Void
+    let presentTool: (IOSWritingTool) -> Void
 
     var body: some View {
         List {
@@ -262,12 +270,6 @@ private struct IOSWritingOutlineList: View {
             }
         }
         .navigationTitle("執筆")
-        .navigationDestination(item: $toolDestination) { destination in
-            switch destination {
-            case .workSearch: IOSWorkSearchView(store: store)
-            case .textCheck: IOSTextCheckView(store: store)
-            }
-        }
         .overlay {
             if store.document.chapters.isEmpty {
                 ContentUnavailableView {
@@ -309,17 +311,6 @@ private struct IOSWritingOutlineList: View {
             }
         }
         .modifier(IOSWritingOutlineSurfaceModifier())
-    }
-
-    private func presentTool(_ destination: ToolDestination) {
-        let scope = store.workSearchScope
-        Task {
-            guard await store.prepareForEditorSurfaceDeparture(), store.workSearchScope == scope else { return }
-            if destination == .textCheck {
-                store.synchronizeTextCheck()
-            }
-            toolDestination = destination
-        }
     }
 }
 

@@ -5,6 +5,7 @@ import SwiftUI
 struct IOSWorkSearchView: View {
     let store: IOSDocumentStore
     var initialQuery: String?
+    var onOpenEditor: (() -> Void)?
     @State private var confirmingReplacement = false
     @State private var showingEditor = false
     @State private var scope: String?
@@ -106,7 +107,11 @@ struct IOSWorkSearchView: View {
         Task {
             if await store.selectWorkTextMatch(chapterID: result.chapterID, episodeID: result.id,
                                                source: result.source, range: match.range, expectedScope: scope) {
-                showingEditor = true
+                if let onOpenEditor {
+                    onOpenEditor()
+                } else {
+                    showingEditor = true
+                }
             } else if scope == store.workSearchScope {
                 store.workSearch.message = "本文が変わりました。もう一度検索してください。"
             }
