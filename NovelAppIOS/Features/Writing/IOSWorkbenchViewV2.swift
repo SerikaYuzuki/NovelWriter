@@ -234,7 +234,12 @@ struct IOSAdaptiveWritingView: View {
 }
 
 private struct IOSWritingOutlineList: View {
-    @State private var showingWorkSearch = false
+    private enum ToolDestination: Hashable {
+        case workSearch
+        case textCheck
+    }
+
+    @State private var toolDestination: ToolDestination?
     let store: IOSDocumentStore
     let openEpisode: (ChapterID, EpisodeID) -> Void
 
@@ -257,7 +262,12 @@ private struct IOSWritingOutlineList: View {
             }
         }
         .navigationTitle("執筆")
-        .navigationDestination(isPresented: $showingWorkSearch) { IOSWorkSearchView(store: store) }
+        .navigationDestination(item: $toolDestination) { destination in
+            switch destination {
+            case .workSearch: IOSWorkSearchView(store: store)
+            case .textCheck: IOSTextCheckView(store: store)
+            }
+        }
         .overlay {
             if store.document.chapters.isEmpty {
                 ContentUnavailableView {
@@ -285,19 +295,31 @@ private struct IOSWritingOutlineList: View {
                 }
             }
             ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    let scope = store.workSearchScope
-                    Task {
-                        guard await store.prepareForEditorSurfaceDeparture(), store.workSearchScope == scope else { return }
-                        showingWorkSearch = true
+                Menu {
+                    Button("作品全体を検索", systemImage: "text.magnifyingglass") {
+                        presentTool(.workSearch)
                     }
-                } label: { Label("作品全体を検索", systemImage: "text.magnifyingglass") }
+                    Button("表記をチェック", systemImage: "text.badge.checkmark") {
+                        presentTool(.textCheck)
+                    }
+                } label: { Label("執筆のメニュー", systemImage: "ellipsis.circle") }
             }
             ToolbarItem(placement: .topBarTrailing) {
                 EditButton()
             }
         }
         .modifier(IOSWritingOutlineSurfaceModifier())
+    }
+
+    private func presentTool(_ destination: ToolDestination) {
+        let scope = store.workSearchScope
+        Task {
+            guard await store.prepareForEditorSurfaceDeparture(), store.workSearchScope == scope else { return }
+            if destination == .textCheck {
+                store.synchronizeTextCheck()
+            }
+            toolDestination = destination
+        }
     }
 }
 

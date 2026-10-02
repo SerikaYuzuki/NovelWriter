@@ -241,7 +241,9 @@ struct NovelWorkbenchView: View {
     private var workbenchContent: some View {
         switch appState.workspaceSelection.section {
         case .structure:
-            if appState.workSearch.isPresented {
+            if appState.textCheck.isPresented {
+                MacTextCheckView()
+            } else if appState.workSearch.isPresented {
                 MacWorkSearchView()
             } else {
                 OutlineContainerView()

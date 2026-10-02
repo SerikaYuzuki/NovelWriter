@@ -75,13 +75,9 @@ struct MacWorkSearchView: View {
         let scope = appState.workSearchScope
         Task {
             guard appState.workSearch.scope == scope,
-                  await appState.selectEpisodeAfterTransition(result.id, in: result.chapterID),
-                  appState.workSearchScope == scope,
-                  let current = appState.document.episode(result.id)?.episode.content,
-                  WorkTextSearch.sameText(current, result.source) else {
+                  await appState.selectWorkTextMatch(result, match: match, expectedScope: scope, editorSearch: editorSearch) else {
                 appState.workSearch.message = "本文が変わりました。もう一度検索してください。"; return
             }
-            editorSearch.requestSelection(range: match.range, episodeID: result.id)
         }
     }
 }

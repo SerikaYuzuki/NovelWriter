@@ -342,6 +342,7 @@ final class IOSDocumentStore {
     }
 
     let workSearch = WorkSearchSession()
+    let textCheck: TextCheckSession
     var workTextSelectionRequest: EditorSelectionRequest?
     var workTextSelectionToken: IOSEpisodeEditingToken?
 
@@ -447,6 +448,7 @@ final class IOSDocumentStore {
         libraryRoot: URL? = nil,
         runtimeComposition: IOSRuntimeComposition = .currentBuild()
     ) {
+        textCheck = TextCheckSession(defaults: userDefaults)
         writingProgress = WritingProgressTracker(defaults: userDefaults)
         self.portableBridge = portableBridge
         self.fileManager = fileManager

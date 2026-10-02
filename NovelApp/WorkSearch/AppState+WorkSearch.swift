@@ -8,14 +8,30 @@ extension AppState {
         "\(documentSessionToken)-\(snapshotSyncV2AccountScopeToken)-\(String(describing: snapshotSyncV2ActiveWorkID))"
     }
 
-    func presentWorkSearch(query: String? = nil) async {
+    func presentWorkSearch(query: String? = nil, replacement: String? = nil) async {
         let session = documentSessionToken, account = snapshotSyncV2AccountScopeToken
         guard await selectProjectSectionAfterTransition(.structure), documentSessionToken == session,
               snapshotSyncV2AccountScopeToken == account else { return }
         if let query {
             workSearch.query = query
         }
+        if let replacement {
+            workSearch.replacement = replacement
+        }
+        textCheck.isPresented = false
         workSearch.isPresented = true
+    }
+
+    /// 全作品検索と表記チェックで共有する、保存・scope・本文一致を通すジャンプ。
+    func selectWorkTextMatch(_ result: EpisodeTextMatches, match: WorkTextMatch,
+                             expectedScope: String, editorSearch: EditorSearchSession) async -> Bool {
+        guard workSearchScope == expectedScope,
+              await selectEpisodeAfterTransition(result.id, in: result.chapterID),
+              workSearchScope == expectedScope,
+              let current = document.episode(result.id)?.episode.content,
+              WorkTextSearch.sameText(current, result.source) else { return false }
+        editorSearch.requestSelection(range: match.range, episodeID: result.id)
+        return true
     }
 
     var workReplacementHost: WorkReplacementHost {

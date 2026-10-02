@@ -134,6 +134,7 @@ final class AppState {
     }
 
     let workSearch = WorkSearchSession()
+    let textCheck: TextCheckSession
 
     var outlinePresentation = OutlinePresentationState()
     var attachments: [Attachment]
@@ -244,6 +245,7 @@ final class AppState {
         dependencies: AppDependencies,
         initialStartupState: AppStartupState = .loading
     ) {
+        textCheck = TextCheckSession(defaults: dependencies.userDefaults)
         writingProgress = WritingProgressTracker(defaults: dependencies.userDefaults)
         writingProgressRoot = dependencies.writingProgressRoot
         portableBridge = dependencies.portableBridge

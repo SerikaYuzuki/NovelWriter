@@ -211,6 +211,7 @@ targets:
       - path: NovelApp/HistoryFetchControls.swift
       - path: NovelApp/SyncPresentation
       - path: NovelApp/WorkSearch/Common
+      - path: NovelApp/TextCheck/Common
       - path: NovelApp/WritingAssistant
         excludes:
           - ResizableAssistantLayout.swift
@@ -273,6 +274,7 @@ targets:
     deploymentTarget: "17.0"
     sources:
       - path: NovelAppTests/WorkSearchSessionTests.swift
+      - path: NovelAppTests/TextCheckSessionTests.swift
       - path: NovelAppTests/AssistantClientTests.swift
       - path: NovelAppTests/AssistantChatContextTests.swift
       - path: NovelAppTests/AssistantConversationTests.swift

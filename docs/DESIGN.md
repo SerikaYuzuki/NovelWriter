@@ -49,7 +49,7 @@
 | `NovelSyncV2PortableBridge` | 検証済みpackageとv2作品の明示Import / Export変換 |
 | `NovelAuth` / `NovelAuthApple` | session / HTTP認証とApple・Keychain境界 |
 | `NovelWritingSupport` / `NovelWritingStore` | AI記録・範囲付き編集の値型と検証 / 本文と独立したSQLite・outbox・Undo journal |
-| `NovelTextAnalysis` | 全話本文の検索・置換計算と人物の登場検出（Foundation / NovelCoreのみ） |
+| `NovelTextAnalysis` | 全話本文の検索・置換、人物の登場、端末内の表記チェック（Foundation / CoreFoundation / NovelCore） |
 | `NovelStorage` / `NovelExport` | package codec / 配布用原稿の生成 |
 | `EditorKit` / `NovelUI` / `PreviewSupport` | 本文エディタ / 共有UI / 固定previewデータ |
 | `SyncServerV2/` | `/v2`同期、`auth_v1`認証、PostgreSQL、運用境界 |
@@ -204,6 +204,18 @@ AI／MCP編集とそのUndo、open／import／remote install／復元、話の�
 直前の置換一回を戻す一時操作は、置換後の本文と一致する話だけを一回の変更・保存で戻す。後から編集された話は保持し、置換前の履歴からの復元を案内する。作品/session/account切替やアプリ終了をまたいで保持しない。保存失敗では変更本文とdirty状態を保持し、再保存を案内する。
 
 人物の登場は名前と読みを同じ照合規則で検索し、話ごとの回数・最初／最後の話を表示する。重なる名前／読みは一回と数える。既存の名前・読みの照合語は維持し、ジャンプは名前優先から本文内で最初の一致へ変更する（最初の登場位置を選択するため）。人物名の変更は本文へ自動反映せず、人物詳細menuの「本文の名前を置換…」で検索語を入力した検索画面を開く。モデル・同期schemaは追加しない。
+
+### 6.10 表記・記号チェック（端末内）
+
+`NovelTextAnalysis.TextChecker`が記号、組込み辞書・同じ読みの表記ゆれ、登録人物名に似た語を検出する。作品全体／現在の話の不変snapshotを「チェック」時だけ非同期解析し、本文・人物設定・対象・会話文オプション・WorkID/session/account変更で結果を失効する。入力中には実行せず、ネットワークやAIへ本文を送らない。
+
+読みは日本語localeのApple `CFStringTokenizer`のLatin transcriptionを`CFStringTransform`でひらがな化する。`JapaneseTextTokenizing`で差し替え可能。語の分割・読み・同音異義語の精度は保証しない。各表記2件以上、2字以上、漢字を含む組に限定し、助詞・数字・記号を除く。組込み辞書は代表的な活用を含む40組で、同じ組の読み一致は二重報告しない。
+
+記号はルビ・傍点記法の内部を除外する。表記チェックは親字を扱い、ルビの読みと記法delimiterは数えない。会話文（「」『』内）除外は既定OFFで、表記ゆれと人物名だけに適用する。地の文の行頭はIndentRulesの全角字下げと鉤括弧除外を維持する。
+
+結果はルール→章・話順に件数と文脈を示し、第2弾の保存・scope・本文一致確認つきジャンプで指摘範囲を選択する。多数派を正解とは決めず、同数なら置換提案をしない。「置換…」は最少数の表記を検索欄、最多数を置換欄へ入れて既存の作品全体検索を開く。確認・明示履歴・Undoは第2弾へ委ね、この機能には本文の書込操作を持たせない。
+
+指摘単位／表記の組単位の無視と解除は`fuminiwa.textcheck.ignored.<workID>`のUserDefaultsへ端末内保存し、同期しない。個別無視の識別には話ID・位置・文脈を使うため、周辺を編集すると再度指摘される場合がある。
 
 ## 7. 未実装・将来の機能
 
