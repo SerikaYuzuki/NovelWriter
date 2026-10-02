@@ -1,0 +1,55 @@
+name: fuminiwa-sync-v2-ops
+services:
+  ops:
+    image: fuminiwa-sync-v2-ops:local
+    build:
+      context: ..
+      dockerfile: SyncServerV2/ops/Dockerfile
+    container_name: fuminiwa-sync-v2-ops
+    restart: unless-stopped
+    environment:
+      TZ: ${FUMINIWA_BACKUP_TZ:-Asia/Tokyo}
+      BACKUP_TIME: ${FUMINIWA_BACKUP_TIME:-03:17}
+      POSTGRES_CONTAINER: ${FUMINIWA_BACKUP_POSTGRES_CONTAINER:-fuminiwa-sync-v2-role-split-postgres}
+      SERVER_CONTAINER: ${FUMINIWA_BACKUP_SERVER_CONTAINER:-fuminiwa-sync-v2-role-split-server}
+    volumes:
+      - type: bind
+        source: ${FUMINIWA_BACKUP_DOCKER_SOCKET_HOST_PATH:-/var/run/docker.sock}
+        target: /var/run/docker.sock
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${FUMINIWA_BACKUP_DIRECTORY_HOST_PATH:-/DATA/AppData/fuminiwa-sync-v2-role-split/operational-backups/daily}
+        target: /backups
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${FUMINIWA_BACKUP_KEY_HOST_PATH:-/DATA/AppData/fuminiwa-sync-v2-role-split/backup-keys/backup-aes256.key}
+        target: /run/secrets/backup-aes256.key
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${FUMINIWA_BACKUP_CONFIG_HOST_PATH:-/DATA/AppData/fuminiwa-sync-v2-role-split/operational-backups/backup-config.json}
+        target: /run/secrets/backup-config.json
+        read_only: true
+        bind:
+          create_host_path: false
+    read_only: true
+    tmpfs:
+      - /run/ops:rw,noexec,nosuid,size=1m,mode=0700,uid=999,gid=1000
+      - /tmp:rw,noexec,nosuid,size=16m,mode=1777
+    network_mode: none
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - SETUID
+      - SETGID
+    stop_grace_period: 5m
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"

@@ -101,7 +101,62 @@ must return `200`; any `401` or other status is a failed health read-back.
 This endpoint proves only listener/router readiness and is not an account or
 data read-back.
 
+## Restart policy and ops
+
+`docker-compose.yml` sets `restart: unless-stopped` on PostgreSQL, server and
+edge. The one-shot migrator and provisioning services have no restart policy.
+This preserves the policy when Compose recreates a service. Existing containers
+that were updated with `docker update --restart unless-stopped` retain their
+policy without recreation; applying this YAML is a separate deployment step.
+An explicitly stopped container stays stopped across a Docker/host restart
+([Docker restart policy](https://docs.docker.com/engine/containers/start-containers-automatically/)).
+
+Compose's `depends_on` health/completion chain applies to Compose startup, not
+Docker's automatic restart after a reboot. PostgreSQL may therefore be late.
+The server's `Repository::connect_from_environment` has a five-second pool
+acquire timeout and propagates connection/readiness errors. `main` returns the
+startup error before binding HTTP, exiting nonzero; Docker's restart policy
+retries with backoff and recovers once PostgreSQL and its existing migrated
+schema/roles are ready. This is a configuration-backed retry, not an added
+in-process startup loop. Runtime startup is read-only and does not rerun the
+migrator. Missing migrations, identity/key/role errors still require operator
+repair; retry does not bypass those checks. Caddy can serve temporary upstream
+errors until the server listener is ready. Read back postgres/server/edge health
+and the public path separately after a reboot; a dependency order is not a
+guarantee of immediate availability.
+
+The independent `docker-compose.ops.yml` project `fuminiwa-sync-v2-ops` runs
+daily encrypted backups at **03:17 Asia/Tokyo** (2026-10-03 owner decision).
+It does not create/recreate the role-split services and has no network or web
+port. Its Alpine image includes the unchanged repository backup.py and binary
+packages for Python, cryptography, Docker CLI, Supercronic and timezone data.
+Only entrypoint initialization starts as root; the cron daemon and jobs run as
+999:1000 with the Docker socket's supplementary gid. It does not run a backup
+immediately on startup. The cron daemon and the 36-hour last-success window are
+checked by `ops-healthcheck`; `unhealthy` itself is not a Docker restart trigger.
+
+See [operations and server-side deployment commands](../docs/ACCOUNT_RETENTION_OPERATIONS.md#再起動後も続く定期実行)
+for mounts, schedule configuration, manual `docker exec ... run-backup`, logs,
+and reboot acceptance. Build from the repository root:
+
+```sh
+docker build -f SyncServerV2/ops/Dockerfile -t fuminiwa-sync-v2-ops:local .
+docker compose --env-file /DATA/AppData/fuminiwa-sync-v2-role-split/ops/ops.env \
+  -f SyncServerV2/docker-compose.ops.yml -p fuminiwa-sync-v2-ops up -d --no-build
+```
+
 ## Verification
+
+Backup/ops unit tests require Python with `cryptography` and timezone data,
+without contacting Docker or a real database:
+
+```sh
+python3 -m unittest discover -s Scripts/operations -p 'test_*.py' -v
+```
+
+Container build, size and startup/cron/reboot checks require a local Docker
+daemon or the separate authorized server deployment. Unit tests alone do not
+prove the image build or successful production backups.
 
 ```sh
 cargo fmt --manifest-path SyncServerV2/Cargo.toml --check

@@ -2,6 +2,7 @@ name: fuminiwa-sync-v2-role-split
 services:
   postgres:
     image: postgres:16
+    restart: unless-stopped
     container_name: fuminiwa-sync-v2-role-split-postgres
     environment:
       POSTGRES_DB: fuminiwa_sync_v2
@@ -66,6 +67,7 @@ services:
       - fuminiwa-sync-v2-role-split-net
   server:
     build: .
+    restart: unless-stopped
     container_name: fuminiwa-sync-v2-role-split-server
     depends_on:
       postgres:
@@ -128,6 +130,7 @@ services:
       - fuminiwa-sync-v2-role-split-net
   edge:
     image: caddy:2.8-alpine
+    restart: unless-stopped
     container_name: fuminiwa-sync-v2-role-split-edge
     environment:
       FUMINIWA_SYNC_V2_EDGE_HOST: ${FUMINIWA_SYNC_V2_EDGE_HOST:-192.168.11.5}

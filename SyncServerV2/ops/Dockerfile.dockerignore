@@ -1,0 +1,18 @@
+# The build context is the repo root, but only these implementation files belong
+# in the ops build. Exclude manuscripts, local DBs, credentials and build output.
+**
+!Scripts/
+Scripts/**
+!Scripts/operations/
+Scripts/operations/**
+!Scripts/operations/backup.py
+!SyncServerV2/
+SyncServerV2/**
+!SyncServerV2/ops/
+SyncServerV2/ops/**
+!SyncServerV2/ops/Dockerfile
+!SyncServerV2/ops/Dockerfile.dockerignore
+!SyncServerV2/ops/ops.py
+!SyncServerV2/ops/entrypoint
+!SyncServerV2/ops/run-backup
+!SyncServerV2/ops/ops-healthcheck
