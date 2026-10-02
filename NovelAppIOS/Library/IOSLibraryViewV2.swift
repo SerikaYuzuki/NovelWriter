@@ -31,136 +31,75 @@ struct IOSLibraryView: View {
     @State private var showingProtection = false
 
     var body: some View {
-        List {
-            Section("作品") {
-                if let failure = store.syncV2RemoteCatalogError ?? store.libraryFailure {
-                    StatusLabel(SyncV2LibraryPresentation.isOffline(failure)
-                        ? SyncV2LibraryPresentation.offlineNotice : remoteOnlyOpenErrorMessage(failure),
-                        systemImage: SyncV2LibraryPresentation.isOffline(failure) ? "wifi.slash" : "exclamationmark.circle",
-                        tone: SyncV2LibraryPresentation.isOffline(failure) ? .offline : .danger)
-                        .font(FuminiwaType.rowSecondary)
-                }
-                if store.syncV2LibraryItems.isEmpty {
-                    if store.libraryIsLoading || store.syncV2RemoteCatalogIsLoading {
-                        ContentUnavailableView("作品一覧を読み込み中…", systemImage: "arrow.clockwise")
-                    } else if let failure = store.syncV2RemoteCatalogError ?? store.libraryFailure {
-                        ContentUnavailableView(SyncV2LibraryPresentation.isOffline(failure) ? "オフラインです" : "作品一覧を読み込めませんでした",
-                                               systemImage: SyncV2LibraryPresentation.isOffline(failure) ? "wifi.slash" : "exclamationmark.circle",
-                                               description: Text("下に引いて再読み込みできます。「新規作品」から端末内で書き始められます。"))
-                    } else {
-                        ContentUnavailableView("最初の作品を書きましょう", systemImage: "book.closed",
-                                               description: Text("「新規作品」から、サインインせずに書き始められます。"))
+        shelfContent
+            .sheet(isPresented: $showingProtection) {
+                if let application = store.snapshotSyncV2Application {
+                    ProtectedWorksView(application: application,
+                                       contextID: String(describing: store.snapshotSyncV2AccountScope)) {
+                        _ = await store.refreshLibrary()
                     }
                 }
-                if !searchText.isEmpty, !store.syncV2LibraryItems.contains(where: { $0.title.localizedStandardContains(searchText) }) {
-                    Text("作品が見つかりません。検索する言葉を変えてください。")
-                        .foregroundStyle(.secondary)
+            }
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) { ShelfDisplayPicker(selection: $display) }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        Button("新規作品", systemImage: "plus", action: makeNewDocument)
+                        Button("作品を取り込む…", systemImage: "square.and.arrow.down") { store.isImporterPresented = true }
+                        Button("復元", systemImage: "archivebox") { showingProtection = true }
+                    } label: { Label("作品の操作", systemImage: "plus") }
                 }
-                if usesGrid {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 140), alignment: .top)], alignment: .leading, spacing: Spacing.outer) {
-                        workRows
+            }
+            .scrollContentBackground(.hidden)
+            .background(FuminiwaColor.paper.color)
+            .navigationTitle("作品一覧")
+            .alert("作品を完全に削除しますか？", isPresented: Binding(
+                get: { pendingDeletion != nil }, set: {
+                    if !$0 {
+                        pendingDeletion = nil
                     }
-                    .listRowBackground(FuminiwaColor.paper.color)
-                } else {
-                    workRows
                 }
-                if store.syncV2RemoteCatalogCursor != nil {
-                    Button("サーバーの作品をさらに読み込む") {
-                        Task { _ = await store.loadMoreRemoteCatalog() }
+            )) {
+                Button("削除", role: .destructive) {
+                    guard let item = pendingDeletion, let scope = deletionAccountScope else { return }
+                    let session = deletionSession
+                    Task { _ = await store.deleteLibraryWork(item, expectedSession: session, accountScope: scope) }
+                }
+                Button("キャンセル", role: .cancel) {}
+            } message: {
+                Text("「\(pendingDeletion?.title ?? "")」を一覧から削除します。同期した作品のサーバー受領済みデータは1年間保管されます。この端末だけの作品は元に戻せません。")
+            }
+            .alert("作品名を変更", isPresented: Binding(
+                get: { pendingRename != nil },
+                set: {
+                    if !$0 {
+                        pendingRename = nil
                     }
-                    .disabled(store.syncV2RemoteCatalogIsLoading)
                 }
-            }
-            Section("アカウント") {
-                if store.authUIState == .signedOut {
-                    Button("Appleでサインイン") {
-                        Task { await store.signInWithApple() }
+            )) {
+                TextField("作品名", text: $renameTitle)
+                Button("変更") {
+                    guard let item = pendingRename, let scope = renameAccountScope else { return }
+                    let session = renameSession
+                    let title = renameTitle
+                    renamingIDs.insert(item.workID)
+                    Task {
+                        renameFailed = await !(store.renameLibraryWork(
+                            item, title: title, expectedSession: session, accountScope: scope
+                        ))
+                        renamingIDs.remove(item.workID)
                     }
-                    Button("Googleでサインイン") { Task { await store.signInWithGoogle() } }
-                } else if case .signedIn = store.authUIState {
-                    Label("サインイン済み", systemImage: "person.crop.circle.badge.checkmark")
-                    Button("サインアウト") { Task { await store.signOutFromFuminiwa() } }
-                } else if store.authUIState == .signingIn {
-                    ProgressView("サインイン中…")
-                } else if store.authUIState == .unavailable {
-                    Label("アカウント同期は未設定", systemImage: "person.crop.circle.badge.exclamationmark")
-                        .foregroundStyle(.secondary)
-                } else if case .failed = store.authUIState {
-                    Button("Appleで再試行") {
-                        Task { await store.signInWithApple() }
-                    }
-                    Button("Googleでサインイン") { Task { await store.signInWithGoogle() } }
                 }
+                .disabled(renameTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                Button("キャンセル", role: .cancel) {}
             }
-        }
-        .sheet(isPresented: $showingProtection) {
-            if let application = store.snapshotSyncV2Application {
-                ProtectedWorksView(application: application,
-                                   contextID: String(describing: store.snapshotSyncV2AccountScope)) {
-                    _ = await store.refreshLibrary()
-                }
+            .alert("作品名を変更できませんでした", isPresented: $renameFailed) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text("作品やアカウントが切り替わっていないか、接続状態を確認して再試行してください。")
             }
-        }
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) { ShelfDisplayPicker(selection: $display) }
-            ToolbarItem(placement: .topBarTrailing) {
-                Menu {
-                    Button("新規作品", systemImage: "plus", action: makeNewDocument)
-                    Button("作品を取り込む…", systemImage: "square.and.arrow.down") { store.isImporterPresented = true }
-                    Button("復元", systemImage: "archivebox") { showingProtection = true }
-                } label: { Label("作品の操作", systemImage: "plus") }
-            }
-        }
-        .scrollContentBackground(.hidden)
-        .background(FuminiwaColor.paper.color)
-        .navigationTitle("作品一覧")
-        .alert("作品を完全に削除しますか？", isPresented: Binding(
-            get: { pendingDeletion != nil }, set: {
-                if !$0 {
-                    pendingDeletion = nil
-                }
-            }
-        )) {
-            Button("削除", role: .destructive) {
-                guard let item = pendingDeletion, let scope = deletionAccountScope else { return }
-                let session = deletionSession
-                Task { _ = await store.deleteLibraryWork(item, expectedSession: session, accountScope: scope) }
-            }
-            Button("キャンセル", role: .cancel) {}
-        } message: {
-            Text("「\(pendingDeletion?.title ?? "")」を一覧から削除します。同期した作品のサーバー受領済みデータは1年間保管されます。この端末だけの作品は元に戻せません。")
-        }
-        .alert("作品名を変更", isPresented: Binding(
-            get: { pendingRename != nil },
-            set: {
-                if !$0 {
-                    pendingRename = nil
-                }
-            }
-        )) {
-            TextField("作品名", text: $renameTitle)
-            Button("変更") {
-                guard let item = pendingRename, let scope = renameAccountScope else { return }
-                let session = renameSession
-                let title = renameTitle
-                renamingIDs.insert(item.workID)
-                Task {
-                    renameFailed = await !(store.renameLibraryWork(
-                        item, title: title, expectedSession: session, accountScope: scope
-                    ))
-                    renamingIDs.remove(item.workID)
-                }
-            }
-            .disabled(renameTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            Button("キャンセル", role: .cancel) {}
-        }
-        .alert("作品名を変更できませんでした", isPresented: $renameFailed) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text("作品やアカウントが切り替わっていないか、接続状態を確認して再試行してください。")
-        }
         #if FUMINIWA_TEST_COMPOSITION
-        .task {
+            .task {
                 if ProcessInfo.processInfo.arguments.contains("--library-preview=import-cancel") {
                     pendingImportOpen = store.syncV2LibraryItems.last?.workID
                 }
@@ -202,6 +141,104 @@ struct IOSLibraryView: View {
                     _ = await store.refreshLibrary()
                 }
             }
+    }
+
+    @ViewBuilder private var shelfContent: some View {
+        if usesGrid {
+            ScrollView {
+                VStack(alignment: .leading, spacing: Spacing.medium) {
+                    shelfHeader("作品")
+                    libraryNotices
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 140), alignment: .top)], alignment: .leading, spacing: Spacing.outer) {
+                        workRows
+                    }
+                    loadMoreButton
+                    shelfHeader("アカウント")
+                    VStack(alignment: .leading, spacing: Spacing.medium) {
+                        accountRows
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(Spacing.medium)
+                    .background(FuminiwaColor.surface.color, in: RoundedRectangle(cornerRadius: Radius.card))
+                }
+                .padding(Spacing.outer)
+            }
+        } else {
+            List {
+                Section("作品") {
+                    libraryNotices
+                    workRows
+                    loadMoreButton
+                }
+                Section("アカウント") {
+                    accountRows
+                }
+            }
+        }
+    }
+
+    private func shelfHeader(_ title: String) -> some View {
+        Text(title)
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, Spacing.medium)
+    }
+
+    @ViewBuilder private var libraryNotices: some View {
+        if let failure = store.syncV2RemoteCatalogError ?? store.libraryFailure {
+            StatusLabel(SyncV2LibraryPresentation.isOffline(failure)
+                ? SyncV2LibraryPresentation.offlineNotice : remoteOnlyOpenErrorMessage(failure),
+                systemImage: SyncV2LibraryPresentation.isOffline(failure) ? "wifi.slash" : "exclamationmark.circle",
+                tone: SyncV2LibraryPresentation.isOffline(failure) ? .offline : .danger)
+                .font(FuminiwaType.rowSecondary)
+        }
+        if store.syncV2LibraryItems.isEmpty {
+            if store.libraryIsLoading || store.syncV2RemoteCatalogIsLoading {
+                ContentUnavailableView("作品一覧を読み込み中…", systemImage: "arrow.clockwise")
+            } else if let failure = store.syncV2RemoteCatalogError ?? store.libraryFailure {
+                ContentUnavailableView(SyncV2LibraryPresentation.isOffline(failure) ? "オフラインです" : "作品一覧を読み込めませんでした",
+                                       systemImage: SyncV2LibraryPresentation.isOffline(failure) ? "wifi.slash" : "exclamationmark.circle",
+                                       description: Text("下に引いて再読み込みできます。「新規作品」から端末内で書き始められます。"))
+            } else {
+                ContentUnavailableView("最初の作品を書きましょう", systemImage: "book.closed",
+                                       description: Text("「新規作品」から、サインインせずに書き始められます。"))
+            }
+        }
+        if !searchText.isEmpty, !store.syncV2LibraryItems.contains(where: { $0.title.localizedStandardContains(searchText) }) {
+            Text("作品が見つかりません。検索する言葉を変えてください。")
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder private var loadMoreButton: some View {
+        if store.syncV2RemoteCatalogCursor != nil {
+            Button("サーバーの作品をさらに読み込む") {
+                Task { _ = await store.loadMoreRemoteCatalog() }
+            }
+            .disabled(store.syncV2RemoteCatalogIsLoading)
+        }
+    }
+
+    @ViewBuilder private var accountRows: some View {
+        if store.authUIState == .signedOut {
+            Button("Appleでサインイン") {
+                Task { await store.signInWithApple() }
+            }
+            Button("Googleでサインイン") { Task { await store.signInWithGoogle() } }
+        } else if case .signedIn = store.authUIState {
+            Label("サインイン済み", systemImage: "person.crop.circle.badge.checkmark")
+            Button("サインアウト") { Task { await store.signOutFromFuminiwa() } }
+        } else if store.authUIState == .signingIn {
+            ProgressView("サインイン中…")
+        } else if store.authUIState == .unavailable {
+            Label("アカウント同期は未設定", systemImage: "person.crop.circle.badge.exclamationmark")
+                .foregroundStyle(.secondary)
+        } else if case .failed = store.authUIState {
+            Button("Appleで再試行") {
+                Task { await store.signInWithApple() }
+            }
+            Button("Googleでサインイン") { Task { await store.signInWithGoogle() } }
+        }
     }
 
     private var workRows: some View {
