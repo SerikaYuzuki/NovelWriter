@@ -2,6 +2,8 @@
 
 運用先は`192.168.11.5`。この処理にCloudflare有料サービスは不要。通常保存は端末SQLite、削除対象は明示予約されたremote accountだけである。以下は構成と復旧手順であり、実行時の稼働状態は`last-success.json`等で確認する。
 
+同期サーバー一式をZimaOSのカスタムアプリへまとめる構成、ops管理画面、生成・移行・切戻しは[ZimaOSアプリ手順](ZIMAOS_APP.md)を参照する。以下の独立ops構成は移行元／単独運用用であり、アプリ移行後に同じ名前で起動しない。
+
 ## 有効な自動処理
 
 | 処理 | 実装・実行条件 |
@@ -22,7 +24,7 @@
 
 2026-10-03の利用者の決定により、実行時刻を従来のサーバー現地時刻（Europe/London）から**毎日03:17 日本時間**へ変更する。ZimaOS v1.7.0では`/var/spool/cron/crontabs/`が再起動で初期化され、ユーザーcronの登録が消えた。sudoはパスワード必須で`/etc`も書けないため、ホストcronの再登録に依存せずDockerの`restart: unless-stopped`を使う。ここに記すコンテナ構成は実装手順であり、本番への反映・再起動受入の証跡ではない。
 
-`SyncServerV2/docker-compose.ops.yml`を別project `fuminiwa-sync-v2-ops`として起動する。serviceは`ops`、imageは`fuminiwa-sync-v2-ops:local`、containerは`fuminiwa-sync-v2-ops`。既存のpostgres/server/edgeを作り直さずに単独で更新できる。将来の管理用コンテナの土台とするが、今回Web画面・公開portは持たない。対象コンテナへの操作はDocker socket経由で行い、ops自体のnetworkは`none`。
+`SyncServerV2/docker-compose.ops.yml`を別project `fuminiwa-sync-v2-ops`として起動する。serviceは`ops`、imageは`fuminiwa-sync-v2-ops:local`、containerは`fuminiwa-sync-v2-ops`。既存のpostgres/server/edgeを作り直さずに単独で更新できる。この独立composeはUI passwordをマウントせず、公開portも持たない。対象コンテナへの操作はDocker socket経由で行い、ops自体のnetworkは`none`。管理画面を使う構成は[ZimaOSアプリ](ZIMAOS_APP.md)に分ける。
 
 Alpineのpython3・py3-cryptography・docker-cli・supercronic・tzdataを使用する。Supercronicはコンテナ向けのcronで、環境変数・標準出力・終了signalを扱える（[公式仕様](https://github.com/aptible/supercronic)）。ソースのビルドやpipは不要。待機中はcronが次の予定まで待機する。実際のimageサイズ・CPUはビルド後に確認する。
 
@@ -30,7 +32,7 @@ Alpineのpython3・py3-cryptography・docker-cli・supercronic・tzdataを使用
 
 umaskは077。新しいbackupのfolderは0700、暗号化ファイル・manifest・成功記録・一時設定は0600、所有者は999:1000。既存ファイルの所有者や権限は自動変更しない。鍵は0600／32 bytesでuid 999から読めること。configもuid 999から読める必要がある。cronと一時設定はtmpfsの`/run/ops`に置く。
 
-hostの`backup-config.json`と鍵を読み取り専用、dailyを読み書き可能でマウントする。hostの設定は変更せず、呼び出し側が`backup_directory`を`/backups`、`key_file`を`/run/secrets/backup-aes256.key`へ読み替えた0600の一時設定で、image同梱の`backup.py --config ...`を呼ぶ。database、**database_user**、server_instance_idなどは既存設定を引き継ぐ。postgres/serverのcontainer名はopsのenvで指定できる。`backup.py`のロジック・形式・1暦年保持は変更しない。同じdailyをマウントするため、手動・cron・旧ホスト処理も既存の`.lock`で競合を拒否する。
+hostの`backup-config.json`と鍵を読み取り専用、dailyを読み書き可能でマウントする。hostの設定は変更せず、呼び出し側が`backup_directory`を`/backups`、`key_file`を`/run/secrets/backup-aes256.key`へ読み替えた0600の一時設定で、image同梱の`backup.py --config ...`を呼ぶ。database、**database_user**、server_instance_idなどは既存設定を引き継ぐ。postgres/serverのcontainer名はopsのenvで指定できる。backupの形式・暗号化・1暦年保持は維持する。Web実行では同じdailyの`.lock`を取得したfile descriptorを渡し、手動・cron・旧ホスト処理との競合も拒否する。
 
 `FUMINIWA_BACKUP_TZ`と`FUMINIWA_BACKUP_TIME`（24時間制`HH:MM`）で予定を変更できる。既定は`Asia/Tokyo`／`03:17`、cron式は`17 3 * * *`。起動ログにtimezoneと次回実行予定を出す。起動直後のbackup・停止中の予定の追いかけ実行は行わない。設定変更後はopsだけを再作成する。
 

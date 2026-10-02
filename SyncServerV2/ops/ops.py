@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import stat
 import subprocess
+import sys
 import tempfile
 from zoneinfo import ZoneInfo
 
@@ -89,7 +90,7 @@ def load_config():
     return runtime_config(json.loads(CONFIG.read_text()), os.environ)
 
 
-def run_backup(config, state_directory=STATE_DIRECTORY):
+def run_backup(config, state_directory=STATE_DIRECTORY, backup_lock=None):
     # Unique temporary config per invocation: concurrent manual/cron runs
     # still compete on backup.py's original /backups/.lock, never a new lock.
     with tempfile.NamedTemporaryFile(mode='w', prefix='backup-', suffix='.json',
@@ -97,10 +98,15 @@ def run_backup(config, state_directory=STATE_DIRECTORY):
         json.dump(config, temporary)
         temporary.flush()
         print('ops: backup started', flush=True)
-        result = subprocess.run([
+        command = [
             'python3', str(Path(__file__).with_name('backup.py')),
             '--config', temporary.name,
-        ], check=False)
+        ]
+        options = {}
+        if backup_lock is not None:
+            command += ['--lock-fd', str(backup_lock.fileno())]
+            options['pass_fds'] = (backup_lock.fileno(),)
+        result = subprocess.run(command, check=False, **options)
         print(f'ops: backup finished exit={result.returncode}', flush=True)
         return result.returncode
 
@@ -124,6 +130,17 @@ def check_health(status_path, now, proc_directory=Path('/proc/1')):
         raise OpsError('backup success is outside the 36-hour window')
 
 
+def check_ui_health(pid_path, proc_root=Path('/proc')):
+    proc = proc_root / str(int(pid_path.read_text()))
+    status = (proc / 'status').read_text().splitlines()
+    state = next(line.split()[1] for line in status if line.startswith('State:'))
+    uid = next(line.split()[1] for line in status if line.startswith('Uid:'))
+    command = (proc / 'cmdline').read_bytes().split(b'\0')
+    if (state not in ('S', 'R', 'D', 'I') or uid != str(OPS_UID)
+            or os.fsencode(Path(__file__).with_name('ops_web.py')) not in command):
+        raise OpsError('ops UI process is not alive under uid 999')
+
+
 def start():
     config = load_config()
     if not os.access(BACKUP_DIRECTORY, os.R_OK | os.W_OK | os.X_OK):
@@ -138,6 +155,10 @@ def start():
     cron_path.chmod(0o600)
     upcoming = next_execution(os.environ, dt.datetime.now(UTC))
     print(f'ops: next backup={upcoming.isoformat()} TZ={upcoming.tzinfo.key}', flush=True)
+    # Also supports source-file import in the host unit tests.
+    sys.path.insert(0, str(Path(__file__).parent))
+    import ops_web
+    ops_web.start_background()
     os.execvp('supercronic', ['supercronic', str(cron_path)])
 
 
@@ -154,6 +175,11 @@ def main():
             return run_backup(load_config())
         else:
             check_health(BACKUP_DIRECTORY / 'last-success.json', dt.datetime.now(UTC))
+            ui_pid = STATE_DIRECTORY / 'ops-ui.pid'
+            if ui_pid.exists():
+                check_ui_health(ui_pid)
+            elif Path('/run/secrets/ops-ui-password').exists():
+                raise OpsError('configured ops UI failed to start')
     except OpsError as error:
         print(f'ops: {args.command} failed: {error}', flush=True)
         return 1

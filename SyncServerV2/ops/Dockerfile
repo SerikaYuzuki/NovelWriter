@@ -9,6 +9,7 @@ ENV TZ=Asia/Tokyo BACKUP_TIME=03:17 PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 WORKDIR /opt/fuminiwa-ops
 COPY Scripts/operations/backup.py ./backup.py
 COPY SyncServerV2/ops/ops.py ./ops.py
+COPY SyncServerV2/ops/ops_web.py ./ops_web.py
 COPY SyncServerV2/ops/entrypoint SyncServerV2/ops/run-backup SyncServerV2/ops/ops-healthcheck /usr/local/bin/
 RUN chmod 755 /usr/local/bin/entrypoint /usr/local/bin/run-backup /usr/local/bin/ops-healthcheck
 

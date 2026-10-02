@@ -15,6 +15,7 @@
 | server・DB更新 | [実行手順](../SyncServerV2/README.md)、[権限・更新契約](sync/v2/deployment.md) |
 | 通信入口 | [公開Tunnel](SNAPSHOT_SYNC_V2_TUNNEL.md)、[LANのTLS](SNAPSHOT_SYNC_V2_STAGING.md) |
 | 削除・backup復旧 | [自宅サーバー運用](ACCOUNT_RETENTION_OPERATIONS.md) |
+| ZimaOSアプリ・管理画面 | [生成・移行・切戻し・更新](ZIMAOS_APP.md) |
 | 一般公開の条件 | [公開受入](COMMERCIALIZATION_IMPLEMENTATION.md) |
 
 各文書はその責務の現行ルールを持つ。入口へ全仕様を転載せず、変更対象から必要な資料へ進む。実装との差はCODE_HEALTH、利用者の判断待ちはOWNER_DECISIONSへ集約する。運用記録には確認時点を明記し、現在の稼働状況と混同しない。

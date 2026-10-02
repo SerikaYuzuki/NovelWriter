@@ -13,6 +13,7 @@ SyncServerV2/ops/**
 !SyncServerV2/ops/Dockerfile
 !SyncServerV2/ops/Dockerfile.dockerignore
 !SyncServerV2/ops/ops.py
+!SyncServerV2/ops/ops_web.py
 !SyncServerV2/ops/entrypoint
 !SyncServerV2/ops/run-backup
 !SyncServerV2/ops/ops-healthcheck

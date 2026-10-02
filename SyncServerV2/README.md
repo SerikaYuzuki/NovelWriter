@@ -17,6 +17,7 @@ See [current status](../docs/CODE_HEALTH.md) and [backup/deletion operations](..
 - Ownership/bootstrap changes: [deployment contract](../docs/sync/v2/deployment.md).
 - Auth transactions: [AUTH_INTEGRATION.md](AUTH_INTEGRATION.md) and [Auth contract](../docs/AUTH.md).
 - Device TLS: [staging guide](../docs/SNAPSHOT_SYNC_V2_STAGING.md).
+- ZimaOS custom app and ops web UI: [preparation, migration, rollback and updates](../docs/ZIMAOS_APP.md).
 
 Run the commands below from the repository root. Deployment examples mutate
 an explicitly selected v2 environment; reading or editing this README does not
@@ -128,7 +129,9 @@ guarantee of immediate availability.
 The independent `docker-compose.ops.yml` project `fuminiwa-sync-v2-ops` runs
 daily encrypted backups at **03:17 Asia/Tokyo** (2026-10-03 owner decision).
 It does not create/recreate the role-split services and has no network or web
-port. Its Alpine image includes the unchanged repository backup.py and binary
+port. The combined [ZimaOS app](../docs/ZIMAOS_APP.md) supplies the UI secret
+and a separate bridge/port; do not start both under the same container names.
+Its Alpine image includes the repository backup.py and binary
 packages for Python, cryptography, Docker CLI, Supercronic and timezone data.
 Only entrypoint initialization starts as root; the cron daemon and jobs run as
 999:1000 with the Docker socket's supplementary gid. It does not run a backup
