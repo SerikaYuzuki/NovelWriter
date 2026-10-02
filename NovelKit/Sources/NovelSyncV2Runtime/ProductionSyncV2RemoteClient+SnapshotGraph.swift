@@ -26,8 +26,14 @@ extension ProductionSyncV2RemoteClient {
                                        session: session, traversal: traversal)
             for (snapshotID, value) in ordered {
                 try Task.checkCancellation()
-                let objects = Dictionary(value.manifest.entries.map { ($0.objectId, traversal.objects[$0.objectId]!) },
-                                         uniquingKeysWith: { first, _ in first })
+                let objects = try Dictionary(value.manifest.entries.map { entry in
+                    guard let bytes = traversal.objects[entry.objectId] else {
+                        try Task.checkCancellation()
+                        throw SyncV2Failure.retryable(.lostResponse)
+                    }
+                    return (entry.objectId, bytes)
+                },
+                uniquingKeysWith: { first, _ in first })
                 traversal.memo[snapshotID] = EncodedSnapshot(
                     manifest: value.manifest, manifestBytes: value.bytes, objects: objects
                 )
@@ -222,23 +228,15 @@ extension ProductionSyncV2RemoteClient {
         // manifest order, so simultaneous failures have deterministic priority.
         for offset in stride(from: 0, to: missing.count, by: 4) {
             try Task.checkCancellation()
-            let entries = Array(missing[offset ..< min(offset + 4, missing.count)])
-            let results = await withTaskGroup(of: (Int, Result<Data, Error>).self) { group in
-                for (index, entry) in entries.enumerated() {
-                    group.addTask {
-                        do { return try await (index, .success(self.fetchObject(entry: entry, session: session))) }
-                        catch { return (index, .failure(error)) }
-                    }
-                }
-                var results: [Int: Result<Data, Error>] = [:]
-                for await (index, result) in group {
-                    results[index] = result
-                }
-                return results
-            }
+            let windowEntries = Array(missing[offset ..< min(offset + 4, missing.count)])
+            let results = await fetchObjectWindow(windowEntries, session: session)
             try Task.checkCancellation()
-            for (index, entry) in entries.enumerated() {
-                let bytes = try results[index]!.get()
+            for (index, entry) in windowEntries.enumerated() {
+                guard let result = results[index] else {
+                    try Task.checkCancellation()
+                    throw SyncV2Failure.retryable(.lostResponse)
+                }
+                let bytes = try result.get()
                 ImportProgress.current?.receivedObject(entry.objectId, bytes: Int64(bytes.count))
                 traversal.objects[entry.objectId] = bytes
                 objects[entry.objectId] = bytes
@@ -250,6 +248,30 @@ extension ProductionSyncV2RemoteClient {
             }
         }
         return objects
+    }
+
+    private func fetchObjectWindow(
+        _ windowEntries: [SnapshotEntry], session: FuminiwaSession
+    ) async -> [Result<Data, Error>?] {
+        await withTaskGroup(of: (Int, Result<Data, Error>).self) { group in
+            for (index, entry) in windowEntries.enumerated() {
+                group.addTask {
+                    do {
+                        // Swift 6.4 -O corrupts the index when the await is
+                        // inside the returned tuple. Finish the suspension
+                        // before constructing the indexed result.
+                        let bytes = try await self.fetchObject(entry: entry, session: session)
+                        return (index, .success(bytes))
+                    } catch { return (index, .failure(error)) }
+                }
+            }
+            var results = [Result<Data, Error>?](repeating: nil, count: windowEntries.count)
+            for await (index, result) in group {
+                guard results.indices.contains(index) else { continue }
+                results[index] = result
+            }
+            return results
+        }
     }
 
     private func fetchObject(
