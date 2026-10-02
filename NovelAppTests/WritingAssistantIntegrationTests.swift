@@ -32,7 +32,8 @@ struct WritingAssistantIntegrationTests {
         }
     }
 
-    @Test func mcpLostResponseRetryReturnsDurableResultWithoutApplyingAgain() async throws {
+    @Test(arguments: [WritingMCPVersion.november2025, .july2026])
+    func mcpLostResponseRetryReturnsDurableResultWithoutApplyingAgain(version: WritingMCPVersion) async throws {
         let configuration = try TestRuntimeConfiguration(account: nil)
         let application = try await SnapshotSyncV2Runtime.makeApplication(mode: .test(configuration))
         let state = AppState(dependencies: AppDependencies(userDefaults: makeIsolatedTestUserDefaults()), initialStartupState: .ready)
@@ -45,8 +46,10 @@ struct WritingAssistantIntegrationTests {
                                    "scope": ["paths": [["title"]], "appendOnly": false],
                                    "changes": [["path": ["title"], "before": "原題", "after": "新題"]]]
         func call() async throws -> [String: Any] {
-            let request: [String: Any] = ["jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": ["name": "edit_work", "arguments": args]]
-            let response = try #require(await WritingMCPProtocol.respond(JSONSerialization.data(withJSONObject: request), host: host))
+            let request: [String: Any] = ["jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": ["name": "edit_work", "arguments": args,
+                                                                                                        "_meta": ["io.modelcontextprotocol/protocolVersion": version.rawValue,
+                                                                                                                  "io.modelcontextprotocol/clientCapabilities": [:]]]]
+            let response = try #require(await WritingMCPProtocol.respond(JSONSerialization.data(withJSONObject: request), host: host, version: version))
             let decoded = try #require(JSONSerialization.jsonObject(with: response) as? [String: Any])
             return try #require(decoded["result"] as? [String: Any])
         }
@@ -87,7 +90,8 @@ struct WritingAssistantIntegrationTests {
         #expect(throws: WritingError.changedScope) { try host.capture() }
     }
 
-    @Test func mcpRequiresCurrentWorkSessionAndMechanicallyRestrictsScope() async throws {
+    @Test(arguments: [WritingMCPVersion.november2025, .july2026])
+    func mcpRequiresCurrentWorkSessionAndMechanicallyRestrictsScope(version: WritingMCPVersion) async throws {
         let document = NovelDocument.newDocument(), work = UUID()
         var attempted = 0
         let host = WritingAssistantHost(contextID: "active-session", capture: {
@@ -96,8 +100,12 @@ struct WritingAssistantIntegrationTests {
             _ = try edit.applying(to: document, grant: grant); attempted += 1
         }, undo: { _ in })
         func call(_ arguments: [String: Any]) async throws -> [String: Any] {
-            let input: [String: Any] = ["jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": ["name": "edit_work", "arguments": arguments]]
-            let bytes = try await WritingMCPProtocol.respond(JSONSerialization.data(withJSONObject: input), host: host)
+            let input: [String: Any] = ["jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": [
+                "name": "edit_work", "arguments": arguments,
+                "_meta": ["io.modelcontextprotocol/protocolVersion": version.rawValue,
+                          "io.modelcontextprotocol/clientCapabilities": [:]]
+            ]]
+            let bytes = try await WritingMCPProtocol.respond(JSONSerialization.data(withJSONObject: input), host: host, version: version)
             let response = try #require(bytes)
             return try #require(JSONSerialization.jsonObject(with: response) as? [String: Any])
         }
@@ -106,6 +114,9 @@ struct WritingAssistantIntegrationTests {
                                    "changes": [["path": ["title"], "before": document.title, "after": "unauthorized"]]]
         #expect(try await (call(args)["result"] as? [String: Any])?["isError"] as? Bool == true)
         args["sessionId"] = "active-session"
+        args["workId"] = UUID().uuidString
+        #expect(try await (call(args)["result"] as? [String: Any])?["isError"] as? Bool == true)
+        args["workId"] = work.uuidString
         #expect(try await (call(args)["result"] as? [String: Any])?["isError"] as? Bool == true)
         #expect(attempted == 0)
         args["scope"] = ["paths": [["title"]], "appendOnly": false]

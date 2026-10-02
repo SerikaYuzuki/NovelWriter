@@ -10,7 +10,8 @@ import Testing
 
 @MainActor
 struct ThumbnailAssistantTests {
-    @Test func mcpReadAndWriteNeverExposeOrLoseThumbnails() async throws {
+    @Test(arguments: [WritingMCPVersion.november2025, .july2026])
+    func mcpReadAndWriteNeverExposeOrLoseThumbnails(version: WritingMCPVersion) async throws {
         let configuration = try TestRuntimeConfiguration(account: nil)
         let application = try await SnapshotSyncV2Runtime.makeApplication(mode: .test(configuration))
         let state = AppState(dependencies: AppDependencies(userDefaults: makeIsolatedTestUserDefaults()), initialStartupState: .ready)
@@ -27,9 +28,9 @@ struct ThumbnailAssistantTests {
         let capture = try host.capture()
         let names = capture.attachments.map(\.fileName)
         #expect(names == [file.fileName])
-        let listing = try await read(host, paths: [])
+        let listing = try await read(host, paths: [], version: version)
         #expect(!String(decoding: listing, as: UTF8.self).contains("fuminiwa-thumbnail"))
-        let denied = try await read(host, paths: [["attachments", image.attachmentId.uuidString.lowercased()]])
+        let denied = try await read(host, paths: [["attachments", image.attachmentId.uuidString.lowercased()]], version: version)
         let response = try #require(JSONSerialization.jsonObject(with: denied) as? [String: Any])
         #expect((response["result"] as? [String: Any])?["isError"] as? Bool == true)
         let visible = try #require(capture.attachments.first)
@@ -65,10 +66,12 @@ struct ThumbnailAssistantTests {
         }
     }
 
-    private func read(_ host: WritingAssistantHost, paths: [[String]]) async throws -> Data {
+    private func read(_ host: WritingAssistantHost, paths: [[String]], version: WritingMCPVersion) async throws -> Data {
         let input: [String: Any] = ["jsonrpc": "2.0", "id": 1, "method": "tools/call",
-                                    "params": ["name": "read_work", "arguments": ["paths": paths]]]
-        let response = try await WritingMCPProtocol.respond(JSONSerialization.data(withJSONObject: input), host: host)
+                                    "params": ["name": "read_work", "arguments": ["paths": paths],
+                                               "_meta": ["io.modelcontextprotocol/protocolVersion": version.rawValue,
+                                                         "io.modelcontextprotocol/clientCapabilities": [:]]]]
+        let response = try await WritingMCPProtocol.respond(JSONSerialization.data(withJSONObject: input), host: host, version: version)
         return try #require(response)
     }
 }
