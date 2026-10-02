@@ -29,10 +29,6 @@ enum WorkbenchColumnLayout: Hashable {
             self = .threeColumn
         }
     }
-
-    static func requiresSidebarFocusHandoff(from previous: ProjectSection, to next: ProjectSection) -> Bool {
-        WorkbenchColumnLayout(section: previous) != WorkbenchColumnLayout(section: next)
-    }
 }
 
 struct NovelWorkbenchView: View {
@@ -49,7 +45,6 @@ struct NovelWorkbenchView: View {
     @State private var isImportingAttachment = false
     @State private var attachmentImportSession: DocumentSessionToken?
     @State private var attachmentImportMessage: OperationMessage?
-    @State private var sidebarFocusHandoffID: UUID?
     @State private var isPlotCardRailPresented = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isAssistantPresented = false
@@ -59,7 +54,6 @@ struct NovelWorkbenchView: View {
         ResizableAssistantLayout(isPresented: isAssistantPresented && showsWritingActions, defaults: appState.userDefaults) {
             VStack(spacing: 0) {
                 workbenchSplitView
-                    .id(workbenchColumnLayout)
                 if !showsWritingActions {
                     WorkbenchStatusBarView()
                 }
@@ -162,30 +156,20 @@ struct NovelWorkbenchView: View {
         )
     }
 
-    @ViewBuilder
     private var workbenchSplitView: some View {
-        if usesTwoColumnLayout {
-            NavigationSplitView(columnVisibility: $columnVisibility) {
-                projectSidebar
-            } detail: {
-                workbenchDetail
-                    .frame(minWidth: 560)
-            }
-        } else {
-            NavigationSplitView(columnVisibility: $columnVisibility) {
-                projectSidebar
-            } content: {
-                workbenchContent
-                    .toolbar { WorkbenchOutlineToolbarContent(requestEpisodeRename: requestEpisodeRename) }
-                    .navigationSplitViewColumnWidth(
-                        min: contentColumnWidths.min,
-                        ideal: contentColumnWidths.ideal,
-                        max: contentColumnWidths.max
-                    )
-            } detail: {
-                workbenchDetail
-                    .frame(minWidth: 560)
-            }
+        NavigationSplitView(columnVisibility: $columnVisibility) {
+            projectSidebar
+        } content: {
+            workbenchContent
+                .toolbar { WorkbenchOutlineToolbarContent(requestEpisodeRename: requestEpisodeRename) }
+                .navigationSplitViewColumnWidth(
+                    min: contentColumnWidths.min,
+                    ideal: contentColumnWidths.ideal,
+                    max: contentColumnWidths.max
+                )
+        } detail: {
+            workbenchDetail
+                .frame(minWidth: 560)
         }
     }
 
@@ -195,24 +179,14 @@ struct NovelWorkbenchView: View {
             onSelect: selectProjectSectionFromSidebar
         )
         .navigationSplitViewColumnWidth(min: 184, ideal: 200, max: 224)
+        .background(WorkbenchContentColumnVisibility(isCollapsed: usesTwoColumnLayout))
     }
 
     private func selectProjectSectionFromSidebar(_ section: ProjectSection) {
         Task { @MainActor in
-            let previous = appState.workspaceSelection.section
-            guard await appState.selectProjectSectionAfterTransition(section),
-                  WorkbenchColumnLayout.requiresSidebarFocusHandoff(from: previous, to: section) else { return }
-
-            // 2列と3列の切替ではNavigationSplitView自体が再生成される。クリック元の
-            // Listが消えた直後、新しいSidebarへだけfirst responderを引き継ぐ。
-            let handoffID = UUID()
-            sidebarFocusHandoffID = handoffID
-            projectSidebarIsFocused = false
-            await Task.yield()
-            guard sidebarFocusHandoffID == handoffID,
-                  appState.workspaceSelection.section == section else { return }
+            guard await appState.selectProjectSectionAfterTransition(section) else { return }
+            // The sidebar survives section changes; retain keyboard navigation on the clicked list.
             projectSidebarIsFocused = true
-            sidebarFocusHandoffID = nil
         }
     }
 

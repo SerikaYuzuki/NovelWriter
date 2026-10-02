@@ -97,126 +97,115 @@ struct IOSAdaptiveWritingView: View {
         presentedHorizontalSizeClass ?? horizontalSizeClass
     }
 
-    @ViewBuilder
     private var regularLayout: some View {
+        NavigationSplitView {
+            regularProjectSidebar
+        } detail: {
+            if regularSectionHasOutline {
+                NavigationSplitView {
+                    regularContent
+                } detail: {
+                    regularDetail
+                }
+                .navigationSplitViewStyle(.balanced)
+            } else {
+                regularDetail
+            }
+        }
+        .navigationSplitViewStyle(.balanced)
+    }
+
+    private var regularSectionHasOutline: Bool {
+        regularProjectSection != .projectInfo && regularProjectSection != .settings
+    }
+
+    @ViewBuilder
+    private var regularContent: some View {
+        switch regularProjectSection ?? .writing {
+        case .writing:
+            IOSWritingOutlineList(store: store) { chapterID, episodeID in
+                Task {
+                    guard await store.selectEpisodeAfterDeviceSyncDeparture(
+                        chapterID: chapterID,
+                        episodeID: episodeID
+                    ) else { return }
+                    openEpisode(chapterID, episodeID)
+                }
+            }
+        case .plot:
+            IOSPlotOutlineView(
+                store: store,
+                selection: $selectedPlotItem,
+                expectedSession: expectedSession,
+                usesNavigationLinks: false
+            )
+        case .characters:
+            IOSCharacterOutlineView(
+                store: store,
+                selection: $selectedCharacterID,
+                expectedSession: expectedSession,
+                usesNavigationLinks: false
+            )
+        case .worldbuilding:
+            IOSWorldNoteOutlineView(
+                store: store,
+                selection: $selectedWorldNoteID,
+                expectedSession: expectedSession,
+                usesNavigationLinks: false
+            )
+        case .feedback:
+            IOSAssistantFeedbackOutline(store: store, selection: $selectedFeedbackID)
+        case .references:
+            IOSReferencesOutlineView(
+                store: store,
+                selection: $selectedReferenceFileName,
+                expectedSession: expectedSession,
+                usesNavigationLinks: false
+            )
+        case .projectInfo, .settings:
+            EmptyView()
+        }
+    }
+
+    @ViewBuilder
+    private var regularDetail: some View {
         switch regularProjectSection ?? .writing {
         case .projectInfo:
-            NavigationSplitView {
-                regularProjectSidebar
-            } detail: {
-                IOSProjectInfoView(store: store)
-            }
-            .navigationSplitViewStyle(.balanced)
+            IOSProjectInfoView(store: store)
         case .writing:
-            NavigationSplitView {
-                regularProjectSidebar
-            } content: {
-                IOSWritingOutlineList(store: store) { chapterID, episodeID in
-                    Task {
-                        guard await store.selectEpisodeAfterDeviceSyncDeparture(
-                            chapterID: chapterID,
-                            episodeID: episodeID
-                        ) else { return }
-                        openEpisode(chapterID, episodeID)
-                    }
-                }
-            } detail: {
-                IOSEditorPane(store: store, userDefaults: store.userDefaults)
-            }
-            .navigationSplitViewStyle(.balanced)
-            .navigationTitle("執筆")
+            IOSEditorPane(store: store, userDefaults: store.userDefaults)
         case .plot:
-            NavigationSplitView {
-                regularProjectSidebar
-            } content: {
-                IOSPlotOutlineView(
-                    store: store,
-                    selection: $selectedPlotItem,
-                    expectedSession: expectedSession,
-                    usesNavigationLinks: false
-                )
-            } detail: {
-                IOSPlotDetailView(
-                    store: store,
-                    selection: selectedPlotItem,
-                    expectedSession: expectedSession,
-                    onDeletion: { selectedPlotItem = nil }
-                )
-            }
-            .navigationSplitViewStyle(.balanced)
+            IOSPlotDetailView(
+                store: store,
+                selection: selectedPlotItem,
+                expectedSession: expectedSession,
+                onDeletion: { selectedPlotItem = nil }
+            )
         case .characters:
-            NavigationSplitView {
-                regularProjectSidebar
-            } content: {
-                IOSCharacterOutlineView(
-                    store: store,
-                    selection: $selectedCharacterID,
-                    expectedSession: expectedSession,
-                    usesNavigationLinks: false
-                )
-            } detail: {
-                IOSCharacterDetailView(
-                    store: store,
-                    characterID: selectedCharacterID,
-                    expectedSession: expectedSession,
-                    onDeletion: { selectedCharacterID = nil }
-                )
-            }
-            .navigationSplitViewStyle(.balanced)
+            IOSCharacterDetailView(
+                store: store,
+                characterID: selectedCharacterID,
+                expectedSession: expectedSession,
+                onDeletion: { selectedCharacterID = nil }
+            )
         case .worldbuilding:
-            NavigationSplitView {
-                regularProjectSidebar
-            } content: {
-                IOSWorldNoteOutlineView(
-                    store: store,
-                    selection: $selectedWorldNoteID,
-                    expectedSession: expectedSession,
-                    usesNavigationLinks: false
-                )
-            } detail: {
-                IOSWorldNoteDetailView(
-                    store: store,
-                    noteID: selectedWorldNoteID,
-                    expectedSession: expectedSession,
-                    onDeletion: { selectedWorldNoteID = nil }
-                )
-            }
-            .navigationSplitViewStyle(.balanced)
+            IOSWorldNoteDetailView(
+                store: store,
+                noteID: selectedWorldNoteID,
+                expectedSession: expectedSession,
+                onDeletion: { selectedWorldNoteID = nil }
+            )
         case .feedback:
-            NavigationSplitView {
-                regularProjectSidebar
-            } content: {
-                IOSAssistantFeedbackOutline(store: store, selection: $selectedFeedbackID)
-            } detail: {
-                AssistantFeedbackDetail(record: store.assistantFeedback.first { $0.id == selectedFeedbackID })
-            }
-            .navigationSplitViewStyle(.balanced)
+            AssistantFeedbackDetail(record: store.assistantFeedback.first { $0.id == selectedFeedbackID })
         case .references:
-            NavigationSplitView {
-                regularProjectSidebar
-            } content: {
-                IOSReferencesOutlineView(
-                    store: store,
-                    selection: $selectedReferenceFileName,
-                    expectedSession: expectedSession,
-                    usesNavigationLinks: false
-                )
-            } detail: {
-                IOSReferenceDetailView(
-                    store: store,
-                    fileName: selectedReferenceFileName,
-                    expectedSession: expectedSession,
-                    onDeletion: { selectedReferenceFileName = nil }
-                )
-            }
-            .navigationSplitViewStyle(.balanced)
+            IOSReferenceDetailView(
+                store: store,
+                fileName: selectedReferenceFileName,
+                expectedSession: expectedSession,
+                onDeletion: { selectedReferenceFileName = nil }
+            )
         case .settings:
-            NavigationSplitView {
-                regularProjectSidebar
-            } detail: {
-                IOSSettingsView(store: store, userDefaults: store.userDefaults)
-            }
-            .navigationSplitViewStyle(.balanced)
+            IOSSettingsView(store: store, userDefaults: store.userDefaults)
         }
     }
 
