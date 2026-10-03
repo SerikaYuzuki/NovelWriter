@@ -83,7 +83,7 @@ extension IOSDocumentStore {
                         selectedConfiguration = configuration
                     }
                     let application = try await SnapshotSyncV2Runtime.makeApplication(
-                        mode: .test(selectedConfiguration), timing: timing
+                        mode: .test(selectedConfiguration), timing: timing, deviceLabel: DeviceLabelSettings.provider(defaults: userDefaults)
                     )
                     Self.testRuntimeApplications[key] = application
                     snapshotSyncV2Application = application
@@ -103,7 +103,7 @@ extension IOSDocumentStore {
                     clientVersion: "0.1.0", clientPlatform: .ios
                 ) {
                     snapshotSyncV2Application = try await SnapshotSyncV2Runtime.makeApplication(
-                        mode: .production(configuration), timing: timing
+                        mode: .production(configuration), timing: timing, deviceLabel: DeviceLabelSettings.provider(defaults: userDefaults)
                     )
                     writingProgress.requestConnection(WritingProgressSQLiteStore(root: configuration.localRoot.url))
                 } else {

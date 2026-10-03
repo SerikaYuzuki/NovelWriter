@@ -23,6 +23,7 @@ struct IOSSettingsView: View {
                 Label("AI支援", systemImage: "sparkles")
             }
             Section {
+                DeviceLabelSettingsView(defaults: userDefaults)
                 Text(store.authUIState.label).foregroundStyle(.secondary)
                 switch store.authUIState {
                 case .signedOut, .failed:

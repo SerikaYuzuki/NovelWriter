@@ -11,6 +11,7 @@ pub mod auth_postgres;
 pub mod auth_service;
 pub mod auth_vault;
 pub mod auth_wire;
+pub mod device_label;
 pub mod domain;
 pub mod http;
 pub mod object_store;

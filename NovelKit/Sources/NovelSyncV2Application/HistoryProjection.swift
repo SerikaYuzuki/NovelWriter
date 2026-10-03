@@ -54,6 +54,12 @@ public enum SyncV2SnapshotAvailability: String, Hashable, Sendable {
 }
 
 public struct SyncV2HistoryItem: Hashable, Sendable {
+    public let deviceLabel: String?
+
+    public func displayDeviceLabel(currentLabel: String) -> String {
+        source == .local ? currentLabel : DeviceLabel.validated(deviceLabel) ?? DeviceLabel.unknown
+    }
+
     public var snapshotAvailability: SyncV2SnapshotAvailability = .local
 
     public var displayReason: String {
@@ -93,8 +99,10 @@ public struct SyncV2HistoryItem: Hashable, Sendable {
         createdAt: Date,
         source: SyncV2HistorySource,
         localAvailability: SyncV2HistoryAvailability,
-        onlineAvailability: SyncV2HistoryAvailability
+        onlineAvailability: SyncV2HistoryAvailability,
+        deviceLabel: String? = nil
     ) {
+        self.deviceLabel = deviceLabel
         self.occurrenceID = occurrenceID
         self.snapshotID = snapshotID
         self.reason = reason

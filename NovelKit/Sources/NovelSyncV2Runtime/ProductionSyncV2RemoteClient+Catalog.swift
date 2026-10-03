@@ -150,7 +150,7 @@ extension ProductionSyncV2RemoteClient {
             query: [
                 URLQueryItem(name: "pageSize", value: String(pageSize)),
                 cursor.map { URLQueryItem(name: "cursor", value: $0) }
-            ].compactMap(\.self)
+            ].compactMap(\.self), includesDeviceLabel: true
         )
         let page = try checkedObject(
             object,
@@ -176,7 +176,7 @@ extension ProductionSyncV2RemoteClient {
     func remoteConflict(workID: WorkID) async throws -> SyncV2ConflictProjection? {
         let object = try await getJSON(
             path: "v2/works/\(workID.description)/conflict",
-            query: []
+            query: [], includesDeviceLabel: true
         )
         let response = try checkedObject(object, keys: ["conflict", "result"])
         guard response["result"] as? String == "noChanges" else {
@@ -190,7 +190,7 @@ extension ProductionSyncV2RemoteClient {
             keys: [
                 "baseSnapshotId", "conflictId", "localSnapshotId",
                 "remoteSnapshotId", "revision", "sourceGeneration", "workId"
-            ]
+            ] + (rawConflict.keys.contains("remoteDeviceLabel") ? ["remoteDeviceLabel"] : [])
         )
         guard let responseWorkID = conflict["workId"] as? String,
               try WorkID(uuidString: responseWorkID) == workID,
@@ -217,8 +217,17 @@ extension ProductionSyncV2RemoteClient {
             baseSnapshotID: base,
             localSnapshotID: SnapshotID(rawValue: local),
             remoteSnapshotID: SnapshotID(rawValue: remote),
-            sourceGeneration: generation
+            sourceGeneration: generation,
+            remoteDeviceLabel: parseDeviceLabel(conflict["remoteDeviceLabel"])
         )
+    }
+
+    private func parseDeviceLabel(_ value: Any?) throws -> String? {
+        guard let value, !(value is NSNull) else { return nil }
+        guard let label = value as? String, let normalized = DeviceLabel.validated(label), normalized == label else {
+            throw SyncV2Failure.receiptMismatch
+        }
+        return label
     }
 
     private func historyEntry(
@@ -229,7 +238,7 @@ extension ProductionSyncV2RemoteClient {
             rawItem,
             keys: [
                 "createdAt", "occurrenceId", "pinned", "reason", "snapshotId"
-            ]
+            ] + (rawItem.keys.contains("deviceLabel") ? ["deviceLabel"] : [])
         )
         guard let occurrence = (item["occurrenceId"] as? String).flatMap(UUID.init),
               let snapshotRaw = item["snapshotId"] as? String,
@@ -244,7 +253,8 @@ extension ProductionSyncV2RemoteClient {
             snapshotID: SnapshotID(rawValue: snapshotRaw),
             reason: reason,
             pinned: pinned,
-            createdAt: createdAt
+            createdAt: createdAt,
+            deviceLabel: parseDeviceLabel(item["deviceLabel"])
         )
     }
 }

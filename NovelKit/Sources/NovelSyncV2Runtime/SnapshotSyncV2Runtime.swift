@@ -18,9 +18,10 @@ public enum SnapshotSyncV2Runtime {
 
     public static func makeApplication(
         mode: RuntimeMode,
-        timing: FuminiwaTiming = .init()
+        timing: FuminiwaTiming = .init(),
+        deviceLabel: @escaping DeviceLabelProvider = { nil }
     ) async throws -> SyncV2Application {
-        try await makeApplication(mode: mode, resumeOnLaunch: true, timing: timing)
+        try await makeApplication(mode: mode, resumeOnLaunch: true, timing: timing, deviceLabel: deviceLabel)
     }
 
     static func makeApplicationForTesting(
@@ -33,7 +34,8 @@ public enum SnapshotSyncV2Runtime {
     private static func makeApplication(
         mode: RuntimeMode,
         resumeOnLaunch: Bool,
-        timing: FuminiwaTiming = .init()
+        timing: FuminiwaTiming = .init(),
+        deviceLabel: @escaping DeviceLabelProvider = { nil }
     ) async throws -> SyncV2Application {
         let composition: SyncV2RuntimeComposition
         switch mode {
@@ -96,7 +98,7 @@ public enum SnapshotSyncV2Runtime {
                     clientVersion: configuration.clientVersion,
                     clientPlatform: configuration.clientPlatform,
                     sessionProvider: provider,
-                    snapshotCache: store, backfillPersistence: store
+                    snapshotCache: store, backfillPersistence: store, deviceLabel: deviceLabel
                 )
             } else {
                 remote = OfflineProductionSyncV2RemoteClient()

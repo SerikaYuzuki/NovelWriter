@@ -57,6 +57,17 @@ impl Repository {
         source: Uuid,
         request: &RecoveryRequest,
     ) -> SyncResult<Value> {
+        self.recover_work_with_device_label(p, source, request, None)
+            .await
+    }
+
+    pub async fn recover_work_with_device_label(
+        &self,
+        p: &AuthenticatedPrincipal,
+        source: Uuid,
+        request: &RecoveryRequest,
+        device_label: Option<&str>,
+    ) -> SyncResult<Value> {
         if source == request.new_work_id {
             return Err(SyncError::SchemaViolation("newWorkId".into()));
         }
@@ -124,7 +135,8 @@ impl Repository {
             let value = json!({"binding":{"accountId":p.account_id,"accountFence":p.account_fence,"serverInstanceId":p.server_instance_id,"protocolEpoch":2},"commandId":command_id,"commandKind":kind,"payload":payload,"schemaVersion":2,"sourceGeneration":1,"sourceSnapshotId":root_id});
             let bytes = canonical_json(&value).map_err(|_| SyncError::InvalidCanonicalBytes)?;
             let cmd = parse_command(&bytes)?;
-            self.command_in_transaction(&mut tx, p, &cmd).await?;
+            self.command_in_transaction(&mut tx, p, &cmd, device_label)
+                .await?;
         }
         Self::copy_assistant_records(
             &mut tx,

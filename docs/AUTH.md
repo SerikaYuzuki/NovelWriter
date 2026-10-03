@@ -32,3 +32,5 @@ Auth v1でAppleログインからFUMINIWA sessionを発行し、Snapshot Sync v2
 Apple通知は、規範の`/v1/auth/providers/apple/notifications`と実装の`/v1/auth/apple/notifications`に差分が残る。実通知の受入・鍵rotation・署名済み実機の一連の認証を、過去のログイン成功だけで完了扱いにしない。
 
 検証の入口は`NovelAuthTests`、`NovelAuthConformanceTests`、Rust auth unit、専用DBの[auth runner](../SyncServerV2/AUTH_INTEGRATION.md)とaccount deletion gate。通常checkから実DBや私的credentialへ接続しない。
+
+保存した端末名は個人を特定しうる情報としてhistory occurrenceだけに保持し、本文・ヘッダ値をログに出さず、アカウント実消去／作品保管期限後の実消去でhistory行とともに消す。

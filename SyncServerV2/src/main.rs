@@ -198,6 +198,7 @@ mod tests {
         let request = axum::http::Request::builder()
             .uri("/v2/works/private-work/download?cursor=private-cursor")
             .header("authorization", "Bearer private-token")
+            .header("fuminiwa-device-label", "private-device-label")
             .body(axum::body::Body::from("private-manuscript"))
             .unwrap();
         assert_eq!(
@@ -222,6 +223,7 @@ mod tests {
             "private-cursor",
             "private-token",
             "private-manuscript",
+            "private-device-label",
         ] {
             assert!(!output.contains(private));
         }

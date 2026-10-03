@@ -286,7 +286,7 @@ struct SnapshotPopover: View {
                                     application: application, workID: workID, snapshotID: entry.snapshotID,
                                     rowDate: entry.createdAt,
                                     rowKind: HistoryPresentation().subtitle(entry),
-                                    historyItem: entry,
+                                    historyItem: entry, userDefaults: appState.userDefaults,
                                     announcesStatus: entry.occurrenceID == presenter.snapshots.first?.id
                                 ) {
                                     guard appState.matchesSnapshotSyncV2AccountScope(scope) else { return }
@@ -299,7 +299,7 @@ struct SnapshotPopover: View {
                                 Button {
                                     presenter.requestRestore(request)
                                 } label: {
-                                    SnapshotHistoryLabel(item: entry)
+                                    SnapshotHistoryLabel(item: entry, userDefaults: appState.userDefaults)
                                 }
                                 .buttonStyle(.plain)
                             }

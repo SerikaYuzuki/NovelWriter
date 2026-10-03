@@ -33,6 +33,18 @@ struct SnapshotHistorySections<Row: View>: View {
 }
 
 struct SnapshotHistoryLabel: View {
+    @AppStorage private var deviceLabelOverride: String
+
+    init(item: SyncV2HistoryItem, presentation: HistoryPresentation = .init(), userDefaults: UserDefaults = .standard) {
+        self.item = item
+        self.presentation = presentation
+        _deviceLabelOverride = AppStorage(wrappedValue: "", DeviceLabel.defaultsKey, store: userDefaults)
+    }
+
+    private var deviceLabel: String {
+        item.displayDeviceLabel(currentLabel: DeviceLabel.current(deviceLabelOverride, defaultLabel: DeviceLabelSettings.defaultLabel))
+    }
+
     let item: SyncV2HistoryItem
     var presentation = HistoryPresentation()
 
@@ -43,7 +55,7 @@ struct SnapshotHistoryLabel: View {
                     .font(.body).monospacedDigit()
                     .foregroundStyle(item.isAutosave ? FuminiwaColor.textSecondary.color : FuminiwaColor.textPrimary
                         .color)
-                Text(presentation.subtitle(item))
+                Text(presentation.subtitle(item) + "・" + deviceLabel)
                     .font(FuminiwaType.rowSecondary)
                     .foregroundStyle(FuminiwaColor.textSecondary.color)
             }
@@ -54,6 +66,6 @@ struct SnapshotHistoryLabel: View {
                 .accessibilityHidden(true)
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(presentation.label(item))
+        .accessibilityLabel(presentation.label(item) + "・" + deviceLabel)
     }
 }

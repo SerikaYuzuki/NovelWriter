@@ -79,7 +79,12 @@ async fn recover(
         Ok(p) => p,
         Err(e) => return e,
     };
-    match state.repo.recover_work(&p, work, &request).await {
+    let label = crate::device_label::from_headers(&headers);
+    match state
+        .repo
+        .recover_work_with_device_label(&p, work, &request, label.as_deref())
+        .await
+    {
         Ok(v) => canonical_response(StatusCode::OK, v),
         Err(e) => error_response(e),
     }
