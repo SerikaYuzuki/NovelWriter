@@ -7,7 +7,7 @@ struct WritingEditHistoryView: View {
     @State private var states: [UUID: String] = [:]
     @State private var notice: String?
     private let names = ["title": "タイトル", "synopsis": "あらすじ", "chapters": "章", "episodes": "話", "content": "本文",
-                         "characters": "登場人物", "plotCards": "プロット", "flags": "伏線", "worldNotes": "設定ノート", "memo": "メモ", "attachments": "添付資料"]
+                         "characters": "登場人物", "plotCards": "プロット", "flags": "伏線", "worldNotes": "設定ノート", "memo": "メモ", "attachments": "添付資料", "thumbnails": "サムネイル", "work": "表紙"]
     var body: some View {
         List {
             if records.isEmpty {
@@ -22,7 +22,9 @@ struct WritingEditHistoryView: View {
                         ForEach(Array(edit.changes.enumerated()), id: \.offset) { _, change in
                             VStack(alignment: .leading, spacing: 5) {
                                 Text(change.path.compactMap { names[$0] }.joined(separator: " / ")).font(.headline)
-                                if change.path.first == "attachments" {
+                                if change.path.first == "thumbnails" {
+                                    Text("サムネイルの設定・差し替え・削除").font(.caption)
+                                } else if change.path.first == "attachments" {
                                     Text("添付資料の追加・更新・削除または並べ替え").font(.caption)
                                 } else {
                                     Text("変更前").font(.caption).foregroundStyle(.secondary)

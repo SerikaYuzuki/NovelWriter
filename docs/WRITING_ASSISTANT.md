@@ -34,7 +34,9 @@ Mac・iOSの「AI支援」から校正・感想と、会話形式のアドバイ
 
 AIパネルの「外部AI」でクライアント名を登録し、接続設定をコピーする。Macアプリを開いている間だけ、現在の作品をMCPから読み書きできる。資格情報はクライアントごとの端末限定Keychainに置き、解除すると待機中の操作も止める。
 
-公開する操作は`read_work`・`edit_work`・`undo_edit`。本文、章・話、人物、プロット、伏線、メモ、設定ノート、添付資料を扱う。添付の編集は1件300 KB以内。作品自体の削除、アカウント、APIキー、アプリ設定、任意のファイルやコマンド実行は公開しない。
+MCPは2026-07-28と旧版2025-03-26／2025-06-18／2025-11-25に対応する。新版本はinitialize不要で、各要求の版・clientCapabilitiesを`params._meta`に含め、`MCP-Protocol-Version`／`Mcp-Method`（tools/callでは`Mcp-Name`も）を本文と一致させる。旧版のinitializeは引き続き使える。`server/discover`で対応版と機能を確認でき、`read_work`の`currentEpisodeId`は現在の話のID（未選択ならnull）を返す。
+
+公開する操作は`read_work`・`edit_work`・`undo_edit`と、サムネイル専用の`read_thumbnail`・`set_thumbnail`・`remove_thumbnail`。本文、章・話、人物、プロット、伏線、メモ、設定ノート、添付資料を扱う。添付の編集は1件300 KB以内。作品自体の削除、アカウント、APIキー、アプリ設定、任意のファイルやコマンド実行は公開しない。
 
 初回登録した接続を信頼し、外部AIが申告した依頼範囲を機械的に制限する。自然言語の依頼を正しく解釈したかまではアプリで判定できないという採択済みの方式で、誤編集には変更記録と取り消しを使う。同じ依頼IDは再適用せず、再送には記録済みの状態を返す。
 
@@ -44,4 +46,18 @@ HTTPSのResponsesまたはChat Completionsを使う。既存の用途別モデ�
 
 合成データで記録、範囲、同時編集、Undo、IME待ち、再送、復元、Swift/Rust間の日時互換を検証する。Test compositionは実HTTP・Keychain・MCP外部接続を拒否する。実APIの課金送信と私的原稿の送信は開発試験に使わない。署名済みアプリ、実端末の二台同期、実API接続はそれぞれ独立した受入として記録する。
 
-サムネイルの予約名attachmentは孤立したものも含めてチャット・校正・感想・MCPへ渡さず、MCPで読み書きできない。添付全体の置換時は除外画像を再結合し、資料編集で消失させない。人物・世界観を削除した場合だけ対応画像を同一checkpointから外し、以前から孤立している画像は保持する。[D-104契約](sync/v2/thumbnails.md)。
+サムネイルの予約名attachmentは孤立したものも含めてアプリ内AIのチャット・校正・感想・送信payloadへ渡さない。MCPも`read_work`／`edit_work`からは読み書きできず、専用ツールだけで扱う。添付全体の置換時は除外画像を再結合し、資料編集で消失させない。人物・世界観を削除した場合だけ対応画像を同一checkpointから外し、以前から孤立している画像は保持する。[D-104契約](sync/v2/thumbnails.md)。
+
+## MCPのサムネイル
+
+`read_thumbnail`は`workId`・`sessionId`と`target: {kind, id}`を必須とする。kindは`work`／`character`／`world-note`、idは作品のdocument IDまたは人物・世界観の項目ID。現在の作品に存在する対象だけを読め、設定済みならMCP Image Content（base64、`mimeType: image/jpeg`）、未設定なら`exists:false`を返す。画像形式は[MCP Tools: Image Content](https://modelcontextprotocol.io/specification/2026-07-28/server/tools#image-content)に従う。
+
+`set_thumbnail`は上記にUUIDの`requestId`、`scope`、元画像のbase64文字列`image`を追加する。scopeは既存WritingGrantの接頭辞照合で制限し、パスは`["thumbnails","work",<documentId>]`／`["thumbnails","characters",<id>]`／`["thumbnails","worldNotes",<id>]`（パスのUUIDは小文字）。`appendOnly:false`を必須とし、本文・通常添付の権限からサムネイルの権限を推測しない。`remove_thumbnail`も同じ対象・scope・依頼IDを使う。
+
+元画像は8 MiB以下、最大辺8192 px・3200万画素以下のPNG／JPEG／HEIC／WebPで、ImageIOが読める1フレームだけを受け付ける。多フレーム・アニメーション・不正画像は拒否する。任意の`crop`は向き適用後の画像の左上を原点とする`centerX`／`centerY`（0〜1）、`zoom`（1〜8）。省略は中央・zoom=1。手動設定と同じThumbnailEncoderで切り抜き・縮小・metadata除去を行い、既存の200 KiB以下のJPEG保存を維持する。
+
+元画像8 MiBはbase64化で最大11,184,812 bytesになるため、Mac内MCPのHTTP bodyは`set_thumbnail`だけ12,000,000 bytesまで許す。他の操作は従来の2,000,000 bytes、headerは16 KiB、30秒・同時接続16件を維持する。これは外部AIとMacの間の上限であり、[AI recordsの同期lane](sync/v2/assistant.md)のPOST 2 MiB／payload 1,000,000 bytesは変えない。
+
+同期する`edit`レコードのWritingEditには対象・操作・元画像SHA-256・cropのみを置く。画像は同期されない`WritingStoredEdit.prepared`の端末内Undo journalにだけ保持し、前後2枚のJPEGのbase64と依頼情報を含めても600,000 bytes以下に制限する（2枚200 KiBなら画像のbase64は合計546,136 bytes）。新しいschema／wire／record kindは追加しない。再送はdigest・対象・cropまで一致した依頼に記録済みの状態を返し、再適用しない。
+
+`undo_edit`は現在の画像が変更後と同一なら元画像へ戻し、元が未設定なら削除する。その後の手動変更やowner削除には上書きしない。アプリ再起動後も同じ端末のjournalから取り消せるが、別端末・別作品復元では実行claimを引き継がない。checkpoint失敗のprepared依頼は自動再実行せず、保存済みの変更後画像がある場合だけ明示Undoできる。作品・session・account・document operation gate、IME確定待ちとローカルで完結する保存を通し、本文の手入力として計上しない。

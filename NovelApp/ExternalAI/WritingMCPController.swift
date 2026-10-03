@@ -115,9 +115,9 @@ final class WritingMCPController {
                     let id = UUID()
                     let client = WritingMCPConnection(connection: connection, port: self.port,
                                                       authorize: { [weak self] token in self?.authorize(token) },
-                                                      handle: { [weak self] data, clientID in
+                                                      handle: { [weak self] data, clientID, version in
                                                           guard let controller = self else { return nil }
-                                                          return await controller.dispatch(data, client: clientID)
+                                                          return await controller.dispatch(data, client: clientID, version: version)
                                                       }, finished: { [weak self] in self?.connections[id] = nil })
                     self.connections[id] = client; client.start()
                 }
@@ -160,10 +160,10 @@ final class WritingMCPController {
         defaults.set(try? JSONEncoder().encode(clients), forKey: "assistant.mcp.clients")
     }
 
-    private func dispatch(_ data: Data, client: UUID) async -> Data? {
+    private func dispatch(_ data: Data, client: UUID, version: WritingMCPVersion) async -> Data? {
         guard clients.contains(where: { $0.id == client }) else { return nil }
         let id = UUID()
-        let task = Task { @MainActor in await WritingMCPProtocol.respond(data, host: self.host()) }
+        let task = Task { @MainActor in await WritingMCPProtocol.respond(data, host: self.host(), version: version) }
         requests[id] = (client, task)
         defer { requests[id] = nil }
         return await task.value
