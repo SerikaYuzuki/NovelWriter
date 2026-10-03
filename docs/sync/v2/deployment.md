@@ -263,4 +263,4 @@ local socket bind cannot execute the transport portion of this test.
 隔離DBへ復元・検証後、既存の明示migrator upgradeで0012まで反映し、runtimeの起動・旧応答・opt-inを
 確認してwriterを再開する。その後新clientを配布する。旧clientはヘッダなし／opt-inなしで継続できる。
 旧serverも未知ヘッダを無視し、opt-in拒否時は新clientが旧読取へ戻る。ロールバックは追加列を残して
-旧server imageへ戻す（既存データを落とすdown migrationは行わない）。本変更では本番へ接続・反映していない。
+旧server imageへ戻す（既存データを落とすdown migrationは行わない。旧binaryが0012のDBでattestできることを隔離DBで確認済み）。2026-10-04に本番へ反映した（[運用記録](../../ACCOUNT_RETENTION_OPERATIONS.md)）。

@@ -316,6 +316,8 @@ docker exec fuminiwa-sync-v2-ops run-backup
 
 生成composeのimageを新しいタグへ変更し、`zimaos_app.py apply <id> <compose>`で適用する。PUTがpull・再作成する範囲、image ID、container_name、external volume維持をClaudeが実機で確認する。apply自体は初回移行の自動backup／切戻しを行わないため、適用前のbackupと旧composeの保管、適用後の受入が必要。registryへpush済みの新タグを使い、同タグ再push／再pullのcache挙動には依存しない。repositoryからCasaOS保存ファイルを直接編集しない。
 
+2026-10-04にserver更新（端末名、schema 0012）で`apply`を実機確認した。PUTの本文はtop-levelに`"name": "<アプリid>"`（例`delightful_samuel`）が必要で、無いとZimaOSが別のランダム名と見なしHTTP 500になる（ログ`IsNewComposeUncontrolled`／`store app not found`）。インポート時と違い、更新ではnameを先頭に付ける。成功時はimageを変えたserverと、それに依存するedgeだけが再作成され、postgres／opsとexternal volume・bindは維持された。
+
 API更新が利用できない場合の候補はUIでのcompose更新、またはbackup→アプリ削除→再インストール。実機で挙動を確認するまで自動更新成功とは扱わない。必ず既存volumeをexternalで引き継ぐ。schema移行を伴う更新は、旧binaryが新schemaを扱えるという根拠なしに切り戻さない。
 
 成功後の片付けは**利用者の確認後**。対象は停止した4つの`-legacy`コンテナと不要な旧image／releaseコピーを個別に列挙し、旧runtime／Caddyfile参照がなくなったことを確認してから行う。IDと停止状態を照合したlegacyだけを`docker rm <確認したID>`で個別に削除する。DB・Caddy・registry volume、backup鍵、daily、現行secret、tokenファイルは残す。`down -v`／volume rm／system pruneは使わない。現時点の作業に片付けは含まない。
