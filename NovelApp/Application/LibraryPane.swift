@@ -506,7 +506,7 @@ private extension LibraryPane {
     }
 }
 
-private struct SnapshotHistorySheet: View {
+struct SnapshotHistorySheet: View {
     @Environment(AppState.self) private var appState
     let dismiss: () -> Void
 
@@ -522,7 +522,7 @@ private struct SnapshotHistorySheet: View {
                 )
             } else {
                 List {
-                    SnapshotHistorySections(items: appState.snapshotSyncHistory) { entry in
+                    SnapshotHistorySections(items: appState.snapshotSyncHistory, application: appState.snapshotSyncV2Application, workID: appState.currentSnapshotSyncV2WorkID) { entry in
                         if let application = appState.snapshotSyncV2Application,
                            let workID = appState.currentSnapshotSyncV2WorkID {
                             let session = appState.documentSessionToken
@@ -532,7 +532,7 @@ private struct SnapshotHistorySheet: View {
                                 application: application, workID: workID, snapshotID: entry.snapshotID,
                                 rowDate: entry.createdAt,
                                 rowKind: HistoryPresentation().subtitle(entry),
-                                historyItem: entry,
+                                historyItem: entry, userDefaults: appState.userDefaults,
                                 announcesStatus: newest
                             ) {
                                 guard appState.documentSessionToken == session,
@@ -545,7 +545,7 @@ private struct SnapshotHistorySheet: View {
                             .listRowSeparator(.hidden)
                             .listRowBackground(Color.clear)
                         } else {
-                            SnapshotHistoryLabel(item: entry)
+                            SnapshotHistoryLabel(item: entry, userDefaults: appState.userDefaults)
                                 .surfaceCard()
                                 .listRowSeparator(.hidden)
                                 .listRowBackground(Color.clear)

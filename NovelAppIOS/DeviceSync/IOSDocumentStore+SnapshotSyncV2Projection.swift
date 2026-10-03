@@ -52,11 +52,14 @@ extension IOSDocumentStore {
         advanceEditorContentGeneration()
         startupState = .ready
         saveState = .saved
-        applySnapshotSyncV2State(snapshotSyncState)
+        if snapshotSyncState?.workID != opened.workID {
+            applySnapshotSyncV2State(nil)
+        }
         return true
     }
 
     func applySnapshotSyncV2State(_ state: SyncUIState?) {
+        guard state == nil || state?.workID == syncV2ActiveWorkID else { return }
         if state?.remoteProgress == .retryable(.historyIncomplete),
            snapshotSyncState?.remoteProgress != state?.remoteProgress {
             AccessibilityNotification.Announcement(SyncV2HistoryFetchState.conflictWaiting).post()
@@ -67,8 +70,14 @@ extension IOSDocumentStore {
         if state.remoteProgress == .authenticationRequired, case .signedIn = authUIState {
             authUIState = .failed("認証の有効期限が切れました。Appleで再サインインしてください。原稿はこの端末に保存されています。")
         }
+        let account = snapshotSyncV2AccountScope
         if case let .failed(reason) = state.remoteProgress {
-            operationErrorMessage = reason.japaneseDescription
+            if presentedSyncFailures[account]?[state.workID] != reason {
+                presentedSyncFailures[account, default: [:]][state.workID] = reason
+                operationErrorMessage = reason.japaneseDescription
+            }
+        } else if state.lastFailure == nil, state.remoteProgress == .idle || state.remoteProgress == .noChanges {
+            presentedSyncFailures[account]?[state.workID] = nil
         }
         snapshotSyncOutcome = state.lastTypedResult
     }
@@ -149,7 +158,8 @@ extension IOSDocumentStore {
                    await adoptPendingSnapshotSyncV2(
                        expectedSession: automaticAdoption.session,
                        expectedEditGeneration: automaticAdoption.editGeneration,
-                       expectedAccountScope: automaticAdoption.account
+                       expectedAccountScope: automaticAdoption.account,
+                       automatically: true
                    ) {
                     return
                 }

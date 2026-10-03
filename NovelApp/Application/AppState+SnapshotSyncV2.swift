@@ -332,7 +332,12 @@ extension AppState {
             authUIState = .failed("認証の有効期限が切れました。Appleで再サインインしてください。原稿はこの端末に保存されています。")
         }
         if case let .failed(reason) = state?.remoteProgress {
-            operationMessage = reason.japaneseDescription
+            if presentedSyncFailures[accountScope]?[workID] != reason {
+                presentedSyncFailures[accountScope, default: [:]][workID] = reason
+                operationMessage = reason.japaneseDescription
+            }
+        } else if state?.lastFailure == nil, state?.remoteProgress == .idle || state?.remoteProgress == .noChanges {
+            presentedSyncFailures[accountScope]?[workID] = nil
         }
         if let progress = state?.remoteProgress,
            case .readyForSafeAdoption = progress {

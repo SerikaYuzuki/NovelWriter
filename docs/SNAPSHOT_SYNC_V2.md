@@ -219,13 +219,27 @@ conflictPending
 There is at most one active conflict per work. Each new divergence appends an
 immutable candidate revision and atomically advances only the active-conflict
 projection; earlier branch references are never updated. It does not create a
-competing UI queue. The three choices are exactly:
+competing UI queue. The macOS/iOS UI offers two choices:
 
 1. **この端末の版を使う** — publish the durable local branch against the
    observed remote head.
 2. **サーバーの版を使う** — adopt the verified remote branch at a safe
    document boundary while preserving the pre-adoption local checkpoint.
-3. **両方を残す** — clone to a new WorkID, preserving both histories.
+The unselected version remains in history and can be restored. UI selection is
+consumed once, with duplicate preparation rejected inside the Store transaction.
+The keepBoth/cloneWork kernel and wire operations remain available for existing
+data compatibility; new UI selections do not invoke them.
+
+D-109 conservatively holds an extra unsealed decision left after a finalized
+keepBoth, only when the resolved conflict, exact two-parent decision occurrence,
+account binding, received remote head and verified remote Inbox agree. The
+pending decision is parked once, with both branches pinned in history. A saved
+editor can explicitly apply the verified server version through the existing
+safe document gate. An explicit history restore retires the unused recovery
+Inbox and queues only its new restore generation. Recovery never chooses a version automatically, recreates a
+server conflict, modifies the clone, or deletes immutable snapshots/objects.
+Repeated failed sync status alerts once per work/reason; failed automatic
+adoption waits for an explicit retry of that work/Inbox.
 
 No choice, authentication failure, or remote unavailability leaves the local
 manuscript and pending commands intact.
@@ -359,3 +373,5 @@ macOS and iOS use the projection and Japanese labels in
 [`ui-state.md`](sync/v2/ui-state.md). In particular, an explicit sync with no
 pending work returns successful `noChanges`/`同期済み`; it is never rendered as
 同期失敗. Local durability and remote progress remain separate indicators.
+
+保存した端末名は公開ごとの任意metadata（HTTPヘッダ送信・history/conflict読取のopt-in）として扱い、snapshot／sealed commandのcanonical bytesへ含めない。[wire契約](sync/v2/wire.md#保存した端末名2026-10-04)参照。

@@ -143,13 +143,15 @@ public struct SyncV2RemoteCatalogPage: Hashable, Sendable {
 }
 
 public struct SyncV2RemoteHistoryEntry: Hashable, Sendable {
+    public let deviceLabel: String?
     public let occurrenceID: UUID
     public let snapshotID: SnapshotID
     public let reason: String
     public let pinned: Bool
     public let createdAt: Date
 
-    public init(occurrenceID: UUID, snapshotID: SnapshotID, reason: String, pinned: Bool, createdAt: Date) {
+    public init(occurrenceID: UUID, snapshotID: SnapshotID, reason: String, pinned: Bool, createdAt: Date, deviceLabel: String? = nil) {
+        self.deviceLabel = deviceLabel
         self.occurrenceID = occurrenceID
         self.snapshotID = snapshotID
         self.reason = reason

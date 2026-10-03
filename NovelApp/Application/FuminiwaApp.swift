@@ -72,13 +72,14 @@ struct FuminiwaApp: App {
         checkpointOverride: SnapshotSyncV2CheckpointOverride? = nil,
         openOverride: SnapshotSyncV2OpenOverride? = nil
     ) -> AppDependencies {
+        let deviceLabel = DeviceLabelSettings.provider(defaults: userDefaults)
         let timing = FuminiwaTiming(defaults: userDefaults)
         var dependencies = AppDependencies(
             userDefaults: userDefaults,
             defaultDocumentDirectoryName: "\(AppBuildFlavor.defaultDocumentDirectoryName)-TestHost",
             editorCommandSession: editorCommandSession,
             snapshotSyncV2Factory: {
-                try await SnapshotSyncV2Runtime.makeApplication(mode: .test(configuration), timing: timing)
+                try await SnapshotSyncV2Runtime.makeApplication(mode: .test(configuration), timing: timing, deviceLabel: deviceLabel)
             },
             writingProgressRoot: configuration.localRoot.url
         )
@@ -143,13 +144,14 @@ struct FuminiwaApp: App {
             origin: explicitOrigin, vault: authVault, authSessionCoordinator: authCoordinator,
             documentGate: platformGate, clientVersion: "0.1.0", clientPlatform: .macos
         )
+        let deviceLabel = DeviceLabelSettings.provider(defaults: userDefaults)
         let timing = FuminiwaTiming(defaults: userDefaults)
         let factory: (@Sendable () async throws -> SyncV2Application)? = {
             // The production configuration is typed and always receives the
             // Keychain vault plus the macOS gate. The runtime opens SQLite
             // even when the HTTPS lane is unreachable; it reports offline.
             guard let configuration = runtimeConfiguration else { throw SyncV2ApplicationError.invalidRuntimeMode }
-            return try await SnapshotSyncV2Runtime.makeApplication(mode: .production(configuration), timing: timing)
+            return try await SnapshotSyncV2Runtime.makeApplication(mode: .production(configuration), timing: timing, deviceLabel: deviceLabel)
         }
 
         return AppDependencies(
@@ -355,7 +357,10 @@ struct FuminiwaApp: App {
                     .tabItem { Label("執筆", systemImage: "textformat") }
                 AssistantSettingsView(defaults: appState.userDefaults)
                     .tabItem { Label("AI支援", systemImage: "sparkles") }
-                AccountAccessView().environment(appState).padding(24)
+                VStack {
+                    DeviceLabelSettingsView(defaults: appState.userDefaults)
+                    AccountAccessView().environment(appState)
+                }.padding(24)
                     .tabItem { Label("アカウント", systemImage: "person.crop.circle") }
             }.frame(width: 520, height: 620)
         }

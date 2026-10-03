@@ -117,6 +117,8 @@ final class AppState {
     var authUIState: AuthUIState
     var snapshotSyncPendingDeletionWorkIDs: Set<WorkID> = []
     var snapshotSyncV2UIState: SyncUIState?
+    @ObservationIgnored var presentedSyncFailures: [SnapshotSyncV2AccountScopeToken: [WorkID: SyncV2FatalReason]] = [:]
+    @ObservationIgnored var automaticAdoptionAttempts: [SnapshotSyncV2AccountScopeToken: [WorkID: Set<UUID>]] = [:]
     var snapshotSyncConflict: SyncV2ConflictProjection?
     var snapshotSyncHistory: [SyncV2HistoryItem] = []
     var snapshotSyncLibraryWorks: [StartupLibraryWork] = []

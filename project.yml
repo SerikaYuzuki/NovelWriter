@@ -287,6 +287,7 @@ targets:
       - path: NovelAppTests/V2DocumentSaveCoordinatorTests.swift
       - path: NovelAppTests/SyncSessionControllerTests.swift
       - path: NovelAppTests/SnapshotHistoryPresentationTests.swift
+      - path: NovelAppTests/SnapshotConflictPresentationTests.swift
       - path: NovelAppIOSTests
       - path: NovelKit/Tests/NovelSyncV2ApplicationTests/HistoryPresentationTests.swift
       - path: NovelKit/Tests/NovelUITests/ThemeContrastTests.swift

@@ -109,6 +109,8 @@ Step 2ではSQLiteへappend-only migrationで`shallow_boundaries`と`history_bac
 
 Step 2で作品別／全体1本のworker、constrained networkでの停止、再起動再開、履歴項目ごとの取得状態を追加した。Step 3で「オンラインで取得」、未取得版の復元・深いmerge/競合の優先取得、停止理由の表示を実装した。優先要求は全体1本の取得レーンの先頭へ移し、他作品の取得は保存済みcursorから再開する。Inboxとsealed commandを保持し、祖先のcommit通知で通常のworkerを再実行する。未取得版の復元待ちはeditor gateを保持せず、到着後に明示確認して通常のローカル復元へ進む。通信中断は再試行でき、検証エラーは自動再試行せず、識別子や内部エラーを出さない詳細を表示する。offline・Low Data Mode・constrained・expensiveでは自動取得を停止する。従量接続の明示確認は取得要求ごとに扱い、offlineで解除する。通常回線での手動開始だけでは従量接続の許可としない。対象は利用者が開いた／明示取り込みした作品だけとする（U-10）。同じHから再開し、新しいheadは通常Inboxで受ける。同一accountのfence変更ではcursorを捨てて再検証、別accountではpark、削除・認証失効ではsuspendして端末原稿を残す。両OSの履歴・棚は共通の状態と文言を使い、状態変更と取得後の復元可能状態をアクセシビリティへ通知する。
 
+2026-10-04: 公開ごとの端末名をヘッダで任意送信、opt-inで返す。history occurrenceに保存し、canonical bytesとsnapshot IDを変えない。既定は端末種類、変更は端末内だけ。詳細は[wire契約](sync/v2/wire.md#保存した端末名2026-10-04)。
+
 ## D-107: 旧unexpected隔離の一度だけの自動復旧（2026-10-02）
 
 HTTP edge応答の旧分類で止まったコマンドは、既存の追加型SQLite migrationで`legacy_command_recovery`へ候補を記録する。更新時に存在し、`command:unexpected`かつ応答・receipt・upload transfer・証拠bytesがないコマンドだけを対象にする。新規DBや更新後の失敗は候補にしない。自動・明示の解除と候補消費を同じtransactionで確定し、再隔離は再起動後も自動解除しない。plannerはbindingごとに起動中一度だけ走査する。明示同期による従来の手動復旧と、応答未保存コマンドの明示再試行は維持する。v2名称・wire・server schemaは維持し、原稿・送信ID・bytes・intentを変更しない。[状態遷移](sync/v2/state-machine.md#recovery-of-response-less-command-quarantines)に範囲を定める。
@@ -122,3 +124,16 @@ HTTP edge応答の旧分類で止まったコマンドは、既存の追加型SQ
 受領済みのcurrentには明示同期・自動同期・起動時promotionで新規checkpoint intentを作らない。変更したserver headは完全なgraphの読取で取得し、内容一致の既受領current、account scope、local generation、祖先関係を検証したInboxから既存のdocument gateで適用する。明示同期の読取も非同期に開始し、保存や画面遷移をnetwork待ちにしない。旧clientが作った祖先noChangesのsealed publish／Inboxは従来の受領検証経路で回復できる。
 
 両OSでopen／安全適用の失敗を利用者へ表示し、棚を操作可能なまま保持する。受領済み表示には古い遅延時刻の「未同期の変更があります」を併記しない。実データへの適用、配布・実機受入はローカル回帰検証とは別段階とする。
+
+
+## D-109: 競合の2択化、多重解決の拒否と一度だけの修復（2026-10-04）
+
+競合の選択肢はmacOS・iOSとも「この端末の版を使う」「サーバーの版を使う」の2つとする。「両方を残す」は新規UIから外し、keepBoth／cloneWorkのkernel・store・wireは既存データ処理と互換のため残す。選ばなかった版は履歴へ保全し、必要なら復元する。
+
+押下直後に再選択を無効にし、applicationは解決をqueueした競合を選択画面から外す。storeは同じ候補に解決intent・keepBoth予約・2親の決定snapshotが既にある場合、transaction内で2回目の準備を拒否する。plannerは候補と同じ世代のintent／未確定予約からserver・cloneを区別し、2親の決定intentはdevice解決として扱う。後続編集のcheckpointから解決種別を推測しない。
+
+解決済み競合とfinalized keepBothに、同じ候補のlocal／remoteを親とする未送信の決定intentが余り、受領headと一致するverified Inboxが残った状態だけを自動修復する。現account binding、cloneWorkの検証済み完了、世代と両親を照合し、sealed commandのあるintentは対象外とする。既存intentのpending→parkedと両版の履歴保全を同じtransactionで行い、再起動後も同じintentを自動解除しない。保留中はplannerとcheckpoint intent作成を止める。schemaとcanonical bytesは変更しない。
+
+サーバー側では競合が既に解決済みなので、古い競合の再開・再送は行わない。「サーバーの版を反映」の明示操作と既存document gateで、現在の保存済み世代を照合してInboxのサーバー版を採用できる状態にする。修復だけではcurrentを切り替えず、複製作品には触らない。履歴から別の版を明示復元した場合は同じcommitで未使用の修復Inboxを閉じ、新しい世代のrestoreを送る。余った決定intentは保留のままとする。snapshot・objectは削除せず、端末版の決定snapshotを含め履歴から復元できる。
+
+持続する失敗は同期欄に表示し、同じWork・reasonのalertを再提示しない。自動採用はaccount・Work・Inbox単位で一度だけ試し、失敗後は明示操作に任せる。作品単位の読込失敗はその棚の行に表示し、作品一覧全体を操作不能にしない。実DBの一時コピーでの検証、稼働アプリへの反映、実機受入は別段階として報告する。

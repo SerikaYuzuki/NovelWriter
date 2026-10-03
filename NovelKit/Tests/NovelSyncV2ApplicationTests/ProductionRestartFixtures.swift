@@ -14,6 +14,25 @@ func sourceStoreCommands(
     return try await store.allSealedCommands(scope: productionScope, workID: workID)
 }
 
+func waitForSealedProductionPublish(
+    store: LocalSyncV2Store,
+    workID: WorkID,
+    intent: V2PendingIntent
+) async throws -> V2SealedCommandRecord? {
+    let clock = ContinuousClock()
+    let deadline = clock.now.advanced(by: .seconds(2))
+    while clock.now < deadline {
+        if let record = try await store.allSealedCommands(scope: productionScope, workID: workID).first(where: {
+            $0.commandKind == "publish" && $0.sourceGeneration == intent.sourceGeneration &&
+                $0.sourceSnapshotID == intent.sourceSnapshotID && $0.lifecycle == .sealed
+        }) {
+            return record
+        }
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    return nil
+}
+
 func sealedCommand(
     _ operation: SyncV2RemoteOperation
 ) -> SyncV2SealedRemoteCommand? {

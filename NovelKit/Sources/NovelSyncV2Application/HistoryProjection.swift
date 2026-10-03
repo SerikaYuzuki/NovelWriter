@@ -54,6 +54,12 @@ public enum SyncV2SnapshotAvailability: String, Hashable, Sendable {
 }
 
 public struct SyncV2HistoryItem: Hashable, Sendable {
+    public let deviceLabel: String?
+
+    public func displayDeviceLabel(currentLabel: String) -> String {
+        source == .local ? currentLabel : DeviceLabel.validated(deviceLabel) ?? DeviceLabel.unknown
+    }
+
     public var snapshotAvailability: SyncV2SnapshotAvailability = .local
 
     public var displayReason: String {
@@ -68,6 +74,9 @@ public struct SyncV2HistoryItem: Hashable, Sendable {
         case "keepBoth": "両方の原稿を保存"
         case "preRestore": "復元前の原稿"
         case "explicitAccountClone": "別の作品としてコピー"
+        case "conflictLocal": "競合時の端末版"
+        case "conflictRemote": "競合時のサーバー版"
+        case "multipleResolutionRecovery": "競合解決の保留版"
         case "preRemoteAdoption": "同期内容の反映前"
         case "remoteAdoption", "remoteBaseline": "同期内容の取り込み"
         default: "保存履歴"
@@ -93,8 +102,10 @@ public struct SyncV2HistoryItem: Hashable, Sendable {
         createdAt: Date,
         source: SyncV2HistorySource,
         localAvailability: SyncV2HistoryAvailability,
-        onlineAvailability: SyncV2HistoryAvailability
+        onlineAvailability: SyncV2HistoryAvailability,
+        deviceLabel: String? = nil
     ) {
+        self.deviceLabel = deviceLabel
         self.occurrenceID = occurrenceID
         self.snapshotID = snapshotID
         self.reason = reason

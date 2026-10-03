@@ -48,6 +48,47 @@ struct HistoryPresentationTests {
         #expect(presentation.days([]).isEmpty)
     }
 
+    @Test func versionDatesUseTodayYesterdayAndShortCalendarDate() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try #require(TimeZone(identifier: "Asia/Tokyo"))
+        let presentation = HistoryPresentation(calendar: calendar, now: date("2026-10-04T04:00:00Z"))
+        #expect(presentation.versionDate(date("2026-10-04T03:00:00Z")) == "今日 12:00")
+        #expect(presentation.versionDate(date("2026-10-03T03:00:00Z")) == "昨日 12:00")
+        #expect(presentation.versionDate(date("2026-09-30T03:00:00Z")) == "9月30日 12:00")
+    }
+
+    @Test func groupPredecessorUsesOldestOccurrenceAcrossDays() throws {
+        let items = try [
+            item("autosave", "2026-10-02T10:00:00Z"),
+            item("autosave", "2026-10-02T09:00:00Z"),
+            item("explicit", "2026-10-01T20:00:00Z")
+        ]
+        let presentation = HistoryPresentation()
+        #expect(presentation.predecessor(of: items[1], in: items) == items[2].snapshotID)
+        #expect(presentation.predecessor(of: items[2], in: items) == nil)
+        #expect(!presentation.isUnselectedConflictVersion(items[2], in: items))
+    }
+
+    @Test func rejectedVersionLabelsRequireConflictEvidence() throws {
+        func record(_ reason: String, generation: Int64, digest: String) throws -> SyncV2HistoryItem {
+            try SyncV2HistoryItem(occurrenceID: UUID(), snapshotID: SnapshotID(rawValue: String(repeating: digest, count: 64)),
+                                  reason: reason, pinned: true, localGeneration: generation,
+                                  createdAt: date("2026-10-02T01:31:00Z"), source: .local,
+                                  localAvailability: .available, onlineAvailability: .unavailable)
+        }
+        let presentation = HistoryPresentation()
+        let remote = try record("conflictRemote", generation: 7, digest: "b")
+        let decision = try record("conflictResolution", generation: 8, digest: "a")
+        #expect(presentation.isUnselectedConflictVersion(remote, in: [remote, decision]))
+        #expect(!presentation.isUnselectedConflictVersion(remote, in: [remote]))
+        let local = try record("conflictLocal", generation: 7, digest: "a")
+        let preserved = try record("preRemoteAdoption", generation: 7, digest: "a")
+        #expect(presentation.isUnselectedConflictVersion(local, in: [local, preserved]))
+        #expect(presentation.isUnselectedConflictVersion(preserved, in: [local, preserved]))
+        #expect(!presentation.isUnselectedConflictVersion(preserved, in: [preserved]))
+        #expect(!presentation.isUnselectedConflictVersion(decision, in: [remote, decision]))
+    }
+
     @Test func labelsNeverExposeRawReasons() throws {
         let presentation = HistoryPresentation()
         for reason in ["explicit", "restore", "conflictResolution", "keepBoth", "preRestore", "preRemoteAdoption",

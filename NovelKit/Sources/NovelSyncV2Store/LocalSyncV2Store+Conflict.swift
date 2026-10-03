@@ -35,6 +35,17 @@ public extension LocalSyncV2Store {
         }
     }
 
+    func conflictResolutionPrepared(_ conflict: V2ConflictCandidate, scope: V2LocalWorkScope) throws -> Bool {
+        do {
+            try conflictRepository.requireUnpreparedConflict(workID: conflict.workID, conflictID: conflict.conflictID,
+                                                             revision: conflict.revision, generation: conflict.sourceGeneration,
+                                                             local: conflict.localSnapshotID, remote: conflict.remoteSnapshotID, scope: scope)
+            return false
+        } catch SyncV2StoreError.staleConflictAction {
+            return true
+        }
+    }
+
     func activeConflict(
         workID: WorkID,
         scope: V2LocalWorkScope
@@ -65,9 +76,6 @@ public extension LocalSyncV2Store {
               try inboxRepository.inboxState(inboxID: request.inboxID, binding: binding) == "verified" else {
             throw SyncV2StoreError.staleConflictAction
         }
-        if let prepared = try conflictRepository.preparedDeviceResolution(request, scope: scope) {
-            return prepared
-        }
         try conflictRepository.validateDeviceRequest(request, binding: binding)
         let local = try workRepository.loadEncoded(
             workID: request.workID,
@@ -84,9 +92,13 @@ public extension LocalSyncV2Store {
         let intentID = UUID()
         return try inTransaction {
             try conflictRepository.validateDeviceRequest(request, binding: binding)
-            for snapshot in try inboxRepository.topologicalSnapshots(graph) {
-                try workRepository.insertEncoded(snapshot, workID: request.workID)
-            }
+            try conflictRepository.requireUnpreparedConflict(
+                workID: request.workID, conflictID: request.conflictID, revision: request.revision,
+                generation: request.sourceGeneration, local: request.localSnapshotID,
+                remote: request.remoteSnapshotID, scope: scope
+            )
+            try conflictRepository.preserveConflictBranches(local: request.localSnapshotID,
+                                                            generation: request.sourceGeneration, graph: graph)
             try workRepository.insertEncoded(decision, workID: request.workID)
             let current = try workRepository.scopedWorkRow(workID: request.workID, scope: scope)
             guard let currentGeneration = current?.localGeneration,
@@ -134,87 +146,13 @@ public extension LocalSyncV2Store {
         _ request: V2ServerResolutionRequest,
         scope: V2LocalWorkScope
     ) throws -> V2CheckpointResult {
-        try conflictRepository.prepareUseServer(request, scope: scope)
+        try inTransaction {
+            try conflictRepository.prepareUseServer(request, scope: scope)
+        }
     }
 
-    func prepareKeepBoth(
-        _ request: V2KeepBothPreparationRequest,
-        scope: V2LocalWorkScope
-    ) throws -> V2KeepBothReservation {
-        guard case let .bound(binding) = scope,
-              request.newWorkID != request.workID else {
-            throw SyncV2StoreError.accountMismatch
-        }
-        let active = try conflictRepository.requireConflict(
-            workID: request.workID,
-            conflictID: request.conflictID,
-            revision: request.revision,
-            generation: request.sourceGeneration,
-            local: request.localSnapshotID,
-            remote: request.remoteSnapshotID,
-            scope: scope
-        )
-        if let existing = try conflictRepository.loadKeepBothReservation(
-            sourceWorkID: request.workID,
-            conflictID: request.conflictID
-        ) {
-            guard existing.sourceGeneration == request.sourceGeneration else {
-                throw SyncV2StoreError.staleConflictAction
-            }
-            return existing
-        }
-        if let existing = try conflictRepository.loadKeepBothReservation(
-            sourceWorkID: request.workID,
-            newWorkID: request.newWorkID
-        ) {
-            guard existing.sourceGeneration == request.sourceGeneration,
-                  existing.newDocumentID == request.newDocumentID else {
-                throw SyncV2StoreError.staleConflictAction
-            }
-            return existing
-        }
-        guard try !workRepository.workExists(workID: request.newWorkID),
-              let work = try workRepository.scopedWorkRow(workID: request.workID, scope: scope),
-              (work.localGeneration.map { $0 >= request.sourceGeneration } == true) else {
-            throw SyncV2StoreError.staleConflictAction
-        }
-        let inbox = try conflictRepository.conflictInbox(active)
-        let graph = try inboxRepository.loadInboxGraph(inboxID: inbox, binding: binding)
-        guard graph.headSnapshotID == request.remoteSnapshotID,
-              let originalHead = graph.expectedRemoteHead,
-              originalHead.snapshotID == request.remoteSnapshotID,
-              try inboxRepository.inboxState(inboxID: inbox, binding: binding) == "verified" else {
-            throw SyncV2StoreError.staleConflictAction
-        }
-        let candidate = try workRepository.loadEncoded(
-            workID: request.workID,
-            snapshotID: request.localSnapshotID
-        )
-        let candidateModel = try SnapshotCodec.decode(
-            manifestBytes: candidate.manifestBytes,
-            objects: candidate.objects
-        )
-        var cloneDocument = candidateModel.document
-        cloneDocument.id = request.newDocumentID.rawValue
-        let clone = try SnapshotCodec.encode(
-            SnapshotModel(
-                workId: request.newWorkID,
-                document: cloneDocument,
-                documentCreatedAt: candidateModel.documentCreatedAt,
-                attachments: candidateModel.attachments
-            ),
-            parents: []
-        )
-        return try persistKeepBothReservation(
-            request: request,
-            scope: scope,
-            prepared: KeepBothPreparedMaterial(
-                candidateModel: candidateModel,
-                clone: clone,
-                originalHead: originalHead,
-                reservationID: UUID()
-            )
-        )
+    func prepareKeepBoth(_ request: V2KeepBothPreparationRequest, scope: V2LocalWorkScope) throws -> V2KeepBothReservation {
+        try prepareKeepBothWithIntent(request, scope: scope, intentID: nil)
     }
 
     func keepBothReservation(
@@ -241,28 +179,8 @@ public extension LocalSyncV2Store {
         _ request: V2KeepBothPreparationRequest,
         scope: V2LocalWorkScope
     ) throws -> (reservation: V2KeepBothReservation, intentID: UUID) {
-        let reservation = try prepareKeepBoth(request, scope: scope)
-        guard case .bound = scope,
-              let current = try workRepository.scopedWorkRow(workID: request.workID, scope: scope),
-              let snapshot = current.currentSnapshotID,
-              let generation = current.localGeneration else { throw SyncV2StoreError.staleCAS }
-        let snapshotID = try SnapshotID(rawValue: snapshot.hexString)
-        if let existing = try outboxRepository.pendingIntents(scope: scope, workID: request.workID)
-            .first(where: {
-                $0.kind == "conflictResolution" && $0.sourceSnapshotID == snapshotID && $0
-                    .sourceGeneration == generation
-            }) {
-            return (reservation, existing.intentID)
-        }
         let intentID = UUID()
-        try outboxRepository.insertIntent(.init(
-            intentID: intentID,
-            workID: request.workID,
-            snapshotID: snapshotID,
-            generation: generation,
-            kind: "conflictResolution",
-            scope: scope
-        ))
+        let reservation = try prepareKeepBothWithIntent(request, scope: scope, intentID: intentID)
         return (reservation, intentID)
     }
 
@@ -435,9 +353,73 @@ public extension LocalSyncV2Store {
 }
 
 extension LocalSyncV2Store {
+    func prepareKeepBothWithIntent(
+        _ request: V2KeepBothPreparationRequest,
+        scope: V2LocalWorkScope,
+        intentID: UUID?
+    ) throws -> V2KeepBothReservation {
+        guard case let .bound(binding) = scope,
+              request.newWorkID != request.workID else {
+            throw SyncV2StoreError.accountMismatch
+        }
+        let active = try conflictRepository.requireConflict(
+            workID: request.workID,
+            conflictID: request.conflictID,
+            revision: request.revision,
+            generation: request.sourceGeneration,
+            local: request.localSnapshotID,
+            remote: request.remoteSnapshotID,
+            scope: scope
+        )
+        guard try !workRepository.workExists(workID: request.newWorkID),
+              let work = try workRepository.scopedWorkRow(workID: request.workID, scope: scope),
+              (work.localGeneration.map { $0 >= request.sourceGeneration } == true) else {
+            throw SyncV2StoreError.staleConflictAction
+        }
+        let inbox = try conflictRepository.conflictInbox(active)
+        let graph = try inboxRepository.loadInboxGraph(inboxID: inbox, binding: binding)
+        guard graph.headSnapshotID == request.remoteSnapshotID,
+              let originalHead = graph.expectedRemoteHead,
+              originalHead.snapshotID == request.remoteSnapshotID,
+              try inboxRepository.inboxState(inboxID: inbox, binding: binding) == "verified" else {
+            throw SyncV2StoreError.staleConflictAction
+        }
+        let candidate = try workRepository.loadEncoded(
+            workID: request.workID,
+            snapshotID: request.localSnapshotID
+        )
+        let candidateModel = try SnapshotCodec.decode(
+            manifestBytes: candidate.manifestBytes,
+            objects: candidate.objects
+        )
+        var cloneDocument = candidateModel.document
+        cloneDocument.id = request.newDocumentID.rawValue
+        let clone = try SnapshotCodec.encode(
+            SnapshotModel(
+                workId: request.newWorkID,
+                document: cloneDocument,
+                documentCreatedAt: candidateModel.documentCreatedAt,
+                attachments: candidateModel.attachments
+            ),
+            parents: []
+        )
+        return try persistKeepBothReservation(
+            request: request,
+            scope: scope,
+            resolutionIntentID: intentID,
+            prepared: KeepBothPreparedMaterial(
+                candidateModel: candidateModel,
+                clone: clone,
+                originalHead: originalHead,
+                reservationID: UUID()
+            )
+        )
+    }
+
     func persistKeepBothReservation(
         request: V2KeepBothPreparationRequest,
         scope: V2LocalWorkScope,
+        resolutionIntentID: UUID?,
         prepared: KeepBothPreparedMaterial
     ) throws -> V2KeepBothReservation {
         try inTransaction {
@@ -449,6 +431,11 @@ extension LocalSyncV2Store {
                 local: request.localSnapshotID,
                 remote: request.remoteSnapshotID,
                 scope: scope
+            )
+            try conflictRepository.requireUnpreparedConflict(
+                workID: request.workID, conflictID: request.conflictID, revision: request.revision,
+                generation: request.sourceGeneration, local: request.localSnapshotID,
+                remote: request.remoteSnapshotID, scope: scope
             )
             try workRepository.insertWork(
                 workID: request.newWorkID,
@@ -474,6 +461,15 @@ extension LocalSyncV2Store {
                 generation: 1
             )
             try conflictRepository.insertKeepBothReservation(request: request, prepared: prepared)
+            if let resolutionIntentID {
+                // The reservation and its selected candidate intent commit
+                // together. Later editing keeps its own checkpoint intent.
+                try outboxRepository.insertIntent(.init(
+                    intentID: resolutionIntentID, workID: request.workID,
+                    snapshotID: request.localSnapshotID, generation: request.sourceGeneration,
+                    kind: "conflictResolution", scope: scope
+                ))
+            }
             return V2KeepBothReservation(
                 reservationID: prepared.reservationID,
                 sourceWorkID: request.workID,
@@ -527,6 +523,7 @@ extension LocalSyncV2Store {
                 scope: scope
             ))
             try conflictRepository.insertRestoreRecord(request: request, scope: scope, prepared: prepared)
+            try conflictRepository.finishMultipleResolutionByRestore(workID: request.workID, scope: scope)
             return V2RestorePreparationResult(
                 restoreID: prepared.restoreID,
                 checkpoint: V2CheckpointResult(

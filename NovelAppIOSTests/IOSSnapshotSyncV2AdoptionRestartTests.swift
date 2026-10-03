@@ -4,7 +4,7 @@ import Foundation
 import NovelAuth
 import NovelCore
 import NovelSyncV2
-import NovelSyncV2Application
+@testable import NovelSyncV2Application
 import NovelSyncV2Runtime
 import NovelSyncV2Store
 import Testing
@@ -726,5 +726,29 @@ private func withAdoptionEnvironment(
     } catch {
         await environment.cleanup()
         throw error
+    }
+}
+
+extension IOSSnapshotSyncV2AdoptionRestartTests {
+    @Test("failed automatic adoption waits for an explicit retry of the same Inbox")
+    func automaticFailureDoesNotRetry() async throws {
+        try await withAdoptionEnvironment { environment in
+            let fixture = try await makePendingAdoptionFixture()
+            environment.track(fixture.configuration)
+            let store = makeStore(environment: environment, fixture: fixture)
+            let application = try await installPendingWork(fixture, into: store)
+            let gate = try #require(await application.gate as? InMemorySyncV2DocumentGate)
+            await gate.setUnsafe(true, workID: fixture.workID)
+            #expect(await !store.adoptPendingSnapshotSyncV2(automatically: true))
+            #expect(store.automaticAdoptionAttempts[store.snapshotSyncV2AccountScope]?[fixture.workID]?.count == 1)
+            store.operationErrorMessage = nil
+            await gate.setUnsafe(false, workID: fixture.workID)
+            #expect(await !store.adoptPendingSnapshotSyncV2(automatically: true))
+            #expect(store.document.title == "端末版")
+            #expect(store.operationErrorMessage == nil)
+            #expect(try await application.pendingAdoption(workID: fixture.workID) != nil)
+            #expect(await store.adoptPendingSnapshotSyncV2())
+            #expect(store.document.title == "サーバー版")
+        }
     }
 }

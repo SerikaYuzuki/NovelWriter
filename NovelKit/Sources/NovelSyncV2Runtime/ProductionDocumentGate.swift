@@ -82,4 +82,13 @@ public actor ProductionDocumentGate: SyncV2ArmableDocumentGate {
             editorGeneration: proof.editorGeneration
         )
     }
+
+    /// Withdraws permission to issue further tokens for this boundary.
+    /// Issued tokens retain their session fence and single-use validation in
+    /// `validateAndConsume`; disarming does not revoke an issued proof.
+    public func disarm(session: DocumentSessionToken) {
+        guard sessions[session.workID] == session,
+              armed[session.workID]?.session == session else { return }
+        armed[session.workID] = nil
+    }
 }

@@ -51,6 +51,7 @@ public struct SyncV2ConflictAction: Hashable, Sendable {
 }
 
 public struct SyncV2ConflictProjection: Hashable, Sendable {
+    public let remoteDeviceLabel: String?
     public let conflictID: UUID
     public let revision: Int64
     public let baseSnapshotID: SnapshotID?
@@ -66,8 +67,10 @@ public struct SyncV2ConflictProjection: Hashable, Sendable {
         localSnapshotID: SnapshotID,
         remoteSnapshotID: SnapshotID,
         sourceGeneration: Int64,
-        commandID: UUID? = nil
+        commandID: UUID? = nil,
+        remoteDeviceLabel: String? = nil
     ) {
+        self.remoteDeviceLabel = remoteDeviceLabel
         self.conflictID = conflictID
         self.revision = revision
         self.baseSnapshotID = baseSnapshotID

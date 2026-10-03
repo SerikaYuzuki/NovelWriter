@@ -20,3 +20,5 @@ SQLite側の削除時の救出はremote復元と別操作で、現在のcheckpoi
 検証: PostgreSQL integration gateで保管・再送・期限・共有object・別account・親なし復元・再create拒否を確認。SwiftのStore/Applicationテストで未送信checkpointの保持、unbound救出、再試行のowner/account境界を確認。
 
 閉じた復元request/responseは[JSON Schema](protection.schema.json)、[canonical fixture](fixtures/canonical/protection.json)と独立Python conformanceで照合する。
+
+復旧APIの`Fuminiwa-Device-Label`は内部publishのhistoryへ渡す任意metadata。operation digest／recovery receiptには含めず、replayでは初回値を保つ。

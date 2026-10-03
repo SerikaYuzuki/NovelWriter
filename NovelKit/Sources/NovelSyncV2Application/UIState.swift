@@ -37,7 +37,7 @@ public enum SyncV2RemoteProgress: Equatable, Sendable {
         case .retryable(.historyIncomplete): SyncV2HistoryFetchState.conflictWaiting
         case .retryable: "端末に保存済み・同期を再試行します"
         case .needsChoice: "競合の確認が必要です"
-        case .readyForSafeAdoption: "サーバーの版を適用できます"
+        case .readyForSafeAdoption: "サーバーに新しい版があります"
         case .failed(.remoteWorkDeleted): "別端末で削除済み・端末の変更は保持中"
         case .failed(.remoteDataUnavailable): "同期先のデータを利用できません"
         case .failed(.uploadTooLarge): "送信上限を超えています"

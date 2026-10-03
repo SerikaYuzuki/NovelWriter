@@ -229,3 +229,37 @@ The client acknowledges the upload locally only after all ranges succeed.
 A lost response/restart may replay from offset zero with the same bytes and
 capability; it never fabricates an acknowledgement from a partial response.
 Deploy the range-capable server before clients that use this extension.
+
+## 保存した端末名（2026-10-04）
+
+端末名はsnapshotではなく公開操作が作るhistory occurrenceの付随情報である。
+`Fuminiwa-Device-Label` ヘッダでUTF-8をRFC 3986のunreserved以外は
+`%HH`にencodeして任意送信する（`+`は空白として扱わない）。受信は最大4096 ASCII bytes、
+厳密なpercent decode／UTF-8 decode後にNFC正規化し、1〜40 Unicode scalarを許す。
+C0/C1制御文字（U+0000〜001F、007F〜009F）と改行区切りU+2028/U+2029は禁止。
+欠落、空、重複ヘッダ、不正encoding、範囲外はNULLとし、コマンドを失敗させない。
+
+対象は`publish`、`resolveDevice`、`resolveServer`、`cloneWork`、`restore`。
+`POST /v2/protection/{work}/recover`も内部publishへ同じ値を渡す。
+publishの2経路、resolveServerの`preAdoptionLocal`、resolveDeviceの`conflictResolution`、
+cloneWorkの元作品の`conflictResolution`と新作品の`keepBothCloneRoot`、
+restoreの`restoreBefore`に記録する。同じcommandIdまたは復旧operationIdのreceipt replayは
+最初の適用値を保持する。sealed command、receipt、conflict event、canonical bytes、
+digest、snapshot ID、object IDは変更しない。
+
+`GET /v2/works/{id}/history?include=deviceLabel`の各entryだけに
+`deviceLabel: string|null`を返す。`GET /v2/works/{id}/conflict?include=deviceLabel`は
+非NULLのconflictへ`remoteDeviceLabel: string|null`を返す。remote candidateが指すsnapshotを
+そのcandidateを作成／追記したコマンドの既存receiptが示すhead generationのeventと、
+同じ公開transactionのhistory occurrenceを
+照合する（restoreはその操作の`restoreBefore`、cloneは新作品の`keepBothCloneRoot`）。
+同一snapshotの別公開や、後の保護用occurrenceのラベルを流用しない。
+opt-in省略では旧応答とcursorのbytesを保持する。server cursorにラベルは含めず、
+opt-inと旧形式の間で同じcursorを利用できる。クライアントは各読取で400/404/405/422だけ
+opt-inを外して1回再取得し、他の失敗や不正な200応答ではfallbackしない。
+旧serverがqueryを無視して旧shapeを返す場合も受け入れる。
+
+端末内SQLite schemaは変更しない。clientの表示用履歴cursorはbuffer中のremote entryに
+optional labelを保持する。旧cursorのfield欠落はnil、新cursorを旧decoderが読む場合は未知fieldを
+無視する。最大500 buffer entryではラベル本文増分はUTF-8最大80 KiB（base64後約107 KiB）と
+JSON key分だけで、serverへは送らず端末内のメモリで使う。

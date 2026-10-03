@@ -277,7 +277,7 @@ struct SnapshotPopover: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 List {
-                    SnapshotHistorySections(items: presenter.snapshots.map(\.entry)) { entry in
+                    SnapshotHistorySections(items: presenter.snapshots.map(\.entry), application: appState.snapshotSyncV2Application, workID: appState.currentSnapshotSyncV2WorkID) { entry in
                         if let request = presenter.snapshots.first(where: { $0.id == entry.occurrenceID }) {
                             if let application = appState.snapshotSyncV2Application,
                                let workID = appState.currentSnapshotSyncV2WorkID {
@@ -286,7 +286,7 @@ struct SnapshotPopover: View {
                                     application: application, workID: workID, snapshotID: entry.snapshotID,
                                     rowDate: entry.createdAt,
                                     rowKind: HistoryPresentation().subtitle(entry),
-                                    historyItem: entry,
+                                    historyItem: entry, userDefaults: appState.userDefaults,
                                     announcesStatus: entry.occurrenceID == presenter.snapshots.first?.id
                                 ) {
                                     guard appState.matchesSnapshotSyncV2AccountScope(scope) else { return }
@@ -299,7 +299,7 @@ struct SnapshotPopover: View {
                                 Button {
                                     presenter.requestRestore(request)
                                 } label: {
-                                    SnapshotHistoryLabel(item: entry)
+                                    SnapshotHistoryLabel(item: entry, userDefaults: appState.userDefaults)
                                 }
                                 .buttonStyle(.plain)
                             }

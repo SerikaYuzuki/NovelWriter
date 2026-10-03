@@ -339,7 +339,12 @@ async fn command_inner(
     if route_work_id.is_some_and(|route| route != cmd.work_id) {
         return error_response(SyncError::NotFound);
     }
-    match state.repo.command(&p, &cmd).await {
+    let label = crate::device_label::from_headers(&headers);
+    match state
+        .repo
+        .command_with_device_label(&p, &cmd, label.as_deref())
+        .await
+    {
         Ok((status, bytes)) => Response::builder()
             .status(
                 StatusCode::from_u16(status as u16).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
@@ -726,7 +731,7 @@ async fn history(
             return error_response(SyncError::SchemaViolation("cursor.highWater".into()));
         }
     }
-    let rows=sqlx::query("SELECT h.occurrence_id,h.snapshot_id,h.reason,h.pinned,h.created_at,h.event_id FROM sync_v2.history h JOIN sync_v2.works w ON w.account_id=h.account_id AND w.work_id=h.work_id AND w.state='bound' AND NOT EXISTS (SELECT 1 FROM sync_v2.deleted_works d WHERE d.account_id=w.account_id AND d.work_id=w.work_id) WHERE h.account_id=$1 AND h.work_id=$2 AND h.event_id <= $3 AND h.event_id > $4 ORDER BY h.event_id LIMIT $5").bind(&p.account_id).bind(work).bind(high_water).bind(last).bind(page + 1).fetch_all(&state.repo.pool).await;
+    let rows=sqlx::query("SELECT h.occurrence_id,h.snapshot_id,h.reason,h.pinned,h.created_at,h.event_id,h.device_label FROM sync_v2.history h JOIN sync_v2.works w ON w.account_id=h.account_id AND w.work_id=h.work_id AND w.state='bound' AND NOT EXISTS (SELECT 1 FROM sync_v2.deleted_works d WHERE d.account_id=w.account_id AND d.work_id=w.work_id) WHERE h.account_id=$1 AND h.work_id=$2 AND h.event_id <= $3 AND h.event_id > $4 ORDER BY h.event_id LIMIT $5").bind(&p.account_id).bind(work).bind(high_water).bind(last).bind(page + 1).fetch_all(&state.repo.pool).await;
     match rows {
         Ok(mut rows) => {
             let has_more = rows.len() as i64 > page;
@@ -762,7 +767,15 @@ async fn history(
                     Ok(value) => Some(value),
                     Err(error) => return error_response(SyncError::Database(error)),
                 };
-                items.push(serde_json::json!({"occurrenceId":occurrence_id,"snapshotId":hex::encode(snapshot),"reason":reason,"pinned":pinned,"createdAt":created_at.to_rfc3339()}));
+                let mut item = serde_json::json!({"occurrenceId":occurrence_id,"snapshotId":hex::encode(snapshot),"reason":reason,"pinned":pinned,"createdAt":created_at.to_rfc3339()});
+                if params.get("include").map(String::as_str) == Some("deviceLabel") {
+                    let label = match row.try_get::<Option<String>, _>("device_label") {
+                        Ok(value) => value,
+                        Err(error) => return error_response(SyncError::Database(error)),
+                    };
+                    item["deviceLabel"] = serde_json::json!(label);
+                }
+                items.push(item);
             }
             let next_cursor = if has_more {
                 match last_event {
@@ -1044,6 +1057,7 @@ async fn upload(
 async fn conflict(
     Path(work): Path<String>,
     headers: HeaderMap,
+    Query(params): Query<HashMap<String, String>>,
     state: State<AppState>,
 ) -> Response {
     let work = match parse_uuid_path(&work) {
@@ -1068,7 +1082,7 @@ async fn conflict(
     if !exists {
         return error_response(SyncError::NotFound);
     }
-    let row=sqlx::query("SELECT a.conflict_id,a.current_revision,a.source_generation,c.base_snapshot_id,c.local_snapshot_id,c.remote_snapshot_id FROM sync_v2.active_conflicts a JOIN sync_v2.conflict_candidates c ON c.account_id=a.account_id AND c.conflict_id=a.conflict_id AND c.revision=a.current_revision JOIN sync_v2.works w ON w.account_id=a.account_id AND w.work_id=a.work_id AND w.state='bound' AND NOT EXISTS (SELECT 1 FROM sync_v2.deleted_works d WHERE d.account_id=w.account_id AND d.work_id=w.work_id) WHERE a.account_id=$1 AND a.work_id=$2 AND a.state='active'").bind(&p.account_id).bind(work).fetch_optional(&state.repo.pool).await;
+    let row=sqlx::query("SELECT a.conflict_id,a.current_revision,a.source_generation,c.base_snapshot_id,c.local_snapshot_id,c.remote_snapshot_id,(SELECT h.device_label FROM sync_v2.head_events e JOIN sync_v2.history h ON h.account_id=e.account_id AND h.work_id=e.work_id AND h.created_at=e.created_at AND h.reason=CASE e.command_kind WHEN 'publish' THEN 'publish' WHEN 'resolveDevice' THEN 'conflictResolution' WHEN 'cloneWork' THEN 'keepBothCloneRoot' WHEN 'restore' THEN 'restoreBefore' END WHERE e.account_id=c.account_id AND e.work_id=c.work_id AND e.snapshot_id=c.remote_snapshot_id AND e.generation=(SELECT (convert_from(r.canonical_response,'UTF8')::jsonb->'head'->>'generation')::bigint FROM sync_v2.conflict_events ce JOIN sync_v2.receipts r ON r.account_id=ce.account_id AND r.command_id=(convert_from(ce.canonical_event,'UTF8')::jsonb->>'commandId')::uuid WHERE ce.account_id=c.account_id AND ce.conflict_id=c.conflict_id AND ce.revision=c.revision AND ce.event_kind IN ('created','appended') LIMIT 1) ORDER BY e.generation DESC,h.event_id DESC LIMIT 1) AS remote_device_label FROM sync_v2.active_conflicts a JOIN sync_v2.conflict_candidates c ON c.account_id=a.account_id AND c.conflict_id=a.conflict_id AND c.revision=a.current_revision JOIN sync_v2.works w ON w.account_id=a.account_id AND w.work_id=a.work_id AND w.state='bound' AND NOT EXISTS (SELECT 1 FROM sync_v2.deleted_works d WHERE d.account_id=w.account_id AND d.work_id=w.work_id) WHERE a.account_id=$1 AND a.work_id=$2 AND a.state='active'").bind(&p.account_id).bind(work).fetch_optional(&state.repo.pool).await;
     match row {
         Ok(Some(r)) => {
             let base = match r.try_get::<Option<Vec<u8>>, _>("base_snapshot_id") {
@@ -1099,10 +1113,15 @@ async fn conflict(
                 Ok(value) => value,
                 Err(error) => return error_response(SyncError::Database(error)),
             };
-            canonical_response(
-                StatusCode::OK,
-                serde_json::json!({"conflict":{"baseSnapshotId":base,"conflictId":conflict_id,"localSnapshotId":hex::encode(local),"remoteSnapshotId":hex::encode(remote),"revision":revision,"sourceGeneration":source_generation,"workId":work},"result":"noChanges"}),
-            )
+            let mut value = serde_json::json!({"conflict":{"baseSnapshotId":base,"conflictId":conflict_id,"localSnapshotId":hex::encode(local),"remoteSnapshotId":hex::encode(remote),"revision":revision,"sourceGeneration":source_generation,"workId":work},"result":"noChanges"});
+            if params.get("include").map(String::as_str) == Some("deviceLabel") {
+                let label = match r.try_get::<Option<String>, _>("remote_device_label") {
+                    Ok(value) => value,
+                    Err(error) => return error_response(SyncError::Database(error)),
+                };
+                value["conflict"]["remoteDeviceLabel"] = serde_json::json!(label);
+            }
+            canonical_response(StatusCode::OK, value)
         }
         Ok(None) => canonical_response(
             StatusCode::OK,
