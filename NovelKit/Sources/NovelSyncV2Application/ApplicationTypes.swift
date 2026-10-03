@@ -229,19 +229,22 @@ public struct SyncV2PendingAdoption: Hashable, Sendable {
     public let expectedLocalVersion: SyncV2LocalVersion
     public let conflictID: UUID?
     public let conflictRevision: Int64?
+    public let requiresExplicitConfirmation: Bool
 
     public init(
         workID: WorkID,
         inboxID: UUID,
         expectedLocalVersion: SyncV2LocalVersion,
         conflictID: UUID? = nil,
-        conflictRevision: Int64? = nil
+        conflictRevision: Int64? = nil,
+        requiresExplicitConfirmation: Bool = false
     ) {
         self.workID = workID
         self.inboxID = inboxID
         self.expectedLocalVersion = expectedLocalVersion
         self.conflictID = conflictID
         self.conflictRevision = conflictRevision
+        self.requiresExplicitConfirmation = requiresExplicitConfirmation
     }
 }
 

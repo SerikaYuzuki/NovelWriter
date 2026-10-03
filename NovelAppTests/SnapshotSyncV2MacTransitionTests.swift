@@ -515,3 +515,35 @@ private actor MacRestoreRaceGate {
         releaseContinuation = nil
     }
 }
+
+extension SnapshotSyncV2MacTransitionTests {
+    @Test("自動採用の実際の失敗は再表示で再試行せず明示操作で採用できる")
+    @MainActor
+    func failedAutomaticAdoptionRequiresExplicitRetry() async throws {
+        let fixture = try await makeMacConflictFixture(remoteBehavior: .failure(.offline))
+        defer { fixture.state.cancelSnapshotSyncV2BackgroundOperations() }
+        let issuer = await fixture.application.gate
+        let gate = try #require(issuer as? InMemorySyncV2DocumentGate)
+        await gate.setUnsafe(true, workID: fixture.workID)
+        let inbox = fixture.serverInbox
+        await fixture.remote.setCommandHandler { command in
+            try makeAppliedResolveServerExecution(operation: .command(command), inbox: inbox)
+        }
+        #expect(await fixture.state.resolveSnapshotConflict(using: .useServer))
+        try await eventuallyMac {
+            fixture.state.snapshotSyncLibraryOpenFailure != nil
+                && fixture.state.snapshotSyncAutoAdoptionTask == nil
+        }
+        #expect(try await fixture.application.pendingAdoption(workID: fixture.workID) != nil)
+        await gate.setUnsafe(false, workID: fixture.workID)
+        for _ in 0 ..< 3 {
+            await fixture.state.refreshSnapshotSyncV2UIState()
+            try await eventuallyMac { fixture.state.snapshotSyncAutoAdoptionTask == nil }
+            #expect(try await fixture.application.pendingAdoption(workID: fixture.workID) != nil)
+            #expect(fixture.state.document.title == fixture.document.title)
+        }
+        #expect(await fixture.state.applySnapshotSyncV2ServerVersion())
+        #expect(try await fixture.application.pendingAdoption(workID: fixture.workID) == nil)
+        #expect(fixture.state.document.title == fixture.remoteDocument.title)
+    }
+}

@@ -117,6 +117,9 @@ actor ProductionSyncV2Planner: SyncV2CommandPlanner {
         if let loaded = loadedPresence[workID], loaded != binding {
             await invalidateCaches(for: [workID])
         }
+        if try await store.hasRecoveredMultipleResolution(workID: workID, scope: localScope) {
+            return .idle
+        }
         try await recoverLegacyCommandsOnce(binding: binding)
         if let reason = try await store.quarantinedUploadReason(workID: workID, scope: localScope) {
             return .blocked(.fatal(SyncV2FatalReason(rawValue: reason) ?? .unexpected))
@@ -200,6 +203,9 @@ actor ProductionSyncV2Planner: SyncV2CommandPlanner {
             conflictID: active.conflictID,
             scope: localScope
         ) {
+            guard reservation.state == "prepared", reservation.sourceGeneration == intent.sourceGeneration else {
+                return .blocked(.fatal(.invalidLocalState))
+            }
             let remoteHead = try await store.remoteHeadForConflict(active, scope: localScope)
             command = try makeClone(view, conflict: active, reservation: reservation, remoteHead: remoteHead)
         } else {
@@ -459,7 +465,7 @@ private extension ProductionSyncV2Planner {
     }
 
     private func planActiveTail(
-        workID: WorkID,
+        workID _: WorkID,
         scope localScope: V2LocalWorkScope,
         view: V2ImmutableTransferView,
         active: V2ConflictCandidate,
@@ -471,32 +477,17 @@ private extension ProductionSyncV2Planner {
         }
         let expectedRemoteHead = try await store.remoteHeadForConflict(active, scope: localScope)
         let command: SealedCommand
-        if let reservation = try await store.latestKeepBothReservation(
-            sourceWorkID: workID,
-            conflictID: active.conflictID,
-            scope: localScope
-        ) {
-            guard view.summary.localGeneration >= active.sourceGeneration + 1 else {
-                return .idle
-            }
-            command = try makeClone(
-                view,
-                conflict: active,
-                reservation: reservation,
-                remoteHead: expectedRemoteHead
-            )
-        } else {
-            guard view.pendingIntent.sourceGeneration == active.sourceGeneration + 1,
-                  view.snapshot.snapshotId != active.localSnapshotID else {
-                return .idle
-            }
-            command = try makeResolveDevice(
-                view,
-                conflict: active,
-                decisionSnapshotID: view.snapshot.snapshotId,
-                expectedRemoteHead: expectedRemoteHead
-            )
+        // A two-parent decision intent identifies useDevice. Never infer
+        // cloneWork from an unrelated/stale reservation at this tail.
+        guard view.pendingIntent.sourceGeneration == active.sourceGeneration + 1,
+              view.snapshot.snapshotId != active.localSnapshotID,
+              view.snapshot.manifest.parentSnapshotIds == [active.localSnapshotID, active.remoteSnapshotID].sorted(by: { $0.rawValue < $1.rawValue }) else {
+            return .blocked(.fatal(.invalidLocalState))
         }
+        command = try makeResolveDevice(
+            view, conflict: active, decisionSnapshotID: view.snapshot.snapshotId,
+            expectedRemoteHead: expectedRemoteHead
+        )
         try await store.seal(command, intentID: resolutionIntentID, scope: localScope)
         return .command(command)
     }

@@ -229,6 +229,29 @@ public extension LocalSyncV2Store {
         guard let remoteHead = graph.expectedRemoteHead else {
             throw SyncV2StoreError.invalidRemoteHead
         }
+        if pending.requiresExplicitConfirmation {
+            try inTransaction {
+                guard let recovery = try conflictRepository.recoveredMultipleResolution(workID: workID, scope: scope),
+                      recovery == pending else { throw SyncV2StoreError.staleCAS }
+                // Rebase only the mutable CAS expectation, never the graph's
+                // immutable manifest/object bytes. The platform gate proved
+                // this exact saved generation before entering the Store.
+                let rebased = V2RemoteSnapshotGraph(
+                    inboxID: graph.inboxID, workID: graph.workID,
+                    headSnapshotID: graph.headSnapshotID, snapshots: graph.snapshots,
+                    expectedCurrentSnapshotID: pending.expectedCurrentSnapshotID,
+                    expectedLocalGeneration: pending.expectedLocalGeneration,
+                    expectedRemoteHead: graph.expectedRemoteHead
+                )
+                try inboxRepository.adoptGraphTransaction(rebased, expectedConflict: nil, binding: binding)
+                try exec("""
+                UPDATE inbox_batches SET state='rejected',rejection_code='recoveredConflictDuplicate'
+                WHERE work_id=? AND snapshot_id=? AND state='verified'
+                  AND server_instance_id=? AND protocol_epoch=? AND account_id=? AND account_fence=?
+                """, [.text(workID.description), .blob(graph.headSnapshotID.bytes)] + binding.values)
+            }
+            return try workRepository.open(workID: workID, scope: scope)
+        }
         guard let active = try conflictRepository.activeConflict(
             workID: workID,
             scope: scope

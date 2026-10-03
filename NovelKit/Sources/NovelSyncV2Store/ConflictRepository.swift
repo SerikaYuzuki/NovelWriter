@@ -298,19 +298,15 @@ extension ConflictRepository {
               (current.localGeneration.map { $0 >= request.sourceGeneration } == true) else {
             throw SyncV2StoreError.staleConflictAction
         }
-        let existing = try outboxRepository.pendingIntents(scope: scope, workID: request.workID)
-            .first {
-                $0.kind == "conflictResolution" && $0.sourceSnapshotID == request.localSnapshotID && $0
-                    .sourceGeneration == request.sourceGeneration
-            }
-        if let existing {
-            return V2CheckpointResult(
-                snapshotID: existing.sourceSnapshotID,
-                generation: existing.sourceGeneration,
-                intentID: existing.intentID,
-                noChanges: false
-            )
-        }
+        try requireUnpreparedConflict(
+            workID: request.workID, conflictID: request.conflictID, revision: request.revision,
+            generation: request.sourceGeneration, local: request.localSnapshotID,
+            remote: request.remoteSnapshotID, scope: scope
+        )
+        let graph = try inboxRepository.loadInboxGraph(inboxID: request.inboxID, binding: binding)
+        guard graph.headSnapshotID == request.remoteSnapshotID,
+              graph.expectedRemoteHead == request.expectedRemoteHead else { throw SyncV2StoreError.staleConflictAction }
+        try preserveConflictBranches(local: request.localSnapshotID, generation: request.sourceGeneration, graph: graph)
         let intentID = UUID()
         try outboxRepository.insertIntent(.init(
             intentID: intentID,

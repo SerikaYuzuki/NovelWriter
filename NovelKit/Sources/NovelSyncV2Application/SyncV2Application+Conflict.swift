@@ -12,9 +12,26 @@ public extension SyncV2Application {
         guard action.workID == workID else {
             throw SyncV2ApplicationError.staleConflictAction
         }
+        if let previous = conflictPreparations[workID],
+           previous.conflictID == action.conflictID, previous.revision == action.revision {
+            guard let state = lanes[workID]?.state?.projection else {
+                throw SyncV2ApplicationError.staleConflictAction
+            }
+            return SyncV2OperationResult(state: state, typedResult: .staleConflictAction)
+        }
+        // Acquire before the kernel await; actor reentrancy must not queue a
+        // second choice while the first transaction is still being prepared.
+        conflictPreparations[workID] = action
+        var committed = false
+        defer {
+            if !committed {
+                conflictPreparations.removeValue(forKey: workID)
+            }
+        }
         do {
             let effectiveAction = action.withGeneratedKeepBothIDs()
             let prepared = try await kernel.prepareConflict(effectiveAction)
+            committed = true
             let openedWork: SyncV2OpenedWork?
             if let preparedWorkID = prepared.preparedWorkID {
                 let opened = try await kernel.open(workID: preparedWorkID)
@@ -45,7 +62,8 @@ public extension SyncV2Application {
                 workID: workID,
                 localDurability: lanes[workID, default: WorkLane()].state?.localDurability ?? .unsaved,
                 remoteProgress: .pending,
-                result: .queued
+                result: .queued,
+                conflict: .clear
             )
             // Preparation (including keep-both clone creation) is complete
             // before this wake.  Keep-both deliberately leaves the source
@@ -60,11 +78,13 @@ public extension SyncV2Application {
                 openedWork: openedWork
             )
         } catch SyncV2ApplicationError.staleConflictAction {
+            let currentConflict = try await kernel.activeConflict(workID: workID)
             let state = setState(
                 workID: workID,
                 localDurability: lanes[workID, default: WorkLane()].state?.localDurability ?? .unsaved,
-                remoteProgress: .needsChoice,
-                result: .staleConflictAction
+                remoteProgress: currentConflict == nil ? .pending : .needsChoice,
+                result: .staleConflictAction,
+                conflict: currentConflict.map(SyncV2ConflictUpdate.set) ?? .clear
             )
             return SyncV2OperationResult(
                 state: state,
@@ -129,5 +149,12 @@ private extension SyncV2ConflictAction {
             newWorkID: newWorkID ?? WorkID(UUID()),
             newDocumentID: newDocumentID ?? DocumentID(UUID())
         )
+    }
+}
+
+extension SyncV2Application {
+    func hasPreparedConflict(workID: WorkID, conflict: SyncV2ConflictProjection) -> Bool {
+        conflictPreparations[workID]?.conflictID == conflict.conflictID &&
+            conflictPreparations[workID]?.revision == conflict.revision
     }
 }

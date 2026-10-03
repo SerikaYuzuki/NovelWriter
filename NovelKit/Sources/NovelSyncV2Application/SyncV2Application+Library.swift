@@ -29,7 +29,7 @@ public extension SyncV2Application {
                 result: .adoptionPending,
                 conflict: .clear
             )
-        } else if let conflict = activeConflict {
+        } else if let conflict = activeConflict, !hasPreparedConflict(workID: workID, conflict: conflict) {
             setState(
                 workID: workID,
                 localDurability: durability(for: opened),
@@ -197,6 +197,9 @@ public extension SyncV2Application {
     func library() async throws -> SyncV2LibraryProjection {
         let projection = try await libraryProvider.library()
         return SyncV2LibraryProjection(items: projection.items.map { item in
+            if case .failed = item.remoteProgress {
+                return item
+            }
             guard let state = lanes[item.workID, default: WorkLane()].state else { return item }
             if item.accountState == .parkedDifferentAccount {
                 return SyncV2LibraryItem(
@@ -216,7 +219,12 @@ public extension SyncV2Application {
             case .readyForSafeAdoption:
                 nil
             default:
-                state.conflict ?? item.conflict
+                if let value = state.conflict ?? item.conflict,
+                   !hasPreparedConflict(workID: item.workID, conflict: value) {
+                    value
+                } else {
+                    nil
+                }
             }
             return SyncV2LibraryItem(
                 workID: item.workID,
@@ -251,7 +259,8 @@ public extension SyncV2Application {
                 )
             }
             diagnosticStage = "active-conflict"
-            if let conflict = try await kernel.activeConflict(workID: workID) {
+            if let conflict = try await kernel.activeConflict(workID: workID),
+               !hasPreparedConflict(workID: workID, conflict: conflict) {
                 let state = setState(
                     workID: workID,
                     localDurability: lanes[workID, default: WorkLane()].state?.localDurability ?? .unsaved,

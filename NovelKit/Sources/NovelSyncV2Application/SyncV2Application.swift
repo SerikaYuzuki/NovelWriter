@@ -48,6 +48,7 @@ public actor SyncV2Application {
     /// must never use the dictionary slot or clear a newer worker merely
     /// because it has the same WorkID.
     var lanes: [WorkID: WorkLane] = [:]
+    var conflictPreparations: [WorkID: SyncV2ConflictAction] = [:]
     /// Display-only values; scheduling reads the work lane.
     var states: [WorkID: SyncUIState] {
         laneValues(\.state).mapValues(\.projection)
@@ -61,6 +62,7 @@ public actor SyncV2Application {
     /// page can append stale rows.
     var historyScopeGeneration: UInt64 = 0 {
         didSet {
+            conflictPreparations.removeAll()
             clearLaneValues(\.lastBodyEdit)
             backfillTask?.cancel()
             backfillQueue.removeAll()

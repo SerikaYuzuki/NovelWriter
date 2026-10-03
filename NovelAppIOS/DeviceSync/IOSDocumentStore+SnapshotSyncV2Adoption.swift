@@ -15,7 +15,8 @@ extension IOSDocumentStore {
     func adoptPendingSnapshotSyncV2(
         expectedSession: IOSDocumentSessionToken? = nil,
         expectedEditGeneration: UInt64? = nil,
-        expectedAccountScope: IOSSnapshotSyncV2AccountScope? = nil
+        expectedAccountScope: IOSSnapshotSyncV2AccountScope? = nil,
+        automatically: Bool = false
     ) async -> Bool {
         guard !isSyncV2RemoteAccountTransitionActive,
               let application = snapshotSyncV2Application,
@@ -45,6 +46,7 @@ extension IOSDocumentStore {
             isRemoteAdoptionInProgress = true
             defer { isRemoteAdoptionInProgress = false }
             var adopted = false
+            var adoptionSession: NovelSyncV2Application.DocumentSessionToken?
             let transitioned = await performDocumentTransition {
                 do {
                     // `prepareForDocumentTransition` can commit marked text
@@ -68,9 +70,11 @@ extension IOSDocumentStore {
                           pending.inboxID == inboxID,
                           !isSyncV2RemoteAccountTransitionActive,
                           matchesSyncOperation(operation) else { return }
+                    guard !automatically || claimAutomaticAdoption(pending, account: expectedAccountScope) else { return }
                     applySnapshotSyncV2State(projected)
 
                     let session = await application.beginSession(workID: pending.workID)
+                    adoptionSession = session
                     guard !isSyncV2RemoteAccountTransitionActive,
                           matchesSyncOperation(operation) else { return }
                     #if !FUMINIWA_TEST_COMPOSITION
@@ -92,7 +96,10 @@ extension IOSDocumentStore {
                     #endif
                     let token = try await application.documentGateToken(for: session)
                     guard !isSyncV2RemoteAccountTransitionActive,
-                          matchesSyncOperation(operation) else { return }
+                          matchesSyncOperation(operation) else {
+                        await snapshotSyncV2DocumentGate.disarm(session: session)
+                        return
+                    }
                     let boundary = SafeAdoptionBoundary(
                         workID: pending.workID,
                         inboxID: pending.inboxID,
@@ -112,6 +119,9 @@ extension IOSDocumentStore {
                     applySnapshotSyncV2State(adoptedState)
                     adopted = true
                 } catch {
+                    if let adoptionSession {
+                        await snapshotSyncV2DocumentGate.disarm(session: adoptionSession)
+                    }
                     guard matchesSyncAccount(expectedAccountScope) else { return }
                     snapshotSyncOutcome = .failure(.fatal(.invalidLocalState))
                     snapshotSyncV2RemoteOnlyOpenFailure = syncV2FailureKind(error)
@@ -121,6 +131,13 @@ extension IOSDocumentStore {
             }
             return transitioned && adopted
         }
+    }
+
+    func claimAutomaticAdoption(_ pending: SyncV2PendingAdoption, account: IOSSnapshotSyncV2AccountScope) -> Bool {
+        guard !pending.requiresExplicitConfirmation,
+              automaticAdoptionAttempts[account]?[pending.workID]?.contains(pending.inboxID) != true else { return false }
+        automaticAdoptionAttempts[account, default: [:]][pending.workID, default: []].insert(pending.inboxID)
+        return true
     }
 
     func automaticAdoptionExpectation(

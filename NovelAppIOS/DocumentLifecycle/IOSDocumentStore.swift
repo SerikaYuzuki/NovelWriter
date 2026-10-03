@@ -287,6 +287,8 @@ final class IOSDocumentStore {
     var libraryFailure: SyncV2Failure?
     var isSnapshotSyncInFlight = false
     var snapshotSyncState: SyncUIState?
+    @ObservationIgnored var presentedSyncFailures: [IOSSnapshotSyncV2AccountScope: [WorkID: SyncV2FatalReason]] = [:]
+    @ObservationIgnored var automaticAdoptionAttempts: [IOSSnapshotSyncV2AccountScope: [WorkID: Set<UUID>]] = [:]
     var pendingDeletionWorkIDs: Set<WorkID> = []
     var deletedLibraryWorkIDs: Set<WorkID> = []
     var syncV2LibraryItems: [SyncV2LibraryItem] = []

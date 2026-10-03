@@ -109,7 +109,7 @@ struct IOSLibraryView: View {
                 guard observesLibrary, let application = store.snapshotSyncV2Application else { return }
                 for await _ in await application.stateChanges() {
                     guard !Task.isCancelled else { return }
-                    _ = await store.refreshLibrary()
+                    _ = try? await store.reloadLibraryItems()
                 }
             }
             .task(id: store.snapshotSyncV2AccountScope) {

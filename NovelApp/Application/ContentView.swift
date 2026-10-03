@@ -16,10 +16,8 @@ struct ContentView: View {
             .sheet(isPresented: $showingConflict) {
                 if let selection = appState.snapshotSyncV2ConflictSelection {
                     ConflictSheet { choice in
-                        Task {
-                            if await appState.resolveSnapshotConflict(using: choice, selection: selection) {
-                                showingConflict = false
-                            }
+                        if await appState.resolveSnapshotConflict(using: choice, selection: selection) {
+                            showingConflict = false
                         }
                     } cancel: {
                         showingConflict = false
@@ -103,8 +101,9 @@ private struct RecoveryPane: View {
 }
 
 struct ConflictSheet: View {
-    let choose: (SyncV2ConflictChoice) -> Void
+    let choose: @MainActor (SyncV2ConflictChoice) async -> Void
     let cancel: () -> Void
+    @State private var choiceInFlight = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -115,9 +114,11 @@ struct ConflictSheet: View {
             VStack(alignment: .leading, spacing: 8) {
                 choiceRow("この端末の版を使う", symbol: "internaldrive", description: "この端末の変更をサーバーへ送ります。", choice: .useDevice)
                 choiceRow("サーバーの版を使う", symbol: "arrow.down.circle", description: "サーバーで確認済みの版を、この端末へ適用します。", choice: .useServer)
-                choiceRow("両方を残す", symbol: "doc.on.doc", description: "元の作品を保ち、もう一つの作品として残します。", choice: .keepBoth)
             }
             .buttonStyle(.bordered)
+            .disabled(choiceInFlight)
+            Text("選ばなかった版は履歴から復元できます。")
+                .font(.caption).foregroundStyle(.secondary)
             Button("後で確認", action: cancel)
                 .buttonStyle(.borderless)
         }
@@ -128,7 +129,14 @@ struct ConflictSheet: View {
     }
 
     private func choiceRow(_ title: String, symbol: String, description: String, choice: SyncV2ConflictChoice) -> some View {
-        Button { choose(choice) } label: {
+        Button {
+            guard !choiceInFlight else { return }
+            choiceInFlight = true
+            Task {
+                defer { choiceInFlight = false }
+                await choose(choice)
+            }
+        } label: {
             HStack(alignment: .top, spacing: Spacing.medium) {
                 Image(systemName: symbol).symbolRenderingMode(.hierarchical)
                 VStack(alignment: .leading, spacing: Spacing.extraSmall) {

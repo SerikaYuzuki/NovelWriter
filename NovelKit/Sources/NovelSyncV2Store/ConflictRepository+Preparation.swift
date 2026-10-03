@@ -164,43 +164,40 @@ extension ConflictRepository {
 }
 
 extension ConflictRepository {
-    func preparedDeviceResolution(
-        _ request: V2DeviceResolutionRequest,
-        scope: V2LocalWorkScope
-    ) throws -> V2CheckpointResult? {
-        var sql = """
-        SELECT \(PreparedIntentRow.columns)
-        FROM sync_intents
-        WHERE work_id=? AND kind='conflictResolution' AND status='pending'
-        """
-        sql += scope.intentPredicateSQL
-        sql += " ORDER BY source_generation DESC LIMIT 1"
-        guard let row = try queryRows(
-            PreparedIntentRow.self,
-            sql,
-            [.text(request.workID.description)] + scope.intentPredicateValues
-        ).first,
-            let intentID = row.intentID.flatMap(UUID.init(uuidString:)),
-            let decisionBytes = row.sourceSnapshotID,
-            let generation = row.sourceGeneration,
-            generation == request.sourceGeneration + 1 else { return nil }
-        let decision = try SnapshotID(rawValue: decisionBytes.hexString)
-        let parents = try workRepository.snapshotParents(
-            workID: request.workID,
-            snapshotID: decision,
-            scope: scope
-        )
-        let expected = [request.localSnapshotID, request.remoteSnapshotID]
-            .sorted { $0.rawValue < $1.rawValue }
-        guard parents == expected else {
-            throw SyncV2StoreError.invalidSnapshot
+    /// Both selected and unselected branches become restorable immediately,
+    /// including while the resolution command is still offline.
+    func preserveConflictBranches(local: SnapshotID, generation: Int64, graph: V2RemoteSnapshotGraph) throws {
+        for snapshot in try inboxRepository.topologicalSnapshots(graph) {
+            try workRepository.insertEncoded(snapshot, workID: graph.workID)
         }
-        return V2CheckpointResult(
-            snapshotID: decision,
-            generation: generation,
-            intentID: intentID,
-            noChanges: false
-        )
+        for (snapshot, reason) in [(local, "conflictLocal"), (graph.headSnapshotID, "conflictRemote")] {
+            try workRepository.insertHistory(workID: graph.workID, snapshotID: snapshot,
+                                             reason: reason, pinned: true, generation: generation)
+        }
+    }
+
+    /// Called under BEGIN IMMEDIATE. A reservation, intent, or immutable
+    /// decision occurrence consumes this candidate even before command sealing.
+    func requireUnpreparedConflict(
+        workID: WorkID, conflictID: UUID, revision: Int64, generation: Int64,
+        local: SnapshotID, remote: SnapshotID, scope: V2LocalWorkScope
+    ) throws {
+        let reservations = try query("""
+        SELECT 1 FROM pending_keep_both WHERE source_work_id=? AND conflict_id=? AND conflict_revision=?
+        """, [.text(workID.description), .text(conflictID.uuidString.lowercased()), .int(revision)])
+        var intentSQL = "SELECT 1 FROM sync_intents WHERE work_id=? AND kind='conflictResolution' AND status IN ('pending','sealed')"
+        intentSQL += scope.intentPredicateSQL
+        let intents = try query(intentSQL, [.text(workID.description)] + scope.intentPredicateValues)
+        let decisions = try query("""
+        SELECT 1 FROM history_occurrences h
+        WHERE h.work_id=? AND h.reason='conflictResolution' AND h.local_generation=?
+          AND (SELECT COUNT(*) FROM snapshot_parents p WHERE p.work_id=h.work_id AND p.snapshot_id=h.snapshot_id)=2
+          AND EXISTS (SELECT 1 FROM snapshot_parents p WHERE p.work_id=h.work_id AND p.snapshot_id=h.snapshot_id AND p.parent_snapshot_id=?)
+          AND EXISTS (SELECT 1 FROM snapshot_parents p WHERE p.work_id=h.work_id AND p.snapshot_id=h.snapshot_id AND p.parent_snapshot_id=?)
+        """, [.text(workID.description), .int(generation + 1), .blob(local.bytes), .blob(remote.bytes)])
+        guard reservations.isEmpty, intents.isEmpty, decisions.isEmpty else {
+            throw SyncV2StoreError.staleConflictAction
+        }
     }
 
     func preparedRestore(

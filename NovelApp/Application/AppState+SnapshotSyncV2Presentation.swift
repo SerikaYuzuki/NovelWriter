@@ -71,3 +71,12 @@ extension AppState {
         operationMessage = nil
     }
 }
+
+extension AppState {
+    func claimAutomaticAdoption(_ pending: SyncV2PendingAdoption, account: SnapshotSyncV2AccountScopeToken) -> Bool {
+        guard !pending.requiresExplicitConfirmation,
+              automaticAdoptionAttempts[account]?[pending.workID]?.contains(pending.inboxID) != true else { return false }
+        automaticAdoptionAttempts[account, default: [:]][pending.workID, default: []].insert(pending.inboxID)
+        return true
+    }
+}

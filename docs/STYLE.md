@@ -86,7 +86,7 @@
 - 新規／Importと検証済みlocal作品のopenは、accountやnetwork未確認だけを理由に止めない。
 - local保存、同期待ち、同期済み、offline、未取得、競合、別account保留を区別する。「同期済み」は検証済みのaccount範囲とheadに基づくprojectionだけに使う。
 - unbound作品を「接続後に同期」と表示しない。別account作品はlocal編集を保持し、未取得の別account行／titleは見せない。
-- 競合は「この端末の版を使う／サーバーの版を使う／両方を残す」。未選択のwinnerを決めず、通常のremote競合で全画面の編集を止めない。
+- 競合は「この端末の版を使う／サーバーの版を使う」の2択。選ばなかった版は履歴から復元できる。選択中は同じ競合への再選択を無効にする。未選択のwinnerを決めず、通常のremote競合で全画面の編集を止めない。
 - 復元前の内容を保全する。Snapshot ID、SQLite、journal、fence、commandの説明を通常の判断材料にしない。
 - 変更のない保存／同期は成功。「コピー」「予約」「local保存」「remote反映」「復元」を混同しない。
 

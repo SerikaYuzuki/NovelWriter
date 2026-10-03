@@ -51,24 +51,27 @@ struct IOSProjectHomeView: View {
                     VStack(alignment: .leading, spacing: Spacing.small) {
                         Text("この端末とサーバーの変更が分かれています")
                             .foregroundStyle(FuminiwaColor.warning.color)
-                        Text("残す内容を選んでください。通信が戻ると同期を続けます。")
+                        Text("使う版を選んでください。選ばなかった版は履歴から復元できます。")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         if let displayedSelection = store.snapshotSyncV2DisplayedConflictSelection {
                             ForEach([
                                 SyncV2ConflictChoice.useDevice,
-                                .useServer,
-                                .keepBoth
+                                .useServer
                             ], id: \.rawValue) { choice in
                                 Button(conflictChoiceTitle(choice)) {
+                                    guard !conflictChoiceInFlight else { return }
+                                    conflictChoiceInFlight = true
                                     Task {
+                                        defer { conflictChoiceInFlight = false }
                                         _ = await store.resolveSnapshotSyncV2Conflict(
                                             using: choice,
                                             expectedSelection: displayedSelection
                                         )
                                     }
                                 }
-                                .disabled(store.isExplicitSyncInFlight)
+                                .buttonStyle(.borderless)
+                                .disabled(conflictChoiceInFlight || store.isExplicitSyncInFlight)
                                 Text(conflictChoiceDescription(choice))
                                     .font(.caption2)
                                     .foregroundStyle(.secondary)
@@ -124,6 +127,7 @@ struct IOSProjectHomeView: View {
             .delayed(since: store.snapshotSyncState?.oldestUnreceivedAt, now: Date())
     }
 
+    @State private var conflictChoiceInFlight = false
     @State private var unresolvedCount = 0
     @State private var referenceCount = 0
 

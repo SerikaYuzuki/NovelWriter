@@ -27,10 +27,10 @@ func deviceChoiceCanBeSealedAfterEditAndRestart() async throws {
     await store.close()
 
     let reopened = try LocalSyncV2Store(root: root, policy: .openExisting)
-    let recovered = try await reopened.prepareUseDevice(request, scope: scopeA)
-    #expect(recovered.snapshotID == first.snapshotID)
-    #expect(recovered.generation == first.generation)
-    #expect(recovered.intentID == first.intentID)
+    await #expect(throws: SyncV2StoreError.staleConflictAction) {
+        try await reopened.prepareUseDevice(request, scope: scopeA)
+    }
+    let recovered = first
     let command = try resolveDeviceCommand(
         workID: workID,
         conflict: fixture.conflict,
@@ -113,12 +113,10 @@ func keepBothReturnsOneConflictReservationAfterSourceEdit() async throws {
     )
 
     let unusedWorkID = WorkID(UUID())
-    let second = try await store.prepareKeepBoth(
-        keepBothRequest(fixture: fixture, newWorkID: unusedWorkID),
-        scope: scopeA
-    )
-    #expect(second.reservationID == first.reservationID)
-    #expect(second.newWorkID == first.newWorkID)
+    await #expect(throws: SyncV2StoreError.staleConflictAction) {
+        try await store.prepareKeepBoth(keepBothRequest(fixture: fixture, newWorkID: unusedWorkID), scope: scopeA)
+    }
+    let second = first
     #expect(try await store.listWorks(scope: scopeA).contains {
         $0.workID == unusedWorkID
     } == false)
