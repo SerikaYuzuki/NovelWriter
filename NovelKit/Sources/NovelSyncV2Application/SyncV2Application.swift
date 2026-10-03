@@ -38,6 +38,7 @@ public actor SyncV2Application {
     let libraryProvider: any SyncV2LibraryProvider
     let runtimeIdentity: SyncV2RuntimeComposition.Identity
     let remoteOnlyImportTimeout: Duration
+    let remoteOnlyImportClock: SyncV2ImportClock
     var backfillTask: Task<Void, Never>?
     var backfillQueue: [WorkID] = []
     var backfillConstrained = false
@@ -79,6 +80,7 @@ public actor SyncV2Application {
         mode: RuntimeMode,
         composition: SyncV2RuntimeComposition,
         remoteOnlyImportTimeout: Duration = .seconds(60),
+        remoteOnlyImportClock: SyncV2ImportClock = .live,
         timing: FuminiwaTiming = .init(),
         promotionClock: SyncV2PromotionClock = .live,
         automaticSyncSleep: @escaping @Sendable (UInt64) async throws -> Void = { try await Task.sleep(nanoseconds: $0) }
@@ -94,6 +96,7 @@ public actor SyncV2Application {
         self.automaticSyncSleep = automaticSyncSleep
         self.promotionClock = promotionClock
         self.remoteOnlyImportTimeout = remoteOnlyImportTimeout
+        self.remoteOnlyImportClock = remoteOnlyImportClock
         writingStore = composition.writingStore
         kernel = composition.kernel
         planner = composition.planner
