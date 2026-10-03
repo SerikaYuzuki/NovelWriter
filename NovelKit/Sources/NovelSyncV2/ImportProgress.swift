@@ -36,8 +36,8 @@ public final class ImportProgress: @unchecked Sendable {
         self.init(now: { .now }, bufferingPolicy: .bufferingNewest(1))
     }
 
-    init(now: @escaping @Sendable () -> ContinuousClock.Instant,
-         bufferingPolicy: AsyncStream<ImportPhase>.Continuation.BufferingPolicy) {
+    package init(now: @escaping @Sendable () -> ContinuousClock.Instant,
+                 bufferingPolicy: AsyncStream<ImportPhase>.Continuation.BufferingPolicy) {
         self.now = now
         latest = now()
         emitted = latest

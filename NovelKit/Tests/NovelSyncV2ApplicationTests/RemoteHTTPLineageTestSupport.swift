@@ -157,7 +157,27 @@ final class LineageHTTPState: @unchecked Sendable {
 }
 
 class LineageURLProtocol: URLProtocol, @unchecked Sendable {
+    /// The most recently registered state, for helpers without a client.
     nonisolated(unsafe) static var state: LineageHTTPState?
+    private static let registryLock = NSLock()
+    private nonisolated(unsafe) static var states: [String: LineageHTTPState] = [:]
+
+    /// Each client gets its own origin host. A request that a finished test's
+    /// session starts late cannot consume or count against a later test's replies.
+    static func register(_ state: LineageHTTPState) -> String {
+        let host = "\(UUID().uuidString.lowercased()).lineage.test"
+        registryLock.lock()
+        defer { registryLock.unlock() }
+        states[host] = state
+        Self.state = state
+        return host
+    }
+
+    private static func state(for request: URLRequest) -> LineageHTTPState? {
+        registryLock.lock()
+        defer { registryLock.unlock() }
+        return request.url?.host.flatMap { states[$0] }
+    }
 
     override class func canInit(with _: URLRequest) -> Bool {
         true
@@ -171,7 +191,7 @@ class LineageURLProtocol: URLProtocol, @unchecked Sendable {
     private var stopped = false
 
     override func startLoading() {
-        guard let reply = Self.state?.reply(for: request) else {
+        guard let reply = Self.state(for: request)?.reply(for: request) else {
             client?.urlProtocol(self, didFailWithError: URLError(.fileDoesNotExist))
             return
         }
