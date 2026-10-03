@@ -16,7 +16,9 @@ extension IOSDocumentStore {
                                     account: IOSSnapshotSyncV2AccountScope) -> Bool {
         guard writingInteractionAllowed, currentEpisodeEditingToken == editingToken,
               matchesSyncAccount(account) else { return false }
-        return editorCommandSession.applyProofreading(expectedText: manuscript.content, replacement: replacement)
+        return writingProgress.withUncountedEditorChange {
+            editorCommandSession.applyProofreading(expectedText: manuscript.content, replacement: replacement)
+        }
     }
 
     var writingAssistantHost: WritingAssistantHost? {
@@ -111,7 +113,10 @@ extension IOSDocumentStore {
                        let old = current.document.chapters.flatMap(\.episodes).first(where: { $0.id == id }),
                        let new = replacement.chapters.flatMap(\.episodes).first(where: { $0.id == id }), old.content != new.content {
                         if case .captured = self.editorCommandSession.captureActiveCommittedText() {
-                            guard self.editorCommandSession.applyProofreading(expectedText: old.content, replacement: new.content) else { throw WritingError.changedTarget }
+                            let applied = self.writingProgress.withUncountedEditorChange {
+                                self.editorCommandSession.applyProofreading(expectedText: old.content, replacement: new.content)
+                            }
+                            guard applied else { throw WritingError.changedTarget }
                         } else {
                             self.editorContentGeneration &+= 1
                         }

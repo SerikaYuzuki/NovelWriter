@@ -49,6 +49,7 @@
 | `NovelSyncV2PortableBridge` | 検証済みpackageとv2作品の明示Import / Export変換 |
 | `NovelAuth` / `NovelAuthApple` | session / HTTP認証とApple・Keychain境界 |
 | `NovelWritingSupport` / `NovelWritingStore` | AI記録・範囲付き編集の値型と検証 / 本文と独立したSQLite・outbox・Undo journal |
+| `NovelTextAnalysis` | 全話本文の検索・置換、人物の登場、端末内の表記チェック（Foundation / CoreFoundation / NovelCore） |
 | `NovelStorage` / `NovelExport` | package codec / 配布用原稿の生成 |
 | `EditorKit` / `NovelUI` / `PreviewSupport` | 本文エディタ / 共有UI / 固定previewデータ |
 | `SyncServerV2/` | `/v2`同期、`auth_v1`認証、PostgreSQL、運用境界 |
@@ -186,9 +187,43 @@ macOSは[ContentView](../NovelApp/Application/ContentView.swift)から作品選�
 
 Appleログイン、削除予約・取消API、720時間後の削除workerは実装済み。自宅サーバーで日次暗号化backupを1暦年保持する。予約・取消のアプリ画面と別機器への退避は未対応。通常の再認証・session復旧と独自のアカウント回復サービスは区別する。[AUTH](AUTH.md)と[運用](ACCOUNT_RETENTION_OPERATIONS.md)を参照。
 
+### 6.7 執筆の進み具合（端末内）
+
+`NovelWritingProgress`は日別加筆量・純増、継続、目標、区切りの到達を両Appで共有する。加筆量は手入力の本文変更ごとの`max(0, 新字数−旧字数)`の合計、純増は差分の合計。字数は改行を除く既存`ManuscriptMetrics`規則。既存guardを通ったmacOS／iOSの`updateEpisodeContent`だけが計上し、EditorKit内のhookは追加しない。通常Undo／Redoもこの入口を通り、Redoは再加算する。
+
+AI／MCP編集とそのUndo、open／import／remote install／復元、話の追加・削除・移動は計上しない。AIのネイティブ置換から同期的に届くonTextChangeも、App側の呼出区間で集計だけを抑止し、モデル反映・保存は維持する。全体字数の既存超過は日付なしの「以前に到達」とし、手入力で下から跨いだ区切りだけを一度通知する。標準の1万・3万・5万・10万・15万・20万、以後10万ごとと目標値を区切りにする。
+
+集計キーはpayloadのdocument IDではなく作品WorkIDと端末のローカル暦日（0:00区切り）。直前の話別字数を保持し、通常は変更話の新字数だけを数える。本文差し替え時はinstall／synchronizeで更新し、手入力時にキャッシュ本文との不一致を見つけた場合も文書全体の字数を再同期してから差分を計上する。日別値と到達記録はruntimeと同じlocal rootの独立WAL `writing-progress.sqlite`（user_version=1）、目標・任意の締切は`fuminiwa.progress.goal.<workID>`のUserDefaults JSONへ保存する。初回履歴読込は独立Taskで開始し、起動・本文保存・document transitionは完了を待たない。集計flushだけが履歴読込の完了を待ち、読込中の加筆を一度だけ併合する。手入力中は集計を非観測の内部状態へ積み、UIのrecords／totalは約3秒ごと、保存・install・画面表示時にまとめて公開する。同じ公開値は再代入しない。手入力後のdirty通知では全話synchronizeを重複実行せず、AI等の非手入力通知とキャッシュ不一致時には全体再同期を保つ。未計上値がない保存ではflush Taskを作らない。SQLiteは別actorで3秒ごと／保存時にまとめて書き、macOS終了・iOS backgroundでもflushする。失敗はメモリ保持と指数バックオフ（3秒から失敗ごとに倍増、最大180秒）へ閉じ込め、unsupportedVersionでは再試行を停止する。失敗中もUI集計の公開は約3秒以内を保ち、本文保存の成功条件や待機条件にしない。端末外への同期・package出力は行わず、v2 schema／wire／fixtureを増やさない。
+
+継続は書いた日数を数え、完了した未執筆日が2日続くと途切れる。今日の未執筆では途切れず、1日休みは継続する。締切までの日数は今日を含め、必要日量は残り字数を日数で割って切り上げる。
+
+### 6.9 作品全体の検索・置換と人物の登場
+
+検索は章・話の配列順に全話本文だけを対象とし、話名・メモ・人物設定は含めない。FoundationのcaseInsensitiveによるプレーン文字列一致とUTF-16範囲はEditorKit.TextSearchと同じ。前後20書記素の文脈を示す。検索・登場検出は表示中の250ms debounce後にバックグラウンドで計算する。覆われた画面／onDisappear後は計算を止め、結果を保持して古くなった印だけを付け、再表示時に一回更新する。表示中の検索も本文変更では再検索せず、古くなった表示と「再検索」で更新する。query変更は表示中だけ再検索する。古い検索結果での置換操作は無効にし、ジャンプは従来の本文一致判定を通す。session/account変更では古いscopeを拒否する。
+
+置換は一致ごとの除外（既定は全件）と件数確認を経て、document gate内でIME確定→端末保存→明示checkpoint（explicit）→適用→端末保存と進む。明示履歴に保存できなければ本文を変更しない。検索時から対象話の本文が一つでも変わっていたら全体を中止し、再検索を促す。適用前後のWorkID/session/accountを固定し、本文一致はUTF-8 bytesで確認する。置換結果の計算もバックグラウンドで行う。
+
+開いている話はEditorCommandSession.applyProofreadingを通す一回のネイティブ編集としてUndoを保つ。入力停止は明示checkpoint完了まで維持し、同期的な適用区間だけ再開して直後に停止し、全対象話を一回の文書変更として保存する。AI編集のjournal・記録laneへは書かず、withUncountedEditorChangeとdirty時のsynchronizeで進み具合の手入力集計から除外する。
+
+直前の置換一回を戻す一時操作は、置換後の本文と一致する話だけを一回の変更・保存で戻す。後から編集された話は保持し、置換前の履歴からの復元を案内する。作品/session/account切替やアプリ終了をまたいで保持しない。保存失敗では変更本文とdirty状態を保持し、再保存を案内する。
+
+人物の登場は名前と読みを同じ照合規則で検索し、話ごとの回数・最初／最後の話を表示する。重なる名前／読みは一回と数える。既存の名前・読みの照合語は維持し、ジャンプは名前優先から本文内で最初の一致へ変更する（最初の登場位置を選択するため）。人物名の変更は本文へ自動反映せず、人物詳細menuの「本文の名前を置換…」で検索語を入力した検索画面を開く。モデル・同期schemaは追加しない。
+
+### 6.10 表記・記号チェック（端末内）
+
+`NovelTextAnalysis.TextChecker`が記号、組込み辞書・同じ読みの表記ゆれ、登録人物名に似た語を検出する。作品全体／現在の話の不変snapshotを「チェック」時だけ非同期解析し、本文・人物設定・対象・会話文オプション・WorkID/session/account変更で結果を失効する。入力中には実行せず、ネットワークやAIへ本文を送らない。
+
+読みは日本語localeのApple `CFStringTokenizer`のLatin transcriptionを`CFStringTransform`でひらがな化する。`JapaneseTextTokenizing`で差し替え可能。語の分割・読み・同音異義語の精度は保証しない。各表記2件以上、2字以上、漢字を含む組に限定し、助詞・数字・記号を除く。組込み辞書は代表的な活用を含む40組で、同じ組の読み一致は二重報告しない。
+
+記号はルビ・傍点記法の内部を除外する。表記チェックは親字を扱い、ルビの読みと記法delimiterは数えない。会話文（「」『』内）除外は既定OFFで、表記ゆれと人物名だけに適用する。地の文の行頭はIndentRulesの全角字下げと鉤括弧除外を維持する。
+
+結果はルール→章・話順に件数と文脈を示し、第2弾の保存・scope・本文一致確認つきジャンプで指摘範囲を選択する。多数派を正解とは決めず、同数なら置換提案をしない。「置換…」は最少数の表記を検索欄、最多数を置換欄へ入れて既存の作品全体検索を開く。確認・明示履歴・Undoは第2弾へ委ね、この機能には本文の書込操作を持たせない。
+
+指摘単位／表記の組単位の無視と解除は`fuminiwa.textcheck.ignored.<workID>`のUserDefaultsへ端末内保存し、同期しない。個別無視の識別には話ID・位置・文脈を使うため、周辺を編集すると再度指摘される場合がある。
+
 ## 7. 未実装・将来の機能
 
-作品全体検索・置換、人物関係グラフ、時系列ビュー、PDF出力、追加provider SDK、Windows実装は現在の利用可能機能に含めない。追加時に目的と受入条件を定める。UIに未実装placeholderを置いて完成に見せない（D-040）。
+人物関係グラフ、時系列ビュー、PDF出力、追加provider SDK、Windows実装は現在の利用可能機能に含めない。追加時に目的と受入条件を定める。UIに未実装placeholderを置いて完成に見せない（D-040）。
 
 ## 8. 実装ルール
 

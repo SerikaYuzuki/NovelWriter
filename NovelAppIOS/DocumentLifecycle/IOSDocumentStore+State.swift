@@ -21,12 +21,15 @@ extension IOSDocumentStore {
         startupState = .recovery(message: "本文を安全に保存できる場所を確認できませんでした。")
     }
 
-    func markDocumentChanged() {
+    func markDocumentChanged(progressAlreadyTracked: Bool = false) {
         guard startupState == .ready,
               syncV2ActiveWorkID != nil,
               !isDocumentTransitionInProgress,
               !syncV2AccountTransitionInProgress,
               syncV2KeepBothPendingWorkID == nil else { return }
+        if !progressAlreadyTracked, let workID = syncV2ActiveWorkID {
+            writingProgress.synchronize(document, workID: workID.rawValue)
+        }
         localEditGeneration &+= 1
         saveCoordinator.markDirty()
         saveCoordinator.scheduleDebouncedSave()

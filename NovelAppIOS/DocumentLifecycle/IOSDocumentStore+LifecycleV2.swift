@@ -6,6 +6,7 @@ import NovelSyncV2PortableBridge
 
 extension IOSDocumentStore {
     func performCoordinatedDocumentSave(_ value: NovelDocument) async throws {
+        writingProgress.requestFlush()
         guard snapshotSyncV2Application != nil, syncV2ActiveWorkID != nil else {
             throw SyncV2ApplicationError.invalidRuntimeMode
         }
@@ -247,6 +248,7 @@ extension IOSDocumentStore {
 
     @discardableResult
     func saveNow() async -> Bool {
+        writingProgress.requestFlush()
         guard startupState == .ready else { return false }
         let workID = syncV2ActiveWorkID
         let session = currentDocumentSessionToken
@@ -382,6 +384,9 @@ extension IOSDocumentStore {
         }
         if snapshotSyncV2Application != nil {
             userDefaults.set(syncV2ActiveWorkID?.rawValue.uuidString, forKey: Self.lastWorkIDKey)
+        }
+        if let workID {
+            writingProgress.install(value, workID: workID.rawValue)
         }
         startupState = .ready
         return true

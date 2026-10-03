@@ -55,6 +55,10 @@ toolbar非表示・項目削除後も、章・人物・世界観・プロット�
 
 話内検索は現在の話本文だけが対象。標準toolbar検索欄を使い、Cmd+Fでfocus、Return／Cmd+Gで次、Shift+Cmd+Gで前へ進む。話切替で結果カーソルをresetする。Outlineにfocusがある場合はCmd+FをOutline絞り込みへ送り、queryを共有しない。
 
+編集menuの「作品全体を検索…」（⌘⇧F）はOutline列を作品全体の本文検索へ切り替える。検索欄・置換欄・章→話別の件数と文脈を表示し、本文を見たまま一致箇所へジャンプできる。Esc／閉じるで通常Outlineへ戻る。入口はmenuにあり、toolbar項目は追加しない。話内検索（⌘F／workbench.search）とOutline絞り込みのquery・focus分岐は独立して維持する。
+
+編集menuの「表記をチェック…」（⌘⌥K）はOutline列を表記・記号チェックへ切り替える。対象・会話文除外・「チェック」・無視一覧とルール→話別の結果を表示する。選択で本文へジャンプし、表記の組の「置換…」で作品全体検索へ移る。Esc／閉じるで通常Outlineへ戻る。toolbar項目は追加しない。
+
 検索欄は最小160pt、目安260pt、最大320pt。該当なしは一時表示やaccessibility通知で示し、toolbarを二段にしない。
 
 ## 7. 操作の安全境界
@@ -91,3 +95,5 @@ native toolbarの配置は端末UserDefaultsへsection別に保持し、window�
 作品情報・人物詳細・世界観ノート詳細の画像menuから設定／置換／削除する。画像のcontext menuも同じ操作を提供し、画像wellへのファイルdrag & dropは同じ切り抜きsheetへ進む。toolbar項目は追加しない。棚では表紙と既存の同期記号・文言を併存させる。[保存契約](sync/v2/thumbnails.md)。
 
 作品一覧のヘッダーにアプリ名・新規・Importを置く。表紙／一覧切替、⌘F検索、表紙の矢印キー選択、Return／double clickでopenに対応する。⌘⇧Lは同じwindowで一覧へ戻る。閉じたwindowは標準Windowメニューから再表示する。
+
+執筆補助バー（EditorAccessoryBar）の右端に「話 3,210字 · 今日 +1,240字」を表示する。操作ボタン群だけをdisabledにし、数値は保持する。手入力で区切りに到達すると約5秒「10万字に到達しました」へ置き換え、VoiceOverへ通知する。アニメーションは付けない。下部status barをプロットカードだけに限定する表示条件は変更しない。

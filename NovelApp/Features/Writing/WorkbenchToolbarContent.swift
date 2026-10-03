@@ -1,6 +1,7 @@
 import AppKit
 import NovelCore
 import NovelSyncV2Application
+import NovelTextAnalysis
 import NovelUI
 import Observation
 import SwiftUI
@@ -329,6 +330,7 @@ struct SnapshotPopover: View {
 }
 
 struct ChapterContextMenuContent: View {
+    @State private var characterSession = ChapterCharacterSession()
     @Bindable var appState: AppState
 
     /// 指定時はその章を対象にする。未指定時は現在の選択章。
@@ -350,7 +352,9 @@ struct ChapterContextMenuContent: View {
         }
 
         Section("登場人物") {
-            if appearingCharacters.isEmpty {
+            if characterSession.isLoading {
+                Text("登場を確認中")
+            } else if appearingCharacters.isEmpty {
                 Text("登場人物がありません")
             } else {
                 ForEach(appearingCharacters) { character in
@@ -360,6 +364,11 @@ struct ChapterContextMenuContent: View {
                 }
             }
         }
+        .onAppear { refreshCharacters() }
+        .onChange(of: targetChapter) { _, _ in refreshCharacters() }
+        .onChange(of: appState.document.characters) { _, _ in refreshCharacters() }
+        .onChange(of: appState.workSearchScope) { _, _ in refreshCharacters() }
+        .onDisappear { characterSession.cancel() }
     }
 
     private var targetChapterID: ChapterID? {
@@ -377,20 +386,11 @@ struct ChapterContextMenuContent: View {
     }
 
     private var appearingCharacters: [NovelCore.Character] {
-        guard let chapter = targetChapter else { return [] }
-        return appState.document.characters.filter { character in
-            CharacterAppearanceDetector.appearances(
-                for: character,
-                in: NovelDocument(
-                    id: appState.document.id,
-                    title: appState.document.title,
-                    chapters: [chapter],
-                    characters: [],
-                    plotCards: [],
-                    flags: []
-                )
-            ).isEmpty == false
-        }
+        appState.document.characters.filter { characterSession.characterIDs.contains($0.id) }
+    }
+
+    private func refreshCharacters() {
+        characterSession.refresh(chapter: targetChapter, characters: appState.document.characters)
     }
 }
 

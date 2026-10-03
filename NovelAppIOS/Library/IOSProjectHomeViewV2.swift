@@ -22,6 +22,9 @@ struct IOSProjectHomeView: View {
             Section {
                 WorkInfoSummary(document: store.document, coverData: store.thumbnailData(ThumbnailOwner(.work, store.document.id)), synopsis: store.document.synopsis)
             }
+            Section("進み具合") {
+                WritingProgressCard(tracker: store.writingProgress)
+            }
             Section("執筆") {
                 Button(action: openWriting) {
                     Label(store.document.chapters.contains { $0.episodes.contains { !$0.content.isEmpty } } ? "執筆を続ける" : "書き始める", systemImage: "pencil")

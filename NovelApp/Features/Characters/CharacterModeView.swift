@@ -1,5 +1,6 @@
 import AppKit
 import NovelCore
+import NovelTextAnalysis
 import NovelThumbnail
 import NovelUI
 import SwiftUI
@@ -119,7 +120,7 @@ private struct CharacterSheetView: View {
 
     let onAppearanceJump: (CharacterAppearance) -> Void
 
-    @State private var selectedCharacterAppearances: [CharacterAppearance] = []
+    @State private var appearanceSession = CharacterAppearanceSession()
     private let roleChoices = ["主人公", "ヒロイン", "ライバル", "敵役", "脇役", "モブ"]
 
     var body: some View {
@@ -175,7 +176,8 @@ private struct CharacterSheetView: View {
 
                 sheetSection("登場章") {
                     CharacterAppearancesView(
-                        appearances: selectedCharacterAppearances,
+                        appearances: appearanceSession.appearances,
+                        isLoading: appearanceSession.isLoading,
                         onJump: onAppearanceJump
                     )
                 }
@@ -184,9 +186,12 @@ private struct CharacterSheetView: View {
             .frame(maxWidth: 920, alignment: .leading)
         }
         .background(FuminiwaColor.paper.color)
-        .onChange(of: appState.document.chapters, initial: true) { _, _ in refreshAppearances() }
+        .onAppear { appearanceSession.setVisible(true, character: appState.selectedCharacter, document: appState.document) }
+        .onChange(of: appState.documentChangeRevision) { _, _ in refreshAppearances() }
         .onChange(of: appState.selectedCharacter) { _, _ in refreshAppearances() }
+        .onChange(of: appState.workSearchScope) { _, _ in refreshAppearances() }
         .onDisappear {
+            appearanceSession.setVisible(false, character: appState.selectedCharacter, document: appState.document)
             appState.commitCharacterEditing()
         }
     }
@@ -214,7 +219,16 @@ private struct CharacterSheetView: View {
                     }
                 }
             }
-            colorControls
+            HStack {
+                colorControls
+                Spacer()
+                Menu {
+                    Button("本文の名前を置換…") {
+                        let name = appState.selectedCharacter?.name ?? ""
+                        Task { await appState.presentWorkSearch(query: name) }
+                    }
+                } label: { Label("人物の操作", systemImage: "ellipsis.circle") }
+            }
         }
     }
 
@@ -333,8 +347,7 @@ private struct CharacterSheetView: View {
     }
 
     private func refreshAppearances() {
-        guard let character = appState.selectedCharacter else { selectedCharacterAppearances = []; return }
-        selectedCharacterAppearances = CharacterAppearanceDetector.appearances(for: character, in: appState.document)
+        appearanceSession.refresh(character: appState.selectedCharacter, document: appState.document)
     }
 }
 
@@ -392,26 +405,26 @@ private struct CharacterColorPresetPicker: View {
 
 private struct CharacterAppearancesView: View {
     let appearances: [CharacterAppearance]
+    let isLoading: Bool
     let onJump: (CharacterAppearance) -> Void
 
     var body: some View {
-        if appearances.isEmpty {
-            ContentUnavailableView(
-                "登場章がありません",
-                systemImage: "text.magnifyingglass",
-                description: Text("本文に名前かふりがなが含まれると表示されます。")
-            )
+        if isLoading {
+            ProgressView("登場を確認中")
+        } else if appearances.isEmpty {
+            Text("本文にまだ登場していません").foregroundStyle(.secondary)
         } else {
             VStack(alignment: .leading, spacing: 8) {
+                Text(CharacterAppearanceDetector.summary(appearances)).font(.caption).foregroundStyle(.secondary)
                 ForEach(appearances) { appearance in
                     Button {
                         onJump(appearance)
                     } label: {
                         HStack {
                             VStack(alignment: .leading, spacing: 2) {
-                                Text(appearance.chapterTitle)
+                                Text("\(appearance.chapterTitle) · \(appearance.episodeTitle)")
                                     .lineLimit(1)
-                                Text("「\(appearance.query)」")
+                                Text("\(appearance.count)回")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }

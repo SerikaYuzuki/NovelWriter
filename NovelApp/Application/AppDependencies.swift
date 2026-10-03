@@ -89,6 +89,7 @@ struct AppDependencies {
     /// v2 runtime is created by the macOS composition root.  The app state
     /// never constructs a URL session, SQLite handle, or v1 worker itself.
     let snapshotSyncV2Factory: (@Sendable () async throws -> SyncV2Application)?
+    let writingProgressRoot: URL?
     let snapshotSyncV2DocumentGate: MacSyncV2DocumentGate?
     #if FUMINIWA_TEST_COMPOSITION
     var snapshotSyncV2CheckpointOverride: SnapshotSyncV2CheckpointOverride?
@@ -113,8 +114,10 @@ struct AppDependencies {
         appleAuthenticationOrchestrator: AppleAuthenticationOrchestrator? = nil,
         snapshotSyncV2Factory: (@Sendable () async throws -> SyncV2Application)? = nil,
         snapshotSyncV2DocumentGate: MacSyncV2DocumentGate? = nil,
-        portableBridge: SyncV2PortableBridge? = nil
+        portableBridge: SyncV2PortableBridge? = nil,
+        writingProgressRoot: URL? = nil
     ) {
+        self.writingProgressRoot = writingProgressRoot
         self.repository = repository
         self.attachmentManager = attachmentManager ?? repository as? AttachmentManaging
         self.userDefaults = userDefaults

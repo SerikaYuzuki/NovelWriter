@@ -7,6 +7,7 @@ import NovelCore
 import NovelSyncV2
 import NovelSyncV2Application
 import NovelSyncV2PortableBridge
+import NovelWritingProgress
 import Observation
 
 enum DocumentSaveState: Equatable {
@@ -94,6 +95,8 @@ typealias DocumentSessionToken = AppDocumentSessionToken
 @Observable
 final class AppState {
     let syncSessionController = SyncSessionController<AppDocumentSessionToken, SnapshotSyncV2AccountScopeToken, Bool>()
+    let writingProgress: WritingProgressTracker
+    let writingProgressRoot: URL?
     var document: NovelDocument
     var selectedChapterID: ChapterID?
     var selectedEpisodeID: EpisodeID?
@@ -129,6 +132,9 @@ final class AppState {
             userDefaults.set(workspaceSelection.section.rawValue, forKey: Self.projectSectionKey)
         }
     }
+
+    let workSearch = WorkSearchSession()
+    let textCheck: TextCheckSession
 
     var outlinePresentation = OutlinePresentationState()
     var attachments: [Attachment]
@@ -187,6 +193,8 @@ final class AppState {
     @ObservationIgnored var bootstrapTask: Task<Void, Never>?
     @ObservationIgnored var manuscriptCopyNoticeDismissTask: Task<Void, Never>?
     @ObservationIgnored var hasCompletedBootstrap = false
+    var documentChangeRevision: UInt64 = 0
+    @ObservationIgnored var editorProgressAlreadyTracked = false
     @ObservationIgnored var saveCoordinator: V2DocumentSaveCoordinator!
     @ObservationIgnored let resignActiveObserver = NotificationObserverToken()
     @ObservationIgnored let systemSleepObserver = NotificationObserverToken(center: NSWorkspace.shared.notificationCenter)
@@ -239,6 +247,9 @@ final class AppState {
         dependencies: AppDependencies,
         initialStartupState: AppStartupState = .loading
     ) {
+        textCheck = TextCheckSession(defaults: dependencies.userDefaults)
+        writingProgress = WritingProgressTracker(defaults: dependencies.userDefaults)
+        writingProgressRoot = dependencies.writingProgressRoot
         portableBridge = dependencies.portableBridge
         userDefaults = dependencies.userDefaults
         fileManager = dependencies.fileManager

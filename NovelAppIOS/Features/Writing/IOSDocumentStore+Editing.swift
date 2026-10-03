@@ -85,8 +85,11 @@ extension IOSDocumentStore {
         guard selectedChapterID == chapterID, selectedEpisodeID == episodeID else { return }
         guard let previousContent = document.episode(episodeID)?.episode.content,
               previousContent != content else { return }
+        if let workID = syncV2ActiveWorkID {
+            writingProgress.manualChange(document: document, workID: workID.rawValue, episodeID: episodeID, content: content, previousContent: previousContent)
+        }
         document.updateEpisodeContent(content, for: episodeID, in: chapterID)
-        markDocumentChanged()
+        markDocumentChanged(progressAlreadyTracked: true)
     }
 
     func addChapter() {

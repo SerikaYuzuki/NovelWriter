@@ -77,7 +77,8 @@ struct FuminiwaApp: App {
             editorCommandSession: editorCommandSession,
             snapshotSyncV2Factory: {
                 try await SnapshotSyncV2Runtime.makeApplication(mode: .test(configuration))
-            }
+            },
+            writingProgressRoot: configuration.localRoot.url
         )
         dependencies.snapshotSyncV2CheckpointOverride = checkpointOverride
         dependencies.snapshotSyncV2OpenOverride = openOverride
@@ -136,18 +137,15 @@ struct FuminiwaApp: App {
         let appleSignInCoordinator = AppleSignInCoordinator()
         let orchestrator: AppleAuthenticationOrchestrator? = nil
 
+        let runtimeConfiguration = try? ProductionRuntimeConfiguration(
+            origin: explicitOrigin, vault: authVault, authSessionCoordinator: authCoordinator,
+            documentGate: platformGate, clientVersion: "0.1.0", clientPlatform: .macos
+        )
         let factory: (@Sendable () async throws -> SyncV2Application)? = {
             // The production configuration is typed and always receives the
             // Keychain vault plus the macOS gate. The runtime opens SQLite
             // even when the HTTPS lane is unreachable; it reports offline.
-            let configuration = try ProductionRuntimeConfiguration(
-                origin: explicitOrigin,
-                vault: authVault,
-                authSessionCoordinator: authCoordinator,
-                documentGate: platformGate,
-                clientVersion: "0.1.0",
-                clientPlatform: .macos
-            )
+            guard let configuration = runtimeConfiguration else { throw SyncV2ApplicationError.invalidRuntimeMode }
             return try await SnapshotSyncV2Runtime.makeApplication(mode: .production(configuration))
         }
 
@@ -159,7 +157,8 @@ struct FuminiwaApp: App {
             appleSignInCoordinator: appleSignInCoordinator,
             appleAuthenticationOrchestrator: orchestrator,
             snapshotSyncV2Factory: factory,
-            snapshotSyncV2DocumentGate: platformGate
+            snapshotSyncV2DocumentGate: platformGate,
+            writingProgressRoot: runtimeConfiguration?.localRoot.url
         )
     }
     #endif
@@ -435,6 +434,18 @@ private struct WorkbenchFindCommands: View {
             }
         }
         .keyboardShortcut("f", modifiers: .command)
+
+        Button("作品全体を検索…") {
+            Task { await appState.presentWorkSearch() }
+        }
+        .keyboardShortcut("f", modifiers: [.command, .shift])
+        .disabled(!appState.permitsDocumentInteraction)
+
+        Button("表記をチェック…") {
+            Task { await appState.presentTextCheck() }
+        }
+        .keyboardShortcut("k", modifiers: [.command, .option])
+        .disabled(!appState.permitsDocumentInteraction)
 
         Button("次を検索") {
             guard appState.workspaceSelection.section == .structure else { return }

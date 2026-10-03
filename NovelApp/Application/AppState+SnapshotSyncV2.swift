@@ -3,6 +3,7 @@ import NovelCore
 import NovelSyncV2
 import NovelSyncV2Application
 import NovelSyncV2PortableBridge
+import NovelWritingProgress
 import os
 import SwiftUI
 
@@ -73,6 +74,9 @@ extension AppState {
         }
         do {
             snapshotSyncV2Application = try await factory()
+            if let writingProgressRoot {
+                writingProgress.requestConnection(WritingProgressSQLiteStore(root: writingProgressRoot))
+            }
             _ = writingMCPController
             await refreshSnapshotSyncV2UIState()
             return true
@@ -97,6 +101,7 @@ extension AppState {
         resources: [PortableResource]? = nil,
         portableCreatedAt: Date? = nil
     ) async -> Bool {
+        writingProgress.requestFlush()
         guard let application = snapshotSyncV2Application else {
             saveState = .failed
             return false
@@ -163,6 +168,7 @@ extension AppState {
 
     @discardableResult
     func saveNow() async -> Bool {
+        writingProgress.requestFlush()
         let workID = snapshotSyncV2ActiveWorkID
         let session = documentSessionToken
         let account = snapshotSyncV2AccountScopeToken
@@ -190,7 +196,9 @@ extension AppState {
                 guard let self,
                       editorCommandSession.prepareForDocumentTransition() else { return false }
                 defer { editorCommandSession.resumeAfterDocumentTransition() }
-                return await saveNow()
+                let saved = await saveNow()
+                await writingProgress.flush()
+                return saved
             }
         }
         terminationTask = task
@@ -202,7 +210,12 @@ extension AppState {
 
     func handleSaveEvent(_ event: V2DocumentSaveCoordinator.SaveEvent) {
         switch event {
-        case .dirty: saveState = .unsaved
+        case .dirty:
+            documentChangeRevision &+= 1
+            if !editorProgressAlreadyTracked, let workID = currentSnapshotSyncV2WorkID {
+                writingProgress.synchronize(document, workID: workID.rawValue)
+            }
+            saveState = .unsaved
         case .saving: saveState = .saving
         case .saved: saveState = .saved
         case .failed: saveState = .failed
@@ -547,6 +560,7 @@ extension AppState {
             workID: workID
         )
         snapshotSyncV2ActiveWorkID = workID
+        writingProgress.install(document, workID: workID.rawValue)
         snapshotSyncV2DocumentCreatedAt = Self.normalizedSnapshotSyncV2Date(createdAt)
         userDefaults.removeObject(forKey: "fuminiwa.v2.startInLibrary")
         userDefaults.set(workID.rawValue.uuidString, forKey: "fuminiwa.v2.activeWorkID")

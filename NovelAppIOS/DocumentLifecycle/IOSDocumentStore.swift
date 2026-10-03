@@ -7,6 +7,7 @@ import NovelSyncV2
 import NovelSyncV2Application
 import NovelSyncV2PortableBridge
 import NovelSyncV2Runtime
+import NovelWritingProgress
 import Observation
 
 enum IOSStartupState: Equatable { case loading, library, ready, recovery(message: String) }
@@ -245,6 +246,7 @@ final class IOSDocumentStore {
     static var testRuntimeConfigurations: [URL: TestRuntimeConfiguration] = [:]
     #endif
 
+    let writingProgress: WritingProgressTracker
     var document: NovelDocument
     var documentCreatedAt: Date
     var documentURL: URL
@@ -338,6 +340,11 @@ final class IOSDocumentStore {
             protocolEpoch: authSession.flatMap { Int64(exactly: $0.syncProtocolEpoch) }
         )
     }
+
+    let workSearch = WorkSearchSession()
+    let textCheck: TextCheckSession
+    var workTextSelectionRequest: EditorSelectionRequest?
+    var workTextSelectionToken: IOSEpisodeEditingToken?
 
     let editorCommandSession: EditorCommandSession
     /// The only package boundary owned by the iOS app. Normal document
@@ -441,6 +448,8 @@ final class IOSDocumentStore {
         libraryRoot: URL? = nil,
         runtimeComposition: IOSRuntimeComposition = .currentBuild()
     ) {
+        textCheck = TextCheckSession(defaults: userDefaults)
+        writingProgress = WritingProgressTracker(defaults: userDefaults)
         self.portableBridge = portableBridge
         self.fileManager = fileManager
         self.userDefaults = userDefaults
