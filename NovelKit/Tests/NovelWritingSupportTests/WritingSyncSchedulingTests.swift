@@ -1,9 +1,36 @@
 import Foundation
+import NovelTiming
 import NovelWritingSupport
 import Testing
 
 @MainActor
 struct WritingSyncSchedulingTests {
+    @Test func injectedIntervalsAndBackoffAreUsed() async {
+        let clock = SyncTestClock()
+        let timing = FuminiwaTiming(writingSyncVisibleSeconds: 7, writingSyncHiddenSeconds: 19,
+                                    writingSyncRetryInitialSeconds: 3, writingSyncRetryMaximumSeconds: 5)
+        let scheduler = WritingSyncScheduler(timing: timing, now: { clock.now }, sleep: clock.sleep)
+        var fails = false
+        scheduler.attach(contextID: "work", foreground: true) {
+            if fails {
+                throw WritingError.unavailable
+            }
+        }
+        #expect(await clock.next() == .zero)
+        clock.advance()
+        #expect(await clock.next() == .seconds(19))
+        scheduler.setVisible(true, token: UUID(), contextID: "work")
+        #expect(await clock.next() == .zero)
+        clock.advance()
+        #expect(await clock.next() == .seconds(7))
+        fails = true
+        clock.advance()
+        #expect(await clock.next() == .seconds(3))
+        clock.advance()
+        #expect(await clock.next() == .seconds(5))
+        scheduler.detach(contextID: "work")
+    }
+
     @Test func visibilityForegroundAndAppendWakeImmediately() async throws {
         let clock = SyncTestClock()
         let scheduler = WritingSyncScheduler(now: { clock.now }, sleep: clock.sleep)

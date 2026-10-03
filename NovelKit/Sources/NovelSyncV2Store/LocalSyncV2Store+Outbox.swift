@@ -70,14 +70,18 @@ public extension LocalSyncV2Store {
         commandID: UUID,
         scope: V2LocalWorkScope
     ) throws -> V2SealedCommandRecord {
-        try outboxRepository.markSending(commandID: commandID, scope: scope)
+        try preservingCheckpointValidation {
+            try outboxRepository.markSending(commandID: commandID, scope: scope)
+        }
     }
 
     func requeue(
         commandID: UUID,
         scope: V2LocalWorkScope
     ) throws {
-        try outboxRepository.requeue(commandID: commandID, scope: scope)
+        try preservingCheckpointValidation {
+            try outboxRepository.requeue(commandID: commandID, scope: scope)
+        }
     }
 
     func quarantine(
@@ -85,7 +89,7 @@ public extension LocalSyncV2Store {
         scope: V2LocalWorkScope,
         reason: String? = nil
     ) throws {
-        try inTransaction {
+        try inCheckpointNeutralTransaction {
             try outboxRepository.transitionCommand(
                 commandID: commandID, scope: scope,
                 from: ["sealed", "sending", "conflictPending"], to: "quarantined"
@@ -100,7 +104,9 @@ public extension LocalSyncV2Store {
         commandID: UUID,
         scope: V2LocalWorkScope
     ) throws {
-        try outboxRepository.park(commandID: commandID, scope: scope)
+        try preservingCheckpointValidation {
+            try outboxRepository.park(commandID: commandID, scope: scope)
+        }
     }
 
     func receiptReadback(
@@ -147,7 +153,8 @@ public extension LocalSyncV2Store {
         guard decoded.predicates.allVerified else {
             throw SyncV2StoreError.invalidAcknowledgement
         }
-        try inTransaction {
+        let preservesContent = [.createWork, .prepareObject, .finalizeObject, .registerSnapshot, .publish].contains(record.kind)
+        try inTransaction(preservingCheckpoint: preservesContent) {
             if decoded.result == .noChanges, record.kind == .publish {
                 guard let verifiedPublishInboxID else {
                     throw SyncV2StoreError.invalidAcknowledgement
@@ -177,7 +184,8 @@ extension LocalSyncV2Store {
         binding: V2AccountBinding,
         intentID: UUID?
     ) throws {
-        try inTransaction {
+        let preservesContent = [.createWork, .prepareObject, .finalizeObject, .registerSnapshot, .publish].contains(command.kind)
+        try inTransaction(preservingCheckpoint: preservesContent) {
             try outboxRepository.validateCommandSource(
                 command,
                 payload: payload,
@@ -209,7 +217,7 @@ public extension LocalSyncV2Store {
     /// No intent, source generation, command ID, digest or request is replaced.
     func retryUnacknowledgedCommands(scope: V2LocalWorkScope) throws {
         guard case .bound = scope else { throw SyncV2StoreError.accountMismatch }
-        try inTransaction {
+        try inCheckpointNeutralTransaction {
             for work in try workRepository.listWorks(scope: scope) {
                 try outboxRepository.retryUnacknowledgedCommandsTransaction(
                     workID: work.workID,
@@ -221,7 +229,7 @@ public extension LocalSyncV2Store {
     }
 
     func retryUnacknowledgedCommands(workID: WorkID, scope: V2LocalWorkScope) throws {
-        try inTransaction { try outboxRepository.retryUnacknowledgedCommandsTransaction(
+        try inCheckpointNeutralTransaction { try outboxRepository.retryUnacknowledgedCommandsTransaction(
             workID: workID,
             scope: scope,
             legacyOnly: true
@@ -235,7 +243,7 @@ public extension LocalSyncV2Store {
     /// Existing durable commands keep their identity and retry ordering.
     func requestSynchronization(workID: WorkID, scope: V2LocalWorkScope) throws {
         guard case .bound = scope else { throw SyncV2StoreError.accountMismatch }
-        try inTransaction {
+        try inCheckpointNeutralTransaction {
             guard let row = try workRepository.scopedWorkRow(workID: workID, scope: scope),
                   let generation = row.localGeneration,
                   let snapshot = row.currentSnapshotID,
@@ -272,7 +280,7 @@ public extension LocalSyncV2Store {
         workID: WorkID, scope: V2LocalWorkScope, expectedLocalGeneration: Int64
     ) throws -> Bool {
         guard case .bound = scope else { return false }
-        return try inTransaction {
+        return try inCheckpointNeutralTransaction {
             guard let row = try workRepository.scopedWorkRow(workID: workID, scope: scope),
                   row.localGeneration == expectedLocalGeneration,
                   let snapshot = row.currentSnapshotID,
@@ -310,7 +318,7 @@ public extension LocalSyncV2Store {
     /// old command bytes and its intent as evidence; checkpoint data is retained.
     func replanRejectedPublish(commandID: UUID, scope: V2LocalWorkScope) throws {
         guard case let .bound(binding) = scope else { throw SyncV2StoreError.accountMismatch }
-        try inTransaction {
+        try inCheckpointNeutralTransaction {
             guard let record = try outboxRepository.sealedRecord(commandID: commandID, binding: binding),
                   record.kind == .publish, record.lifecycle == .sending,
                   let intentID = record.intentID,
@@ -356,7 +364,7 @@ public extension LocalSyncV2Store {
               transfer.bytesDigest.bytes.count == 32 else {
             throw SyncV2StoreError.invalidCommand
         }
-        try inTransaction {
+        try inCheckpointNeutralTransaction {
             try outboxRepository.persistUploadTransferInTransaction(transfer, binding: binding)
         }
     }
@@ -373,14 +381,16 @@ public extension LocalSyncV2Store {
         byteCount: Int,
         scope: V2LocalWorkScope
     ) throws {
-        try outboxRepository.acknowledgeUploadTransfer(transferID: transferID, byteCount: byteCount, scope: scope)
+        try preservingCheckpointValidation {
+            try outboxRepository.acknowledgeUploadTransfer(transferID: transferID, byteCount: byteCount, scope: scope)
+        }
     }
 }
 
 public extension LocalSyncV2Store {
     func quarantineUpload(transferID: UUID, workID: WorkID, reason: String, scope: V2LocalWorkScope) throws {
         guard case let .bound(binding) = scope else { throw SyncV2StoreError.accountMismatch }
-        try inTransaction {
+        try inCheckpointNeutralTransaction {
             guard try workRepository.scopedWorkRow(workID: workID, scope: scope) != nil else {
                 throw SyncV2StoreError.accountMismatch
             }

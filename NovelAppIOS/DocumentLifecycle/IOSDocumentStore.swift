@@ -7,6 +7,7 @@ import NovelSyncV2
 import NovelSyncV2Application
 import NovelSyncV2PortableBridge
 import NovelSyncV2Runtime
+import NovelTiming
 import NovelWritingProgress
 import NovelWritingSupport
 import Observation
@@ -232,7 +233,6 @@ final class IOSDocumentStore {
     /// v2 reopens by WorkID.  The legacy package-recent key remains available
     /// for explicit import/export compatibility, but is never the v2 identity.
     static let lastWorkIDKey = "FUMINIWAIOS.lastWorkID"
-    private static let autosaveDebounceNanoseconds: UInt64 = 2_000_000_000
     #if FUMINIWA_TEST_COMPOSITION
     /// Test stores created with the same injected root share one isolated
     /// SQLite composition, so reopen tests exercise persistence rather than a
@@ -247,7 +247,8 @@ final class IOSDocumentStore {
     static var testRuntimeConfigurations: [URL: TestRuntimeConfiguration] = [:]
     #endif
 
-    let writingSyncScheduler = WritingSyncScheduler()
+    let timing: FuminiwaTiming
+    let writingSyncScheduler: WritingSyncScheduler
     let writingProgress: WritingProgressTracker
     var document: NovelDocument
     var documentCreatedAt: Date
@@ -420,7 +421,7 @@ final class IOSDocumentStore {
 
     @ObservationIgnored
     lazy var saveCoordinator: V2DocumentSaveCoordinator = .init(
-        debounceNanoseconds: Self.autosaveDebounceNanoseconds,
+        timing: timing,
         currentDocument: { [weak self] in
             guard let self, startupState == .ready else { return nil }
             return document
@@ -450,8 +451,11 @@ final class IOSDocumentStore {
         libraryRoot: URL? = nil,
         runtimeComposition: IOSRuntimeComposition = .currentBuild()
     ) {
+        let timing = FuminiwaTiming(defaults: userDefaults)
+        self.timing = timing
+        writingSyncScheduler = WritingSyncScheduler(timing: timing)
         textCheck = TextCheckSession(defaults: userDefaults)
-        writingProgress = WritingProgressTracker(defaults: userDefaults)
+        writingProgress = WritingProgressTracker(defaults: userDefaults, timing: timing)
         self.portableBridge = portableBridge
         self.fileManager = fileManager
         self.userDefaults = userDefaults

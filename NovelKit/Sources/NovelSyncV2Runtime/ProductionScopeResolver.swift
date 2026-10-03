@@ -12,6 +12,7 @@ protocol SyncV2ScopeResolver: Sendable {
 actor ProductionScopeResolver: SyncV2ScopeResolver {
     private let vault: (any AuthSessionVault)?
     private let store: any ProductionScopeStore
+    private var checkpointContext: CheckpointScopeContext?
 
     init(vault: (any AuthSessionVault)?, store: any ProductionScopeStore) {
         self.vault = vault
@@ -33,6 +34,11 @@ actor ProductionScopeResolver: SyncV2ScopeResolver {
     }
 
     func existingScope(workID: WorkID) async throws -> V2LocalWorkScope {
+        let context = try await CheckpointScopeContext(workID: workID, binding: activeBinding())
+        if context != checkpointContext {
+            await store.invalidateCheckpointValidation()
+            checkpointContext = context
+        }
         if let binding = try await activeBinding() {
             do {
                 _ = try await store.workSummary(
@@ -61,9 +67,7 @@ actor ProductionScopeResolver: SyncV2ScopeResolver {
     func scopeForCheckpoint(workID: WorkID) async throws -> V2LocalWorkScope {
         do {
             let localScope = try await existingScope(workID: workID)
-            // Retain full validation before saving over an existing current
-            // pointer; routine command scope checks need only membership.
-            _ = try await store.open(workID: workID, scope: localScope)
+            try await store.validateCheckpointBase(workID: workID, scope: localScope)
             return localScope
         } catch SyncV2ApplicationError.workNotFound {
             if let binding = try await activeBinding() {
@@ -76,11 +80,26 @@ actor ProductionScopeResolver: SyncV2ScopeResolver {
 
 protocol ProductionScopeStore: Sendable {
     func workSummary(workID: WorkID, scope: V2LocalWorkScope) async throws -> V2WorkSummary
+    func validateCheckpointBase(workID: WorkID, scope: V2LocalWorkScope) async throws
+    func invalidateCheckpointValidation() async
 
     func open(
         workID: WorkID,
         scope: V2LocalWorkScope
     ) async throws -> V2OpenResult
+}
+
+private struct CheckpointScopeContext: Equatable {
+    let workID: WorkID
+    let binding: V2AccountBinding?
+}
+
+extension ProductionScopeStore {
+    func validateCheckpointBase(workID: WorkID, scope: V2LocalWorkScope) async throws {
+        _ = try await open(workID: workID, scope: scope)
+    }
+
+    func invalidateCheckpointValidation() async {}
 }
 
 extension LocalSyncV2Store: ProductionScopeStore {}
@@ -91,6 +110,7 @@ extension LocalSyncV2Store: ProductionScopeStore {}
 actor TestScopeResolver: SyncV2ScopeResolver {
     private let vault: TestSyncV2Vault
     private let store: any ProductionScopeStore
+    private var checkpointContext: CheckpointScopeContext?
 
     init(vault: TestSyncV2Vault, store: any ProductionScopeStore) {
         self.vault = vault
@@ -108,6 +128,11 @@ actor TestScopeResolver: SyncV2ScopeResolver {
     }
 
     func existingScope(workID: WorkID) async throws -> V2LocalWorkScope {
+        let context = try await CheckpointScopeContext(workID: workID, binding: activeBinding())
+        if context != checkpointContext {
+            await store.invalidateCheckpointValidation()
+            checkpointContext = context
+        }
         if let binding = try await activeBinding() {
             do {
                 _ = try await store.workSummary(workID: workID, scope: .bound(binding))
@@ -132,9 +157,7 @@ actor TestScopeResolver: SyncV2ScopeResolver {
     func scopeForCheckpoint(workID: WorkID) async throws -> V2LocalWorkScope {
         do {
             let localScope = try await existingScope(workID: workID)
-            // Retain full validation before saving over an existing current
-            // pointer; routine command scope checks need only membership.
-            _ = try await store.open(workID: workID, scope: localScope)
+            try await store.validateCheckpointBase(workID: workID, scope: localScope)
             return localScope
         } catch SyncV2ApplicationError.workNotFound {
             return try await activeBinding().map(V2LocalWorkScope.bound) ?? .unbound

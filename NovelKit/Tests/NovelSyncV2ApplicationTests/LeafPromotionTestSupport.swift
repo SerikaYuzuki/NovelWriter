@@ -4,6 +4,7 @@ import NovelSyncV2
 @testable import NovelSyncV2Application
 @testable import NovelSyncV2Runtime
 import NovelSyncV2Store
+import NovelTiming
 import Testing
 
 /// No wall-clock sleeps: cancellation and time advancement release continuations.
@@ -85,7 +86,7 @@ struct LeafRuntimeFixture: Sendable {
     let clock: LeafTestClock
     let gate: InMemorySyncV2DocumentGate
 
-    static func make() async throws -> LeafRuntimeFixture {
+    static func make(timing: FuminiwaTiming = .init()) async throws -> LeafRuntimeFixture {
         let configuration = try TestRuntimeConfiguration()
         let store = try LocalSyncV2Store(root: configuration.localRoot.url, policy: .createNew)
         let workID = WorkID(UUID())
@@ -107,7 +108,7 @@ struct LeafRuntimeFixture: Sendable {
         let app = try SyncV2Application(mode: .test(configuration), composition: SyncV2RuntimeComposition(
             identity: .test, kernel: kernel, planner: ProductionSyncV2Planner(store: store, scope: resolver),
             remote: configuration.remote, gate: gate, library: kernel
-        ), promotionClock: clock.clock)
+        ), timing: timing, promotionClock: clock.clock, automaticSyncSleep: { try await clock.clock.sleep(Double($0) / 1_000_000_000) })
         try await app.resumePending()
         return LeafRuntimeFixture(configuration: configuration, store: store, app: app, workID: workID,
                                   baseline: encoded.snapshotId, document: document, clock: clock, gate: gate)

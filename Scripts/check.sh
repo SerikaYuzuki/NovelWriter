@@ -40,14 +40,29 @@ xcodebuild test \
   CODE_SIGNING_REQUIRED=NO
 
 echo "==> Select iPhone Simulator for iOS tests"
-ios_simulator_id="$(xcrun simctl list devices available -j | jq -r '
+ios_simulator_id="${FUMINIWA_IOS_SIMULATOR_ID:-$(xcrun simctl list devices available -j | jq -r '
   [.devices[][] | select(.isAvailable == true and (.name | startswith("iPhone")))] |
   first | .udid // empty
-')"
+')}"
 if [[ -z "$ios_simulator_id" ]]; then
   echo "error: an available iPhone Simulator is required for iOS tests" >&2
   exit 1
 fi
+
+# A supplied destination must resolve to an available iPhone. Do not start a
+# second test runner while another chat owns a simulator test session.
+if ! xcrun simctl list devices available -j | jq -e --arg id "$ios_simulator_id" \
+  '[.devices[][] | select(.isAvailable == true and (.name | startswith("iPhone")) and .udid == $id)] | length == 1' >/dev/null; then
+  echo "error: selected iPhone Simulator is not available" >&2
+  exit 1
+fi
+wait_for_ios_destination() {
+  while pgrep -fl "xcodebuild.*$ios_simulator_id"; do
+    echo "==> Selected Simulator is in use; wait before iOS tests"
+    sleep 5
+  done
+}
+wait_for_ios_destination
 
 echo "==> EditorKit test (iOS Simulator)"
 (cd NovelKit && xcodebuild test \
@@ -56,6 +71,8 @@ echo "==> EditorKit test (iOS Simulator)"
   -only-testing:EditorKitTests \
   CODE_SIGNING_ALLOWED=NO \
   CODE_SIGNING_REQUIRED=NO)
+
+wait_for_ios_destination
 
 echo "==> FUMINIWA iOS app test (XcodeGen)"
 xcodebuild test \

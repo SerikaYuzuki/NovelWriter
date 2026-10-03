@@ -2,6 +2,7 @@ import Foundation
 import NovelAuth
 import NovelSyncV2Application
 import NovelSyncV2Store
+import NovelTiming
 import NovelWritingStore
 import OSLog
 
@@ -16,9 +17,10 @@ public enum SnapshotSyncV2Runtime {
     }
 
     public static func makeApplication(
-        mode: RuntimeMode
+        mode: RuntimeMode,
+        timing: FuminiwaTiming = .init()
     ) async throws -> SyncV2Application {
-        try await makeApplication(mode: mode, resumeOnLaunch: true)
+        try await makeApplication(mode: mode, resumeOnLaunch: true, timing: timing)
     }
 
     static func makeApplicationForTesting(
@@ -30,7 +32,8 @@ public enum SnapshotSyncV2Runtime {
 
     private static func makeApplication(
         mode: RuntimeMode,
-        resumeOnLaunch: Bool
+        resumeOnLaunch: Bool,
+        timing: FuminiwaTiming = .init()
     ) async throws -> SyncV2Application {
         let composition: SyncV2RuntimeComposition
         switch mode {
@@ -110,7 +113,7 @@ public enum SnapshotSyncV2Runtime {
                 writingStore: try? WritingSQLiteStore(root: configuration.localRoot.url)
             )
         }
-        let app = try SyncV2Application(mode: mode, composition: composition)
+        let app = try SyncV2Application(mode: mode, composition: composition, timing: timing)
         do {
             if resumeOnLaunch {
                 try await app.resumePending()

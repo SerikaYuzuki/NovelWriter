@@ -1,5 +1,6 @@
 import Foundation
 import NovelCore
+import NovelTiming
 
 /// Shared macOS / iOS revision gate.  A normal save owns only the in-memory document
 /// value; WorkID/SQLite is selected by the Snapshot Sync runtime.  URL-based
@@ -15,25 +16,31 @@ final class V2DocumentSaveCoordinator {
         case completed(value: Value, savedAfterOperation: Bool)
     }
 
-    private let debounceNanoseconds: UInt64
+    private let timing: FuminiwaTiming
+    typealias DebounceSleep = @MainActor @Sendable (UInt64) async throws -> Void
+
+    private let debounceSleep: DebounceSleep
     private let currentDocument: @MainActor () -> NovelDocument?
     private let saveOperation: @MainActor @Sendable (NovelDocument) async throws -> Void
     private let saveEventHandler: @MainActor @Sendable (SaveEvent) -> Void
     private var saveRevision = 0
     private var savedRevision = 0
     private var isSaving = false
+    private var immediateSaveRequested = false
     private var isExclusiveRunning = false
     private var waiters: [CheckedContinuation<Bool, Never>] = []
     private var exclusiveWaiters: [CheckedContinuation<Void, Never>] = []
     private var debouncedSaveTask: Task<Void, Never>?
 
     init(
-        debounceNanoseconds: UInt64,
+        timing: FuminiwaTiming = .init(),
+        debounceSleep: @escaping DebounceSleep = { try await Task.sleep(nanoseconds: $0) },
         currentDocument: @escaping @MainActor () -> NovelDocument?,
         saveOperation: @escaping @MainActor @Sendable (NovelDocument) async throws -> Void,
         saveEventHandler: @escaping @MainActor @Sendable (SaveEvent) -> Void = { _ in }
     ) {
-        self.debounceNanoseconds = debounceNanoseconds
+        self.timing = timing
+        self.debounceSleep = debounceSleep
         self.currentDocument = currentDocument
         self.saveOperation = saveOperation
         self.saveEventHandler = saveEventHandler
@@ -49,18 +56,27 @@ final class V2DocumentSaveCoordinator {
     }
 
     func scheduleDebouncedSave() {
+        scheduleDebouncedSave(after: timing.autosaveDebounceSeconds)
+    }
+
+    private func scheduleDebouncedSave(after seconds: Double) {
         debouncedSaveTask?.cancel()
         debouncedSaveTask = Task { @MainActor [weak self] in
             guard let self else { return }
             do {
-                try await Task.sleep(nanoseconds: debounceNanoseconds)
+                try await debounceSleep(UInt64(seconds * 1_000_000_000))
             } catch {
                 return
             }
             guard !Task.isCancelled else { return }
-            // Release our own task before saveNow cancels an outstanding timer.
+            // The timer no longer owns the checkpoint: later typing cancels
+            // only the next timer, never the in-flight durable save.
             debouncedSaveTask = nil
-            _ = await saveNow()
+            guard !isSaving, !isExclusiveRunning else {
+                scheduleDebouncedSave(after: timing.autosavePostSaveWaitSeconds)
+                return
+            }
+            _ = await saveDirtyRevisions(flushAll: false)
         }
     }
 
@@ -74,6 +90,7 @@ final class V2DocumentSaveCoordinator {
             }
         }
         if isSaving {
+            immediateSaveRequested = true
             return await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
                 waiters.append(continuation)
             }
@@ -115,9 +132,10 @@ final class V2DocumentSaveCoordinator {
         }
     }
 
-    private func saveDirtyRevisions() async -> Bool {
+    private func saveDirtyRevisions(flushAll: Bool = true) async -> Bool {
         guard savedRevision < saveRevision else { return true }
         isSaving = true
+        immediateSaveRequested = false
         var succeeded = true
         while savedRevision < saveRevision {
             let revision = saveRevision
@@ -129,13 +147,20 @@ final class V2DocumentSaveCoordinator {
             do {
                 try await saveOperation(document)
                 savedRevision = max(savedRevision, revision)
+                if !flushAll, !immediateSaveRequested {
+                    break
+                }
             } catch {
                 succeeded = false
                 break
             }
         }
         isSaving = false
-        saveEventHandler(succeeded ? .saved : .failed)
+        immediateSaveRequested = false
+        saveEventHandler(succeeded ? (savedRevision == saveRevision ? .saved : .dirty) : .failed)
+        if !flushAll, succeeded, savedRevision < saveRevision, debouncedSaveTask == nil {
+            scheduleDebouncedSave(after: timing.autosavePostSaveWaitSeconds)
+        }
         let pending = waiters
         waiters.removeAll()
         pending.forEach { $0.resume(returning: succeeded && savedRevision == saveRevision) }

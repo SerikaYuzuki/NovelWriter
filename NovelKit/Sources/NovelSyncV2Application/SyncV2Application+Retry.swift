@@ -1,9 +1,11 @@
 import Foundation
 import NovelSyncV2
+import NovelTiming
 
 extension SyncV2Application {
-    static func retryDelay(attempt: Int, jitter: Double) -> TimeInterval {
-        min(60, pow(2, Double(min(max(attempt, 0) + 1, 6))) * min(1.25, max(0.75, jitter)))
+    static func retryDelay(attempt: Int, jitter: Double, timing: FuminiwaTiming = .init()) -> TimeInterval {
+        let exponentLimit = Int(ceil(log2(timing.sendRetryMaximumSeconds / timing.sendRetryInitialSeconds)))
+        return min(timing.sendRetryMaximumSeconds, timing.sendRetryInitialSeconds * pow(2, Double(min(max(attempt, 0), exponentLimit))) * min(1.25, max(0.75, jitter)))
     }
 
     func cancelRetry(for workID: WorkID) {
@@ -20,7 +22,7 @@ extension SyncV2Application {
         default: return
         }
         let owner = UUID()
-        let delay = Self.retryDelay(attempt: lanes[workID, default: WorkLane()].retryAttempt, jitter: Double.random(in: 0.75 ... 1.25))
+        let delay = Self.retryDelay(attempt: lanes[workID, default: WorkLane()].retryAttempt, jitter: Double.random(in: 0.75 ... 1.25), timing: timing)
         lanes[workID, default: WorkLane()].retryAttempt += 1
         let task = Task<Void, Never> { [weak self] in
             do { try await Task.sleep(for: .seconds(delay)) } catch { return }
