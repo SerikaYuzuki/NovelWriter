@@ -19,7 +19,7 @@ struct IOSSnapshotHistoryView: View {
                 }
             }
             if !store.syncV2HistoryItems.isEmpty {
-                SnapshotHistorySections(items: store.syncV2HistoryItems) { entry in
+                SnapshotHistorySections(items: store.syncV2HistoryItems, application: store.snapshotSyncV2Application, workID: store.syncV2ActiveWorkID) { entry in
                     if let application = store.snapshotSyncV2Application,
                        let workID = store.syncV2ActiveWorkID {
                         let session = store.currentDocumentSessionToken

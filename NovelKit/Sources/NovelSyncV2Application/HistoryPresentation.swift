@@ -1,4 +1,5 @@
 import Foundation
+import NovelSyncV2
 
 /// Calendar and clock are injected so day boundaries follow the reader's timezone.
 public struct HistoryPresentation {
@@ -40,12 +41,43 @@ public struct HistoryPresentation {
         format(date, pattern: "HH:mm")
     }
 
+    public func versionDate(_ date: Date) -> String {
+        let day = dayTitle(date)
+        if day == "今日" || day == "昨日" {
+            return day + " " + time(date)
+        }
+        return format(date, pattern: "M月d日 HH:mm")
+    }
+
     public func fullDate(_ date: Date) -> String {
         format(date, pattern: "yyyy年M月d日 HH:mm")
     }
 
     public func label(_ item: SyncV2HistoryItem) -> String {
         fullDate(item.createdAt) + "・" + subtitle(item)
+    }
+
+    public func predecessor(of item: SyncV2HistoryItem, in items: [SyncV2HistoryItem]) -> SnapshotID? {
+        let ordered = days(items).flatMap(\.runs).flatMap(\.items)
+        guard let index = ordered.firstIndex(where: { $0.occurrenceID == item.occurrenceID && $0.source == item.source }),
+              index + 1 < ordered.count else { return nil }
+        return ordered[index + 1].snapshotID
+    }
+
+    /// Ordinary remote adoption alone is not proof of a rejected conflict branch.
+    public func isUnselectedConflictVersion(_ item: SyncV2HistoryItem, in items: [SyncV2HistoryItem]) -> Bool {
+        guard let generation = item.localGeneration else { return false }
+        if item.reason == "conflictRemote" {
+            return items.contains { $0.reason == "conflictResolution" && $0.localGeneration == generation + 1 }
+        }
+        guard item.reason == "conflictLocal" || item.reason == "preRemoteAdoption" else { return false }
+        let local = items.contains {
+            $0.reason == "conflictLocal" && $0.localGeneration == generation && $0.snapshotID == item.snapshotID
+        }
+        let preserved = items.contains {
+            $0.reason == "preRemoteAdoption" && $0.localGeneration == generation && $0.snapshotID == item.snapshotID
+        }
+        return local && preserved
     }
 
     public func subtitle(_ item: SyncV2HistoryItem) -> String {

@@ -277,7 +277,7 @@ struct SnapshotPopover: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 List {
-                    SnapshotHistorySections(items: presenter.snapshots.map(\.entry)) { entry in
+                    SnapshotHistorySections(items: presenter.snapshots.map(\.entry), application: appState.snapshotSyncV2Application, workID: appState.currentSnapshotSyncV2WorkID) { entry in
                         if let request = presenter.snapshots.first(where: { $0.id == entry.occurrenceID }) {
                             if let application = appState.snapshotSyncV2Application,
                                let workID = appState.currentSnapshotSyncV2WorkID {

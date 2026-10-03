@@ -24,7 +24,11 @@ struct IOSExplicitSyncButton: View {
 
     var body: some View {
         Button {
-            if store.canExplicitlySyncCurrentWork {
+            if store.snapshotSyncConflict != nil {
+                store.showsConflictSheet = true
+            } else if case .readyForSafeAdoption = store.snapshotSyncState?.remoteProgress {
+                Task { _ = await store.adoptPendingSnapshotSyncV2() }
+            } else if store.canExplicitlySyncCurrentWork {
                 Task { _ = await store.synchronizeSnapshotSyncV2() }
             } else {
                 session = store.currentDocumentSessionToken
@@ -32,7 +36,11 @@ struct IOSExplicitSyncButton: View {
                 showingSetup = true
             }
         } label: {
-            if let status {
+            if case .readyForSafeAdoption = store.snapshotSyncState?.remoteProgress {
+                Label("サーバーに新しい版があります", systemImage: "arrow.down.circle")
+            } else if store.snapshotSyncConflict != nil {
+                Label("競合の版を確認", systemImage: "exclamationmark.triangle")
+            } else if let status {
                 StatusLabel(status.text, systemImage: status.symbol, tone: StatusTone(rawValue: status.tone.rawValue) ?? .secondary)
             } else {
                 Label(store.isSnapshotSyncInFlight ? "同期中…" : "今すぐ同期", systemImage: "arrow.triangle.2.circlepath")

@@ -506,7 +506,7 @@ private extension LibraryPane {
     }
 }
 
-private struct SnapshotHistorySheet: View {
+struct SnapshotHistorySheet: View {
     @Environment(AppState.self) private var appState
     let dismiss: () -> Void
 
@@ -522,7 +522,7 @@ private struct SnapshotHistorySheet: View {
                 )
             } else {
                 List {
-                    SnapshotHistorySections(items: appState.snapshotSyncHistory) { entry in
+                    SnapshotHistorySections(items: appState.snapshotSyncHistory, application: appState.snapshotSyncV2Application, workID: appState.currentSnapshotSyncV2WorkID) { entry in
                         if let application = appState.snapshotSyncV2Application,
                            let workID = appState.currentSnapshotSyncV2WorkID {
                             let session = appState.documentSessionToken

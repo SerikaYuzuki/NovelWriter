@@ -5,6 +5,7 @@ import SwiftUI
 
 /// Shared history row interaction. Fetching never holds the editor operation gate.
 struct HistoryFetchControls: View {
+    @Environment(\.snapshotHistoryContext) private var context
     let application: SyncV2Application
     let workID: WorkID
     let snapshotID: SnapshotID?
@@ -31,6 +32,16 @@ struct HistoryFetchControls: View {
                                 .accessibilityLabel(HistoryPresentation().fullDate(rowDate))
                             Text(rowKind).font(FuminiwaType.rowSecondary)
                                 .foregroundStyle(FuminiwaColor.textSecondary.color)
+                        }
+                        if context.currentSnapshotID == snapshotID {
+                            Text("現在").font(.caption).foregroundStyle(FuminiwaColor.accent.color)
+                        }
+                        if let historyItem, context.rejected.contains(historyItem.occurrenceID) {
+                            Text("競合で選ばなかった版").font(.caption).foregroundStyle(.secondary)
+                        }
+                        if let snapshotID {
+                            SnapshotDifferenceLine(application: application, workID: workID,
+                                                   before: historyItem.flatMap { context.previous[$0.occurrenceID] }, after: snapshotID)
                         }
                         if !available {
                             Text(state == .running ? progressNote ?? state.label : state.label)
@@ -61,6 +72,9 @@ struct HistoryFetchControls: View {
                     Text(HistoryPresentation().fullDate(rowDate) + "・" + rowKind)
                         .font(.body)
                 }
+                if let snapshotID {
+                    SnapshotRestoreComparison(application: application, workID: workID, snapshotID: snapshotID)
+                }
                 if available {
                     Button("復元") {
                         showsRestore = false
@@ -82,7 +96,7 @@ struct HistoryFetchControls: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .background(FuminiwaColor.paper.color)
             #if os(iOS)
-                .presentationDetents([.medium])
+                .presentationDetents([.medium, .large])
             #endif
                 .confirmationDialog("古い履歴を取得しますか？", isPresented: $confirmsNetwork) {
                     Button("オンラインで取得") { Task { await fetch(confirmed: true) } }

@@ -282,6 +282,7 @@ final class IOSDocumentStore {
     var libraryImportPhases: [WorkID: ImportPhase] = [:]
     var libraryImportFailures: [WorkID: SyncV2Failure] = [:]
     var snapshotSyncV2RemoteOnlyOpenFailure: SyncV2Failure?
+    var showsConflictSheet = false
     var libraryNotice: String?
     var libraryIsLoading = false
     var libraryFailure: SyncV2Failure?

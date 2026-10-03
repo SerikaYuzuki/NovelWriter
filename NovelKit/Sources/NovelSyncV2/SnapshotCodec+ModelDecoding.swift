@@ -38,11 +38,11 @@ extension SnapshotCodec {
         return Int(value)
     }
 
-    static func valueString(_ data: Data) throws -> String {
+    public static func valueString(_ data: Data) throws -> String {
         try string(fields(data, allowed: ["value"]), "value")
     }
 
-    static func order(_ data: Data) throws -> [String] {
+    public static func order(_ data: Data) throws -> [String] {
         guard case let .object(pairs) = try CanonicalJSON.parseObject(data),
               let value = Dictionary(pairs, uniquingKeysWith: { first, _ in first })["ids"],
               case let .array(identifiers) = value else {

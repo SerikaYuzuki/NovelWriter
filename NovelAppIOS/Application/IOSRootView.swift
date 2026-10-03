@@ -1,4 +1,5 @@
 import NovelCore
+import NovelSyncV2
 import NovelSyncV2Application
 import NovelUI
 import SwiftUI
@@ -7,6 +8,8 @@ import UniformTypeIdentifiers
 struct IOSRootView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Bindable var store: IOSDocumentStore
+    @State private var conflictNotice: ConflictResolutionNotice?
+    @State private var showingConflictHistory = false
     @State private var workspaceNavigation = IOSWorkspaceNavigationCoordinator()
 
     var body: some View {
@@ -45,6 +48,28 @@ struct IOSRootView: View {
         )) {
             if scenePhase == .active, !store.isDocumentTransitionInProgress {
                 await store.runAutomaticSnapshotSyncV2()
+            }
+        }
+        .sheet(isPresented: $store.showsConflictSheet) {
+            if let selection = store.snapshotSyncV2DisplayedConflictSelection,
+               let application = store.snapshotSyncV2Application {
+                ConflictSheet(application: application, workID: selection.workID, conflict: selection.conflict,
+                              deviceLabel: UIDevice.current.userInterfaceIdiom == .pad ? "このiPad" : "このiPhone") { choice in
+                    await resolve(choice, selection: selection, application: application)
+                } cancel: { store.showsConflictSheet = false }
+            }
+        }
+        .sheet(isPresented: $showingConflictHistory) {
+            NavigationStack { IOSSnapshotHistoryView(store: store) }
+        }
+        .onChange(of: store.snapshotSyncConflict, initial: true) { _, conflict in
+            store.showsConflictSheet = conflict != nil
+        }
+        .onChange(of: store.syncV2ActiveWorkID) { _, _ in clearConflictPresentation() }
+        .onChange(of: store.snapshotSyncV2AccountScope) { _, _ in clearConflictPresentation() }
+        .safeAreaInset(edge: .bottom) {
+            if let notice = conflictNotice {
+                ConflictResolutionNoticeView(notice: notice) { conflictNotice = nil }
             }
         }
         .safeAreaInset(edge: .bottom) {
@@ -118,6 +143,33 @@ struct IOSRootView: View {
                     .ignoresSafeArea()
             }
         }
+    }
+
+    private func resolve(_ choice: SyncV2ConflictChoice, selection: IOSSnapshotSyncV2ConflictSelection,
+                         application: SyncV2Application) async -> Bool {
+        guard await store.resolveSnapshotSyncV2Conflict(using: choice, expectedSelection: selection) else { return false }
+        store.showsConflictSheet = false
+        let snapshot = choice == .useDevice ? selection.conflict.remoteSnapshotID : selection.conflict.localSnapshotID
+        let available = await (try? application.historySnapshotAvailability(workID: selection.workID, snapshotID: snapshot)) == .local
+        guard store.syncV2ActiveWorkID == selection.workID,
+              store.snapshotSyncV2AccountScope == selection.accountScope else { return true }
+        let undo: (@MainActor () async -> Bool)? = if available {
+            { await store.undoConflictSelection(selection, choice: choice, snapshotID: snapshot) }
+        } else {
+            nil
+        }
+        conflictNotice = ConflictResolutionNotice(
+            title: choice == .useDevice ? "この端末の版にしました" : "サーバーの版にしました",
+            undo: undo,
+            history: { showingConflictHistory = true }
+        )
+        return true
+    }
+
+    private func clearConflictPresentation() {
+        store.showsConflictSheet = false
+        showingConflictHistory = false
+        conflictNotice = nil
     }
 
     private func synchronizeActiveEditorBeforeDocumentChange() -> Bool {

@@ -42,7 +42,7 @@ struct WorkbenchSyncStatus: Equatable {
         case .offline: return Self(title: "通信待ち", systemImage: "wifi.slash", tone: .offline)
         case .retryable: return Self(title: "再試行待ち", systemImage: "arrow.clockwise", isWarning: true, tone: .warning)
         case .needsChoice: return Self(title: "競合あり", systemImage: "exclamationmark.triangle", isWarning: true, tone: .warning)
-        case .readyForSafeAdoption: return Self(title: "受信を適用", systemImage: "arrow.down.circle", tone: .active)
+        case .readyForSafeAdoption: return Self(title: "サーバーに新しい版があります", systemImage: "arrow.down.circle", tone: .active)
         case .authenticationRequired: return Self(title: "要サインイン", systemImage: "person.crop.circle.badge.exclamationmark", isWarning: true, tone: .warning)
         case .fenceChanged, .parkedDifferentAccount, .quarantined:
             return Self(title: "同期を確認", systemImage: "lock.shield", isWarning: true, tone: .warning)
