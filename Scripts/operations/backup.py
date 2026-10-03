@@ -77,7 +77,7 @@ def capture(command, target, key):
             raise
 
 
-def run(config):
+def run(config, lock_fd=None):
     root = Path(config['backup_directory'])
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
     key_path = Path(config['key_file'])
@@ -86,7 +86,12 @@ def run(config):
     key = key_path.read_bytes()
     if len(key) != 32 or key_path.stat().st_mode & 0o077:
         raise ValueError('backup key must be 32 bytes and private')
-    with (root / '.lock').open('a') as lock:
+    lock_path = root / '.lock'
+    if lock_fd is not None:
+        expected, inherited = lock_path.stat(), os.fstat(lock_fd)
+        if (expected.st_dev, expected.st_ino) != (inherited.st_dev, inherited.st_ino):
+            raise ValueError('backup lock descriptor mismatch')
+    with (os.fdopen(os.dup(lock_fd), 'a') if lock_fd is not None else lock_path.open('a')) as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         instance = subprocess.check_output([
             'docker', 'exec', config['postgres_container'], 'psql', '-XAt',
@@ -157,6 +162,7 @@ def main():
     parser.add_argument('--config')
     parser.add_argument('--decrypt')
     parser.add_argument('--key-file')
+    parser.add_argument('--lock-fd', type=int, help=argparse.SUPPRESS)
     args = parser.parse_args()
     if args.decrypt:
         key = Path(args.key_file).read_bytes()
@@ -164,7 +170,7 @@ def main():
         decrypt(Path(args.decrypt), key)
         decrypt(Path(args.decrypt), key, sys.stdout.buffer)
     else:
-        run(json.loads(Path(args.config).read_text()))
+        run(json.loads(Path(args.config).read_text()), args.lock_fd)
 
 
 if __name__ == '__main__':
