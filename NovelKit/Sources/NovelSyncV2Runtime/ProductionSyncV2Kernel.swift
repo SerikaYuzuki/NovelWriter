@@ -251,6 +251,7 @@ actor ProductionSyncV2Kernel: SyncV2LocalKernel, SyncV2LibraryProvider {
                 workID: workID,
                 scope: localScope
             ) else { return nil }
+            guard try await !store.conflictResolutionPrepared(conflict, scope: localScope) else { return nil }
             return SyncV2ConflictProjection(
                 conflictID: conflict.conflictID,
                 revision: conflict.revision,
@@ -413,7 +414,8 @@ extension ProductionSyncV2Kernel {
                 snapshotID: pending.expectedCurrentSnapshotID
             ),
             conflictID: pending.conflictID,
-            conflictRevision: pending.conflictRevision
+            conflictRevision: pending.conflictRevision,
+            requiresExplicitConfirmation: pending.requiresExplicitConfirmation
         )
     }
 
@@ -609,18 +611,28 @@ private extension ProductionSyncV2Kernel {
                 guard summary.currentSnapshotID != nil || summary.localGeneration != 0 else { continue }
                 guard try await store.workDeletion(workID: summary.workID) == nil else { continue }
                 group.addTask { [store] in
-                    let opened = try await store.open(
-                        workID: summary.workID,
-                        scope: .parked
-                    )
-                    return SyncV2LibraryItem(
-                        workID: summary.workID,
-                        title: opened.document?.title ?? "名称未設定の作品",
-                        availability: .localOnly,
-                        accountState: .parkedDifferentAccount,
-                        localGeneration: summary.localGeneration,
-                        remoteProgress: .idle
-                    )
+                    do {
+                        let opened = try await store.open(
+                            workID: summary.workID,
+                            scope: .parked
+                        )
+                        return SyncV2LibraryItem(
+                            workID: summary.workID,
+                            title: opened.document?.title ?? "名称未設定の作品",
+                            availability: .localOnly,
+                            accountState: .parkedDifferentAccount,
+                            localGeneration: summary.localGeneration,
+                            remoteProgress: .idle
+                        )
+                    } catch {
+                        return SyncV2LibraryItem(
+                            workID: summary.workID, title: "読み込めない作品",
+                            availability: .localOnly,
+                            accountState: .parkedDifferentAccount,
+                            localGeneration: summary.localGeneration,
+                            remoteProgress: .failed(.invalidLocalState)
+                        )
+                    }
                 }
             }
             var result: [SyncV2LibraryItem] = []
@@ -642,59 +654,68 @@ private extension ProductionSyncV2Kernel {
             for summary in summaries {
                 guard try await store.workDeletion(workID: summary.workID) == nil else { continue }
                 group.addTask { [store] in
-                    if summary.currentSnapshotID == nil, summary.localGeneration == 0 {
-                        return SyncV2LibraryItem(workID: summary.workID, title: "名称未設定の作品",
-                                                 availability: .remoteOnly, accountState: accountState,
-                                                 localGeneration: 0, remoteProgress: .idle)
-                    }
-                    let opened = try await store.open(
-                        workID: summary.workID,
-                        scope: localScope
-                    )
-                    let adoption = try await store.pendingServerAdoption(
-                        workID: summary.workID,
-                        scope: localScope
-                    )
-                    let conflict = try await self.activeConflict(workID: summary.workID)
-                    let pending = try await store.pendingIntents(
-                        scope: localScope,
-                        workID: summary.workID
-                    )
-                    let sealed: [V2SealedCommandRecord] = switch localScope {
-                    case .bound:
-                        try await store.pendingSealedCommands(
+                    do {
+                        if summary.currentSnapshotID == nil, summary.localGeneration == 0 {
+                            return SyncV2LibraryItem(workID: summary.workID, title: "名称未設定の作品",
+                                                     availability: .remoteOnly, accountState: accountState,
+                                                     localGeneration: 0, remoteProgress: .idle)
+                        }
+                        let opened = try await store.open(
+                            workID: summary.workID,
+                            scope: localScope
+                        )
+                        let adoption = try await store.pendingServerAdoption(
+                            workID: summary.workID,
+                            scope: localScope
+                        )
+                        let conflict = try await self.activeConflict(workID: summary.workID)
+                        let pending = try await store.pendingIntents(
                             scope: localScope,
                             workID: summary.workID
                         )
-                    case .unbound, .parked:
-                        []
+                        let sealed: [V2SealedCommandRecord] = switch localScope {
+                        case .bound:
+                            try await store.pendingSealedCommands(
+                                scope: localScope,
+                                workID: summary.workID
+                            )
+                        case .unbound, .parked:
+                            []
+                        }
+                        let hasLeaf = try await store.hasUnpromotedLeaf(workID: summary.workID, scope: localScope)
+                        let progress: SyncV2RemoteProgress = if accountState == .parkedDifferentAccount {
+                            .parkedDifferentAccount
+                        } else if let adoption {
+                            .readyForSafeAdoption(inboxID: adoption.inboxID)
+                        } else if conflict != nil {
+                            .needsChoice
+                        } else if localScope == .unbound || localScope == .parked, !pending.isEmpty {
+                            .authenticationRequired
+                        } else if !pending.isEmpty || !sealed.isEmpty || hasLeaf {
+                            .pending
+                        } else {
+                            .idle
+                        }
+                        return try await SyncV2LibraryItem(
+                            workID: summary.workID,
+                            title: opened.document?.title ?? "名称未設定の作品",
+                            availability: .localOnly,
+                            accountState: accountState,
+                            localGeneration: summary.localGeneration,
+                            remoteHeadConfirmed: accountState == .active && summary.acknowledgedHeadGeneration != nil,
+                            conflict: adoption == nil ? conflict : nil,
+                            remoteProgress: progress,
+                            oldestUnreceivedAt: store.oldestUnreceivedChange(workID: summary.workID, scope: localScope),
+                            historyBackfillNote: store.backfillProgressNote(workID: summary.workID)
+                        )
+                    } catch {
+                        return SyncV2LibraryItem(
+                            workID: summary.workID, title: "読み込めない作品",
+                            availability: .localOnly, accountState: accountState,
+                            localGeneration: summary.localGeneration,
+                            remoteProgress: .failed(.invalidLocalState)
+                        )
                     }
-                    let hasLeaf = try await store.hasUnpromotedLeaf(workID: summary.workID, scope: localScope)
-                    let progress: SyncV2RemoteProgress = if accountState == .parkedDifferentAccount {
-                        .parkedDifferentAccount
-                    } else if let adoption {
-                        .readyForSafeAdoption(inboxID: adoption.inboxID)
-                    } else if conflict != nil {
-                        .needsChoice
-                    } else if localScope == .unbound || localScope == .parked, !pending.isEmpty {
-                        .authenticationRequired
-                    } else if !pending.isEmpty || !sealed.isEmpty || hasLeaf {
-                        .pending
-                    } else {
-                        .idle
-                    }
-                    return try await SyncV2LibraryItem(
-                        workID: summary.workID,
-                        title: opened.document?.title ?? "名称未設定の作品",
-                        availability: .localOnly,
-                        accountState: accountState,
-                        localGeneration: summary.localGeneration,
-                        remoteHeadConfirmed: accountState == .active && summary.acknowledgedHeadGeneration != nil,
-                        conflict: adoption == nil ? conflict : nil,
-                        remoteProgress: progress,
-                        oldestUnreceivedAt: store.oldestUnreceivedChange(workID: summary.workID, scope: localScope),
-                        historyBackfillNote: store.backfillProgressNote(workID: summary.workID)
-                    )
                 }
             }
             var result: [SyncV2LibraryItem] = []

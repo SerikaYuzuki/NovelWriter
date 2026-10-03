@@ -225,21 +225,11 @@ extension ProductionRestartTests {
         #expect(try await restarted.open(workID: fixture.workID).document?.title == "両方保持の追加入力")
         #expect(try await restarted.open(workID: clone.workID).document?.title == "端末版")
         let sourceStore = try LocalSyncV2Store(root: configuration.localRoot.url, policy: .openExisting)
-        try await eventually {
-            try await sourceStore.allSealedCommands(scope: productionScope, workID: fixture.workID).contains {
-                $0.commandKind == "publish" && $0.sourceGeneration == newerIntent.sourceGeneration &&
-                    $0.sourceSnapshotID == newerIntent.sourceSnapshotID && $0.lifecycle == .sealed
-            }
-        }
-        let sealedCommands = try await sourceStore.allSealedCommands(
-            scope: productionScope,
-            workID: fixture.workID
-        )
-        let newerPublish = try #require(sealedCommands.first {
-            $0.commandKind == "publish" &&
-                $0.sourceGeneration == newerIntent.sourceGeneration &&
-                $0.sourceSnapshotID == newerIntent.sourceSnapshotID
-        })
+        // The worker can advance sealed -> sending between actor reads.
+        // Assert against the same durable record that satisfied the wait.
+        let newerPublish = try #require(try await waitForSealedProductionPublish(
+            store: sourceStore, workID: fixture.workID, intent: newerIntent
+        ))
         #expect(newerPublish.intentID == newerIntent.intentID)
         #expect(newerPublish.lifecycle == .sealed)
         let durableIntent = try await sourceStore.pendingIntents(

@@ -28,7 +28,16 @@ public actor LocalSyncV2Store {
             throw SyncV2StoreError.invalidRoot
         }
 
-        executor = try SQLiteExecutor(databaseURL: databaseURL, policy: policy)
+        let openedExecutor = try SQLiteExecutor(databaseURL: databaseURL, policy: policy)
+        do {
+            try openedExecutor.inTransaction {
+                try ConflictRepository(executor: openedExecutor).repairMultipleResolutionsTransaction()
+            }
+        } catch {
+            openedExecutor.close()
+            throw error
+        }
+        executor = openedExecutor
     }
 
     public func close() {

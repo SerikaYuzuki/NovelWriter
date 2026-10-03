@@ -126,7 +126,8 @@ extension IOSDocumentStore {
             }
             return true
         } catch {
-            operationErrorMessage = "作品一覧を読み込めませんでした。"
+            // Persistent library failures are displayed on the shelf.
+            libraryFailure = syncV2FailureKind(error)
             return false
         }
     }

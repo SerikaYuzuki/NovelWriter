@@ -10,22 +10,28 @@ struct ContentView: View {
     @Environment(DocumentPanelPresenter.self) private var documentPanelPresenter
     @Environment(ExportPresenter.self) private var exportPresenter
     @State private var showingConflict = false
+    @State private var conflictNotice: ConflictResolutionNotice?
+    @State private var showingConflictHistory = false
 
     var body: some View {
         rootContent
             .sheet(isPresented: $showingConflict) {
-                if let selection = appState.snapshotSyncV2ConflictSelection {
-                    ConflictSheet(selection: selection, application: appState.snapshotSyncV2Application, defaults: appState.userDefaults) { choice in
-                        Task {
-                            if await appState.resolveSnapshotConflict(using: choice, selection: selection) {
-                                showingConflict = false
-                            }
-                        }
-                    } cancel: {
-                        showingConflict = false
-                    }
+                if let selection = appState.snapshotSyncV2ConflictSelection,
+                   let application = appState.snapshotSyncV2Application {
+                    ConflictSheet(application: application, workID: selection.workID,
+                                  conflict: selection.conflict, defaults: appState.userDefaults) { choice in
+                        await resolve(choice, selection: selection, application: application)
+                    } cancel: { showingConflict = false }
                 }
             }
+            .sheet(isPresented: $showingConflictHistory) { SnapshotHistorySheet { showingConflictHistory = false } }
+            .safeAreaInset(edge: .bottom) {
+                if let notice = conflictNotice {
+                    ConflictResolutionNoticeView(notice: notice) { conflictNotice = nil }
+                }
+            }
+            .onChange(of: appState.currentSnapshotSyncV2WorkID) { _, _ in clearConflictPresentation() }
+            .onChange(of: appState.snapshotSyncV2AccountScopeToken) { _, _ in clearConflictPresentation() }
             .alert(
                 "作品の操作",
                 isPresented: Binding(
@@ -65,6 +71,33 @@ struct ContentView: View {
             }
     }
 
+    private func resolve(_ choice: SyncV2ConflictChoice, selection: SnapshotSyncV2ConflictSelection,
+                         application: SyncV2Application) async -> Bool {
+        guard await appState.resolveSnapshotConflict(using: choice, selection: selection) else { return false }
+        showingConflict = false
+        let snapshot = choice == .useDevice ? selection.conflict.remoteSnapshotID : selection.conflict.localSnapshotID
+        let available = await (try? application.historySnapshotAvailability(workID: selection.workID, snapshotID: snapshot)) == .local
+        guard appState.currentSnapshotSyncV2WorkID == selection.workID,
+              appState.matchesSnapshotSyncV2AccountScope(selection.accountScope) else { return true }
+        let undo: (@MainActor () async -> Bool)? = if available {
+            { await appState.undoConflictSelection(selection, choice: choice, snapshotID: snapshot) }
+        } else {
+            nil
+        }
+        conflictNotice = ConflictResolutionNotice(
+            title: choice == .useDevice ? "この端末の版にしました" : "サーバーの版にしました",
+            undo: undo,
+            history: { showingConflictHistory = true }
+        )
+        return true
+    }
+
+    private func clearConflictPresentation() {
+        showingConflict = false
+        showingConflictHistory = false
+        conflictNotice = nil
+    }
+
     @ViewBuilder
     private var rootContent: some View {
         switch appState.startupState {
@@ -99,52 +132,6 @@ private struct RecoveryPane: View {
             return context.message
         }
         return "端末の保存領域を確認できませんでした。"
-    }
-}
-
-struct ConflictSheet: View {
-    let selection: SnapshotSyncV2ConflictSelection
-    let application: SyncV2Application?
-    let defaults: UserDefaults
-    let choose: (SyncV2ConflictChoice) -> Void
-    let cancel: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Label("競合", systemImage: "exclamationmark.triangle")
-                .font(.title2.weight(.semibold))
-            Text("この端末の版とサーバーの版が分かれています。選択中の入力は先に端末へ保存されます。")
-                .foregroundStyle(.secondary)
-            ConflictDeviceLabels(conflict: selection.conflict, application: application, workID: selection.workID, defaults: defaults)
-                .id(selection)
-            VStack(alignment: .leading, spacing: 8) {
-                choiceRow("この端末の版を使う", symbol: "internaldrive", description: "この端末の変更をサーバーへ送ります。", choice: .useDevice)
-                choiceRow("サーバーの版を使う", symbol: "arrow.down.circle", description: "サーバーで確認済みの版を、この端末へ適用します。", choice: .useServer)
-                choiceRow("両方を残す", symbol: "doc.on.doc", description: "元の作品を保ち、もう一つの作品として残します。", choice: .keepBoth)
-            }
-            .buttonStyle(.bordered)
-            Button("後で確認", action: cancel)
-                .buttonStyle(.borderless)
-        }
-        .padding(24)
-        .frame(width: 420)
-        .background(FuminiwaColor.paper.color)
-        .accessibilityIdentifier("snapshotSyncV2.conflictSheet")
-    }
-
-    private func choiceRow(_ title: String, symbol: String, description: String, choice: SyncV2ConflictChoice) -> some View {
-        Button { choose(choice) } label: {
-            HStack(alignment: .top, spacing: Spacing.medium) {
-                Image(systemName: symbol).symbolRenderingMode(.hierarchical)
-                VStack(alignment: .leading, spacing: Spacing.extraSmall) {
-                    Text(title).font(.headline)
-                    Text(description).font(.caption).foregroundStyle(.secondary)
-                }
-                Spacer(minLength: 0)
-            }
-            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-            .padding(Spacing.small)
-        }
     }
 }
 

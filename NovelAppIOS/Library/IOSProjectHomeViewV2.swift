@@ -48,43 +48,11 @@ struct IOSProjectHomeView: View {
             Section("同期") {
                 IOSExplicitSyncButton(store: store, status: syncStatus)
                 if store.snapshotSyncConflict != nil {
-                    VStack(alignment: .leading, spacing: Spacing.small) {
-                        Text("この端末とサーバーの変更が分かれています")
-                            .foregroundStyle(FuminiwaColor.warning.color)
-                        Text("残す内容を選んでください。通信が戻ると同期を続けます。")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        if let displayedSelection = store.snapshotSyncV2DisplayedConflictSelection {
-                            ConflictDeviceLabels(conflict: displayedSelection.conflict, application: store.snapshotSyncV2Application,
-                                                 workID: displayedSelection.workID, defaults: store.userDefaults)
-                                .id(displayedSelection.session)
-                                .id(displayedSelection.accountScope)
-                            ForEach([
-                                SyncV2ConflictChoice.useDevice,
-                                .useServer,
-                                .keepBoth
-                            ], id: \.rawValue) { choice in
-                                Button(conflictChoiceTitle(choice)) {
-                                    Task {
-                                        _ = await store.resolveSnapshotSyncV2Conflict(
-                                            using: choice,
-                                            expectedSelection: displayedSelection
-                                        )
-                                    }
-                                }
-                                .disabled(store.isExplicitSyncInFlight)
-                                Text(conflictChoiceDescription(choice))
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                    }
-                    .padding(Spacing.medium)
-                    .background(FuminiwaColor.surface.color, in: RoundedRectangle(cornerRadius: Radius.card))
-                    .overlay(RoundedRectangle(cornerRadius: Radius.card).strokeBorder(FuminiwaColor.warning.color, lineWidth: 1))
+                    Button("競合の版を確認") { store.showsConflictSheet = true }
+                        .foregroundStyle(FuminiwaColor.warning.color)
                 }
                 if case .readyForSafeAdoption = store.snapshotSyncState?.remoteProgress {
-                    Button("サーバーの版を反映") {
+                    Button("サーバーに新しい版があります") {
                         Task { _ = await store.adoptPendingSnapshotSyncV2() }
                     }
                     .disabled(!store.canExplicitlySyncCurrentWork || store.isExplicitSyncInFlight)
@@ -150,21 +118,5 @@ struct IOSProjectHomeView: View {
             .background(FuminiwaColor.surface.color, in: RoundedRectangle(cornerRadius: Radius.card))
             .overlay(RoundedRectangle(cornerRadius: Radius.card).strokeBorder(FuminiwaColor.separator.color, lineWidth: 0.5))
         }.buttonStyle(.plain)
-    }
-
-    private func conflictChoiceTitle(_ choice: SyncV2ConflictChoice) -> String {
-        switch choice {
-        case .useDevice: "この端末の版を使う"
-        case .useServer: "サーバーの版を使う"
-        case .keepBoth: "両方を残す"
-        }
-    }
-
-    private func conflictChoiceDescription(_ choice: SyncV2ConflictChoice) -> String {
-        switch choice {
-        case .useDevice: "この端末の変更をサーバーへ送ります。"
-        case .useServer: "サーバーで確認済みの版を、この端末へ適用できます。"
-        case .keepBoth: "元の作品を保ち、もう一つの作品として残します。"
-        }
     }
 }

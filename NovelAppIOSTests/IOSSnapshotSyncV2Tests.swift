@@ -553,3 +553,37 @@ private struct TestEnvironment {
         defaults.removePersistentDomain(forName: suiteName)
     }
 }
+
+extension IOSSnapshotSyncV2Tests {
+    @Test("persistent failed state alerts once per work and reason")
+    func persistentFailureDoesNotPresentAgain() {
+        let environment = makeEnvironment()
+        defer { environment.cleanup() }
+        let store = IOSDocumentStore(userDefaults: environment.defaults, libraryRoot: environment.root)
+        let work = WorkID(UUID())
+        store.syncV2ActiveWorkID = work
+        let failed = SyncUIState(workID: work, localDurability: .unsaved,
+                                 remoteProgress: .failed(.invalidLocalState),
+                                 lastTypedResult: .failure(.fatal(.invalidLocalState)))
+        store.applySnapshotSyncV2State(failed)
+        #expect(store.operationErrorMessage != nil)
+        store.operationErrorMessage = nil
+        for _ in 0 ..< 5 {
+            store.applySnapshotSyncV2State(failed)
+        }
+        #expect(store.operationErrorMessage == nil)
+        #expect(store.snapshotSyncState?.remoteProgress == failed.remoteProgress)
+        store.applySnapshotSyncV2State(nil)
+        store.applySnapshotSyncV2State(failed)
+        #expect(store.operationErrorMessage == nil)
+        store.applySnapshotSyncV2State(SyncUIState(workID: work, localDurability: .unsaved,
+                                                   remoteProgress: .failed(.unexpected),
+                                                   lastTypedResult: .failure(.fatal(.unexpected))))
+        #expect(store.operationErrorMessage != nil)
+        store.operationErrorMessage = nil
+        store.syncV2ActiveWorkID = WorkID(UUID())
+        store.applySnapshotSyncV2State(failed)
+        #expect(store.operationErrorMessage == nil)
+        #expect(store.snapshotSyncState?.workID == work)
+    }
+}

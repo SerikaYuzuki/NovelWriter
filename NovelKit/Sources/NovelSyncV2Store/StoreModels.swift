@@ -210,6 +210,7 @@ public struct V2PendingServerAdoption: Hashable, Sendable {
     public let expectedLocalGeneration: Int64
     public let conflictID: UUID
     public let conflictRevision: Int64
+    public var requiresExplicitConfirmation: Bool = false
 }
 
 public struct V2UploadTransferRecord: Hashable, Sendable {

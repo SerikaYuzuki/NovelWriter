@@ -7,6 +7,22 @@ import Testing
 
 @Suite("Snapshot Sync v2 conflict and safe adoption")
 struct ConflictAdoptionTests {
+    @Test("queued selection hides the conflict and rejects every subsequent choice", arguments: [SyncV2ConflictChoice.useDevice, .useServer, .keepBoth])
+    func queuedSelectionIsConsumed(first: SyncV2ConflictChoice) async throws {
+        let fixture = try await ConflictFixture.make(resolutionChoice: first)
+        let suspension = await fixture.app.beginAccountTransitionRemoteSuspension()
+        let result = try await fixture.app.resolveConflict(workID: fixture.workID, action: fixture.action(choice: first))
+        #expect(result.typedResult == .queued)
+        #expect(result.state.conflict == nil)
+        for choice in [SyncV2ConflictChoice.useDevice, .useServer, .keepBoth] {
+            let second = try await fixture.app.resolveConflict(workID: fixture.workID, action: fixture.action(choice: choice))
+            #expect(second.typedResult == .staleConflictAction)
+            #expect(second.state.conflict == nil)
+        }
+        #expect(try await fixture.app.library().items.first { $0.workID == fixture.workID }?.conflict == nil)
+        _ = await fixture.app.endAccountTransitionRemoteSuspension(suspension, resume: false)
+    }
+
     @Test func historyCopyFailureCannotFailCommittedKeepBoth() async throws {
         let store = FailingWritingCopyStore()
         let fixture = try await ConflictFixture.make(resolutionChoice: .keepBoth, writingStore: store)

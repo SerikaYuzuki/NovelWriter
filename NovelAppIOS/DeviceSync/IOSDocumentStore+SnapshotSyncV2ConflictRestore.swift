@@ -63,6 +63,7 @@ extension IOSDocumentStore {
         expectedSelection: IOSSnapshotSyncV2ConflictSelection
     ) async -> Bool {
         guard !isSyncV2RemoteAccountTransitionActive,
+              !isSnapshotSyncInFlight,
               let app = snapshotSyncV2Application,
               startupState == .ready,
               let activeWorkID = syncV2ActiveWorkID,

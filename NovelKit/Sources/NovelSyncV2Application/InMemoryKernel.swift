@@ -49,6 +49,15 @@ public actor InMemorySyncV2RuntimeState: SyncV2LocalKernel,
     private var remoteOnly: [WorkID: SyncV2RemoteInbox] = [:]
     private var pendingAdoptions: [WorkID: SyncV2PendingAdoption] = [:]
 
+    func comparisonInbox(workID: WorkID, snapshotID: SnapshotID) -> EncodedSnapshot? {
+        for inbox in inboxes.values where verifiedInboxes.contains(inbox.inboxID) && inbox.workID == workID {
+            if let snapshot = inbox.snapshots.first(where: { $0.snapshotId == snapshotID }) {
+                return snapshot
+            }
+        }
+        return nil
+    }
+
     public init(account: TestAccount? = nil, readOnly: Bool = false) {
         self.account = account
         self.readOnly = readOnly

@@ -49,6 +49,11 @@ public extension SyncV2Application {
         workID: WorkID,
         refresh: @escaping @Sendable () async -> Void
     ) async {
+        // The foreground work takes the existing read/backfill priority lane.
+        // pollForeground starts with one immediate head check outside all save gates.
+        if runtimeIdentity != .preview, remoteSchedulingSuspensions.isEmpty {
+            prioritizeHistory(workID: workID)
+        }
         let owner = UUID()
         await withTaskCancellationHandler {
             guard !Task.isCancelled else { return }

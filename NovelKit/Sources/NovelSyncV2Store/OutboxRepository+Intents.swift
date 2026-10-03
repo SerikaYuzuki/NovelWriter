@@ -38,6 +38,7 @@ extension OutboxRepository {
         generation: Int64,
         scope: V2LocalWorkScope
     ) throws -> UUID? {
+        guard try conflictRepository.recoveredMultipleResolution(workID: workID, scope: scope) == nil else { return nil }
         guard try !workRepository.isAcknowledgedContent(workID: workID, snapshotID: snapshotID, scope: scope) else {
             return nil
         }

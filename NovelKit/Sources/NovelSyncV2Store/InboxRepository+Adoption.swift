@@ -25,6 +25,9 @@ extension InboxRepository {
         workID: WorkID,
         scope: V2LocalWorkScope
     ) throws -> V2PendingServerAdoption? {
+        if let recovery = try conflictRepository.recoveredMultipleResolution(workID: workID, scope: scope) {
+            return recovery
+        }
         guard case let .bound(binding) = scope,
               let active = try conflictRepository.activeConflict(workID: workID, scope: scope),
               let row = try query(
