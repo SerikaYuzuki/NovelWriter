@@ -1,0 +1,22 @@
+{
+  "services": {
+    "postgres": {"container_name": "fuminiwa-sync-v2-role-split-postgres", "restart": "unless-stopped", "networks": ["sync"], "volumes": ["fuminiwa-sync-v2-role-split-data:/var/lib/postgresql/data"]},
+    "server": {"container_name": "fuminiwa-sync-v2-role-split-server", "restart": "unless-stopped", "networks": ["sync"], "depends_on": {"postgres": {"condition": "service_healthy"}}},
+    "edge": {"container_name": "fuminiwa-sync-v2-role-split-edge", "restart": "unless-stopped", "networks": ["sync"], "depends_on": {"server": {"condition": "service_healthy"}}, "ports": ["8443:8443"], "volumes": ["fuminiwa-sync-v2-role-split-caddy-data:/data", "fuminiwa-sync-v2-role-split-caddy-config:/caddy-config"]},
+    "ops": {"container_name": "fuminiwa-sync-v2-ops", "restart": "unless-stopped", "networks": ["ops-ui"], "stop_grace_period": "5m"}
+  },
+  "volumes": {
+    "fuminiwa-sync-v2-role-split-data": {"name": "fuminiwa-sync-v2-role-split-data", "external": true},
+    "fuminiwa-sync-v2-role-split-caddy-config": {"name": "fuminiwa-sync-v2-role-split-caddy-config", "external": true},
+    "fuminiwa-sync-v2-role-split-caddy-data": {"name": "fuminiwa-sync-v2-role-split-caddy-data", "external": true}
+  },
+  "networks": {"sync": {"driver": "bridge"}, "ops-ui": {"driver": "bridge"}},
+  "secrets": {},
+  "x-casaos": {
+    "main": "ops", "index": "/", "port_map": "8790", "scheme": "http",
+    "title": {"ja_JP": "ふみにわ同期", "en_US": "Fuminiwa Sync"},
+    "category": "Developer",
+    "icon": "http://192.168.11.5:8790/icon.svg",
+    "description": {"ja_JP": "小説同期と日次バックアップの管理", "en_US": "Novel sync and daily backup management"}
+  }
+}
