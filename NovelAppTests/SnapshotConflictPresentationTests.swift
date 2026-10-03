@@ -44,12 +44,12 @@ struct SnapshotConflictPresentationTests {
                                                 localSnapshotID: local, remoteSnapshotID: remote, sourceGeneration: 1)
         for dark in [false, true] {
             let view = ConflictSheet(application: app, workID: workID, conflict: conflict,
-                                     deviceLabel: "この端末") { _ in true } cancel: {}
+                                     defaults: UserDefaults(suiteName: "conflict-sheet-capture") ?? .standard) { _ in true } cancel: {}
                 .preferredColorScheme(dark ? .dark : .light)
             try await capture(view, name: "conflict-\(dark ? "dark" : "light")")
         }
         let confirmation = ConflictSheet(application: app, workID: workID, conflict: conflict,
-                                         deviceLabel: "この端末") { _ in true } cancel: {}
+                                         defaults: UserDefaults(suiteName: "conflict-sheet-capture") ?? .standard) { _ in true } cancel: {}
             .presentingReductionForCapture()
         try await capture(confirmation, name: "reduction-confirmation")
         _ = await app.beginAccountTransitionRemoteSuspension()

@@ -19,7 +19,7 @@ struct ContentView: View {
                 if let selection = appState.snapshotSyncV2ConflictSelection,
                    let application = appState.snapshotSyncV2Application {
                     ConflictSheet(application: application, workID: selection.workID,
-                                  conflict: selection.conflict, deviceLabel: "このMac") { choice in
+                                  conflict: selection.conflict, defaults: appState.userDefaults) { choice in
                         await resolve(choice, selection: selection, application: application)
                     } cancel: { showingConflict = false }
                 }

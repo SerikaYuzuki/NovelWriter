@@ -109,6 +109,8 @@ Step 2ではSQLiteへappend-only migrationで`shallow_boundaries`と`history_bac
 
 Step 2で作品別／全体1本のworker、constrained networkでの停止、再起動再開、履歴項目ごとの取得状態を追加した。Step 3で「オンラインで取得」、未取得版の復元・深いmerge/競合の優先取得、停止理由の表示を実装した。優先要求は全体1本の取得レーンの先頭へ移し、他作品の取得は保存済みcursorから再開する。Inboxとsealed commandを保持し、祖先のcommit通知で通常のworkerを再実行する。未取得版の復元待ちはeditor gateを保持せず、到着後に明示確認して通常のローカル復元へ進む。通信中断は再試行でき、検証エラーは自動再試行せず、識別子や内部エラーを出さない詳細を表示する。offline・Low Data Mode・constrained・expensiveでは自動取得を停止する。従量接続の明示確認は取得要求ごとに扱い、offlineで解除する。通常回線での手動開始だけでは従量接続の許可としない。対象は利用者が開いた／明示取り込みした作品だけとする（U-10）。同じHから再開し、新しいheadは通常Inboxで受ける。同一accountのfence変更ではcursorを捨てて再検証、別accountではpark、削除・認証失効ではsuspendして端末原稿を残す。両OSの履歴・棚は共通の状態と文言を使い、状態変更と取得後の復元可能状態をアクセシビリティへ通知する。
 
+2026-10-04: 公開ごとの端末名をヘッダで任意送信、opt-inで返す。history occurrenceに保存し、canonical bytesとsnapshot IDを変えない。既定は端末種類、変更は端末内だけ。詳細は[wire契約](sync/v2/wire.md#保存した端末名2026-10-04)。
+
 ## D-107: 旧unexpected隔離の一度だけの自動復旧（2026-10-02）
 
 HTTP edge応答の旧分類で止まったコマンドは、既存の追加型SQLite migrationで`legacy_command_recovery`へ候補を記録する。更新時に存在し、`command:unexpected`かつ応答・receipt・upload transfer・証拠bytesがないコマンドだけを対象にする。新規DBや更新後の失敗は候補にしない。自動・明示の解除と候補消費を同じtransactionで確定し、再隔離は再起動後も自動解除しない。plannerはbindingごとに起動中一度だけ走査する。明示同期による従来の手動復旧と、応答未保存コマンドの明示再試行は維持する。v2名称・wire・server schemaは維持し、原稿・送信ID・bytes・intentを変更しない。[状態遷移](sync/v2/state-machine.md#recovery-of-response-less-command-quarantines)に範囲を定める。

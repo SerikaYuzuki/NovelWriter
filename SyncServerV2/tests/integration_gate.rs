@@ -1,5 +1,7 @@
 //! Opt-in PostgreSQL/HTTP gate. Ordinary test runs emit an explicit skip and
 //! never connect to a fixed development or LAN server.
+#[path = "support/device_labels.rs"]
+mod device_labels;
 #[path = "support/download_pages.rs"]
 mod download_pages;
 #[path = "support/shallow_download_pages.rs"]
@@ -696,6 +698,7 @@ async fn postgres_and_http_scenarios_are_opt_in() {
         .await
         .expect("Snapshot Sync v2 PostgreSQL scenario failed");
     verify_http_contract(&context).await;
+    device_labels::verify(&context).await;
     verify_chunk_upload_http(&context).await;
     verify_assistant_lane(&context).await;
     download_pages::verify_download_pages(&context).await;

@@ -68,6 +68,7 @@ extension ProductionSyncV2RemoteClient {
             accountFence: current.accountFence, accountId: current.accountID, protocolEpoch: 2,
             serverInstanceId: current.serverInstanceID.uuidString.lowercased()
         ))
+        await request.setValue(DeviceLabel.header(deviceLabel()), forHTTPHeaderField: "Fuminiwa-Device-Label")
         // This endpoint accepts ordinary JSON; v2 commands retain their JCS media type.
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         let (data, response) = try await requestData(request, session: current)

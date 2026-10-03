@@ -54,7 +54,7 @@ struct IOSRootView: View {
             if let selection = store.snapshotSyncV2DisplayedConflictSelection,
                let application = store.snapshotSyncV2Application {
                 ConflictSheet(application: application, workID: selection.workID, conflict: selection.conflict,
-                              deviceLabel: UIDevice.current.userInterfaceIdiom == .pad ? "このiPad" : "このiPhone") { choice in
+                              defaults: store.userDefaults) { choice in
                     await resolve(choice, selection: selection, application: application)
                 } cancel: { store.showsConflictSheet = false }
             }

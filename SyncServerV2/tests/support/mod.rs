@@ -682,7 +682,9 @@ async fn publish(
         source_generation,
         json!({"candidateSnapshotId":hex::encode(candidate),"expectedRemoteHead":expected,"workId":work_id}),
     )?;
-    let (status, bytes) = repo.command(principal, &cmd).await?;
+    let (status, bytes) = repo
+        .command_with_device_label(principal, &cmd, Some("保存元テスト"))
+        .await?;
     Ok((cmd, status, bytes))
 }
 
@@ -1086,7 +1088,9 @@ async fn resolve_server_and_restore(
             "workId":graph.work_id
         }),
     )?;
-    let first = repo.command(principal, &resolve).await?;
+    let first = repo
+        .command_with_device_label(principal, &resolve, Some("保存元テスト"))
+        .await?;
     ensure(first.0 == 200, "useServer failed")?;
     ensure(
         repo.command(principal, &resolve).await? == first,
@@ -1146,7 +1150,9 @@ async fn resolve_server_and_restore(
             "workId":graph.work_id
         }),
     )?;
-    let first = repo.command(principal, &restore).await?;
+    let first = repo
+        .command_with_device_label(principal, &restore, Some("保存元テスト"))
+        .await?;
     ensure(first.0 == 200, "restore failed")?;
     ensure(
         repo.command(principal, &restore).await? == first,
@@ -1286,7 +1292,9 @@ async fn resolve_device(
             "workId":graph.work_id
         }),
     )?;
-    let first = repo.command(principal, &resolve).await?;
+    let first = repo
+        .command_with_device_label(principal, &resolve, Some("保存元テスト"))
+        .await?;
     ensure(first.0 == 200, "useDevice failed")?;
     ensure(
         repo.command(principal, &resolve).await? == first,
@@ -1419,7 +1427,9 @@ async fn clone_work(
         graph.conflict_source_generation,
         payload(clone_root),
     )?;
-    let first = repo.command(principal, &cmd).await?;
+    let first = repo
+        .command_with_device_label(principal, &cmd, Some("保存元テスト"))
+        .await?;
     ensure(first.0 == 200, "keepBoth failed")?;
     ensure(
         repo.command(principal, &cmd).await? == first,

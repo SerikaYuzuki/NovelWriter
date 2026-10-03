@@ -13,6 +13,7 @@ struct HistoryFetchControls: View {
     var rowDate: Date?
     var rowKind: String?
     var historyItem: SyncV2HistoryItem?
+    var userDefaults: UserDefaults = .standard
     var announcesStatus = true
     var restore: (() async -> Void)?
     @State private var state: SyncV2HistoryFetchState = .paused
@@ -26,7 +27,7 @@ struct HistoryFetchControls: View {
                 HStack(spacing: Spacing.group) {
                     VStack(alignment: .leading, spacing: Spacing.extraSmall) {
                         if let historyItem {
-                            SnapshotHistoryLabel(item: historyItem)
+                            SnapshotHistoryLabel(item: historyItem, userDefaults: userDefaults)
                         } else {
                             Text(HistoryPresentation().time(rowDate)).font(.body)
                                 .accessibilityLabel(HistoryPresentation().fullDate(rowDate))

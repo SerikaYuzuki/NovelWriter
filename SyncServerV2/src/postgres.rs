@@ -575,6 +575,9 @@ impl Repository {
         sqlx::query("SELECT request_id,delete_after FROM auth_v1.account_deletions LIMIT 0")
             .execute(&mut *connection)
             .await?;
+        sqlx::query("SELECT device_label FROM sync_v2.history LIMIT 0")
+            .execute(&mut *connection)
+            .await?;
         let indexes: i64 = sqlx::query_scalar("SELECT count(*) FROM pg_index WHERE indexrelid IN (to_regclass('sync_v2.account_objects_object_id'),to_regclass('sync_v2.snapshot_entries_account_object')) AND indisvalid")
             .fetch_one(&mut *connection).await?;
         if indexes != 2 {
@@ -2193,6 +2196,15 @@ impl Repository {
         p: &AuthenticatedPrincipal,
         cmd: &SealedCommand,
     ) -> SyncResult<(i32, Vec<u8>)> {
+        self.command_with_device_label(p, cmd, None).await
+    }
+
+    pub async fn command_with_device_label(
+        &self,
+        p: &AuthenticatedPrincipal,
+        cmd: &SealedCommand,
+        device_label: Option<&str>,
+    ) -> SyncResult<(i32, Vec<u8>)> {
         if p.protocol_epoch != self.protocol_epoch
             || p.server_instance_id != self.server_instance_id
         {
@@ -2200,7 +2212,9 @@ impl Repository {
         }
         let mut tx = self.pool.begin().await?;
         self.scope(&mut tx, p).await?;
-        let result = self.command_in_transaction(&mut tx, p, cmd).await?;
+        let result = self
+            .command_in_transaction(&mut tx, p, cmd, device_label)
+            .await?;
         tx.commit().await?;
         Ok(result)
     }
@@ -2210,6 +2224,7 @@ impl Repository {
         tx: &mut Transaction<'_, Postgres>,
         p: &AuthenticatedPrincipal,
         cmd: &SealedCommand,
+        device_label: Option<&str>,
     ) -> SyncResult<(i32, Vec<u8>)> {
         if cmd.kind == CommandKind::CreateWork {
             let lock_key = create_work_lock_key(&p.account_id, cmd.work_id);
@@ -2250,11 +2265,11 @@ impl Repository {
             CommandKind::PrepareObject => self.prepare_object(tx, p, cmd).await?,
             CommandKind::FinalizeObject => self.finalize_object(tx, p, cmd).await?,
             CommandKind::RegisterSnapshot => self.register_snapshot(tx, p, cmd).await?,
-            CommandKind::Publish => self.publish(tx, p, cmd).await?,
+            CommandKind::Publish => self.publish(tx, p, cmd, device_label).await?,
             CommandKind::ResolveDevice | CommandKind::ResolveServer | CommandKind::CloneWork => {
-                self.resolve(tx, p, cmd).await?
+                self.resolve(tx, p, cmd, device_label).await?
             }
-            CommandKind::Restore => self.restore(tx, p, cmd).await?,
+            CommandKind::Restore => self.restore(tx, p, cmd, device_label).await?,
         };
         self.verify_read_back(tx, p, cmd, status, &response).await?;
         self.complete(tx, p, cmd, status, &response).await?;
@@ -2726,6 +2741,7 @@ impl Repository {
         tx: &mut Transaction<'a, Postgres>,
         p: &AuthenticatedPrincipal,
         c: &SealedCommand,
+        device_label: Option<&str>,
     ) -> SyncResult<(i32, Vec<u8>)> {
         let payload = &c.value["payload"];
         let candidate =
@@ -3029,8 +3045,8 @@ impl Repository {
                 .execute(&mut **tx)
                 .await?;
                 let occurrence = Uuid::new_v4();
-                sqlx::query("INSERT INTO sync_v2.history(account_id,occurrence_id,work_id,snapshot_id,reason,pinned,created_at) VALUES($1,$2,$3,$4,'publish',true,now())")
-                    .bind(&p.account_id).bind(occurrence).bind(c.work_id).bind(candidate.as_slice()).execute(&mut **tx).await?;
+                sqlx::query("INSERT INTO sync_v2.history(account_id,occurrence_id,work_id,snapshot_id,reason,pinned,created_at,device_label) VALUES($1,$2,$3,$4,'publish',true,now(),$5)")
+                    .bind(&p.account_id).bind(occurrence).bind(c.work_id).bind(candidate.as_slice()).bind(device_label).execute(&mut **tx).await?;
                 self.append_catalog_event(tx, p, c.work_id, next, candidate.as_slice())
                     .await?;
                 sqlx::query("INSERT INTO sync_v2.head_events(account_id,work_id,generation,snapshot_id,command_id,command_work_id,command_kind,command_scope,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,'sameWork',now())")
@@ -3112,8 +3128,8 @@ impl Repository {
         let next = generation.unwrap_or(0) + 1;
         sqlx::query("UPDATE sync_v2.works SET head_snapshot_id=$3,head_generation=$4 WHERE account_id=$1 AND work_id=$2").bind(&p.account_id).bind(c.work_id).bind(candidate.as_slice()).bind(next).execute(&mut **tx).await?;
         let occurrence = Uuid::new_v4();
-        sqlx::query("INSERT INTO sync_v2.history(account_id,occurrence_id,work_id,snapshot_id,reason,pinned,created_at) VALUES($1,$2,$3,$4,'publish',true,now())")
-            .bind(&p.account_id).bind(occurrence).bind(c.work_id).bind(candidate.as_slice()).execute(&mut **tx).await?;
+        sqlx::query("INSERT INTO sync_v2.history(account_id,occurrence_id,work_id,snapshot_id,reason,pinned,created_at,device_label) VALUES($1,$2,$3,$4,'publish',true,now(),$5)")
+            .bind(&p.account_id).bind(occurrence).bind(c.work_id).bind(candidate.as_slice()).bind(device_label).execute(&mut **tx).await?;
         self.append_catalog_event(tx, p, c.work_id, next, candidate.as_slice())
             .await?;
         sqlx::query("INSERT INTO sync_v2.head_events(account_id,work_id,generation,snapshot_id,command_id,command_work_id,command_kind,command_scope,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,'sameWork',now())").bind(&p.account_id).bind(c.work_id).bind(next).bind(candidate.as_slice()).bind(c.command_id).bind(c.work_id).bind(c.kind.as_str()).execute(&mut **tx).await?;
@@ -3135,6 +3151,7 @@ impl Repository {
         tx: &mut Transaction<'a, Postgres>,
         p: &AuthenticatedPrincipal,
         c: &SealedCommand,
+        device_label: Option<&str>,
     ) -> SyncResult<(i32, Vec<u8>)> {
         let payload = &c.value["payload"];
         let conflict = uuid(payload, "conflictId").map_err(SyncError::SchemaViolation)?;
@@ -3155,7 +3172,9 @@ impl Repository {
             return Err(SyncError::StaleConflictRevision);
         }
         if c.kind == CommandKind::CloneWork {
-            return self.clone_work(tx, p, c, conflict, revision).await;
+            return self
+                .clone_work(tx, p, c, conflict, revision, device_label)
+                .await;
         }
         let candidate_row = sqlx::query("SELECT base_snapshot_id,local_snapshot_id,remote_snapshot_id FROM sync_v2.conflict_candidates WHERE account_id=$1 AND conflict_id=$2 AND revision=$3")
             .bind(&p.account_id).bind(conflict).bind(revision).fetch_one(&mut **tx).await?;
@@ -3233,8 +3252,8 @@ impl Repository {
                 return Err(SyncError::StaleHead);
             }
             let occurrence = Uuid::new_v4();
-            sqlx::query("INSERT INTO sync_v2.history(account_id,occurrence_id,work_id,snapshot_id,reason,pinned,created_at) VALUES($1,$2,$3,$4,'preAdoptionLocal',true,now())")
-                .bind(&p.account_id).bind(occurrence).bind(c.work_id).bind(expected_current.as_slice()).execute(&mut **tx).await?;
+            sqlx::query("INSERT INTO sync_v2.history(account_id,occurrence_id,work_id,snapshot_id,reason,pinned,created_at,device_label) VALUES($1,$2,$3,$4,'preAdoptionLocal',true,now(),$5)")
+                .bind(&p.account_id).bind(occurrence).bind(c.work_id).bind(expected_current.as_slice()).bind(device_label).execute(&mut **tx).await?;
             sqlx::query("UPDATE sync_v2.active_conflicts SET state='resolved' WHERE account_id=$1 AND conflict_id=$2")
                 .bind(&p.account_id).bind(conflict).execute(&mut **tx).await?;
             sqlx::query("INSERT INTO sync_v2.conflict_events(account_id,conflict_id,revision,event_kind,canonical_event,created_at) VALUES($1,$2,$3,'resolved',$4,now())")
@@ -3306,7 +3325,7 @@ impl Repository {
         let next = generation + 1;
         sqlx::query("UPDATE sync_v2.works SET head_snapshot_id=$3,head_generation=$4 WHERE account_id=$1 AND work_id=$2").bind(&p.account_id).bind(c.work_id).bind(chosen.as_slice()).bind(next).execute(&mut **tx).await?;
         let occurrence = Uuid::new_v4();
-        sqlx::query("INSERT INTO sync_v2.history(account_id,occurrence_id,work_id,snapshot_id,reason,pinned,created_at) VALUES($1,$2,$3,$4,'conflictResolution',true,now())").bind(&p.account_id).bind(occurrence).bind(c.work_id).bind(chosen.as_slice()).execute(&mut **tx).await?;
+        sqlx::query("INSERT INTO sync_v2.history(account_id,occurrence_id,work_id,snapshot_id,reason,pinned,created_at,device_label) VALUES($1,$2,$3,$4,'conflictResolution',true,now(),$5)").bind(&p.account_id).bind(occurrence).bind(c.work_id).bind(chosen.as_slice()).bind(device_label).execute(&mut **tx).await?;
         sqlx::query("INSERT INTO sync_v2.head_events(account_id,work_id,generation,snapshot_id,command_id,command_work_id,command_kind,command_scope,created_at) VALUES($1,$2,$3,$4,$5,$2,$6,'sameWork',now())").bind(&p.account_id).bind(c.work_id).bind(next).bind(chosen.as_slice()).bind(c.command_id).bind(c.kind.as_str()).execute(&mut **tx).await?;
         self.append_catalog_event(tx, p, c.work_id, next, chosen.as_slice())
             .await?;
@@ -3335,6 +3354,7 @@ impl Repository {
         c: &SealedCommand,
         conflict: Uuid,
         revision: i64,
+        device_label: Option<&str>,
     ) -> SyncResult<(i32, Vec<u8>)> {
         let payload = &c.value["payload"];
         let new_work = uuid(payload, "newWorkId").map_err(SyncError::SchemaViolation)?;
@@ -3471,7 +3491,7 @@ impl Repository {
         }
         let original_occurrence = Uuid::new_v4();
         let clone_occurrence = Uuid::new_v4();
-        sqlx::query("INSERT INTO sync_v2.history(account_id,occurrence_id,work_id,snapshot_id,reason,pinned,created_at) VALUES($1,$2,$3,$4,'conflictResolution',true,now()),($1,$5,$6,$7,'keepBothCloneRoot',true,now())").bind(&p.account_id).bind(original_occurrence).bind(c.work_id).bind(source_snapshot.as_slice()).bind(clone_occurrence).bind(new_work).bind(root_id.as_slice()).execute(&mut **tx).await?;
+        sqlx::query("INSERT INTO sync_v2.history(account_id,occurrence_id,work_id,snapshot_id,reason,pinned,created_at,device_label) VALUES($1,$2,$3,$4,'conflictResolution',true,now(),$8),($1,$5,$6,$7,'keepBothCloneRoot',true,now(),$8)").bind(&p.account_id).bind(original_occurrence).bind(c.work_id).bind(source_snapshot.as_slice()).bind(clone_occurrence).bind(new_work).bind(root_id.as_slice()).bind(device_label).execute(&mut **tx).await?;
         sqlx::query("INSERT INTO sync_v2.head_events(account_id,work_id,generation,snapshot_id,command_id,command_work_id,command_kind,command_scope,created_at) VALUES($1,$2,1,$3,$4,$5,'cloneWork','cloneNewWork',now())").bind(&p.account_id).bind(new_work).bind(root_id.as_slice()).bind(c.command_id).bind(c.work_id).execute(&mut **tx).await?;
         self.append_catalog_event(tx, p, new_work, 1, root_id.as_slice())
             .await?;
@@ -3500,6 +3520,7 @@ impl Repository {
         tx: &mut Transaction<'a, Postgres>,
         p: &AuthenticatedPrincipal,
         c: &SealedCommand,
+        device_label: Option<&str>,
     ) -> SyncResult<(i32, Vec<u8>)> {
         let payload = &c.value["payload"];
         let selected =
@@ -3574,7 +3595,7 @@ impl Repository {
         let next = generation + 1;
         sqlx::query("UPDATE sync_v2.works SET head_snapshot_id=$3,head_generation=$4 WHERE account_id=$1 AND work_id=$2").bind(&p.account_id).bind(c.work_id).bind(new_id.as_slice()).bind(next).execute(&mut **tx).await?;
         let occurrence = Uuid::new_v4();
-        sqlx::query("INSERT INTO sync_v2.history(account_id,occurrence_id,work_id,snapshot_id,reason,pinned,created_at) VALUES($1,$2,$3,$4,'restoreBefore',true,now())").bind(&p.account_id).bind(occurrence).bind(c.work_id).bind(current.as_slice()).execute(&mut **tx).await?;
+        sqlx::query("INSERT INTO sync_v2.history(account_id,occurrence_id,work_id,snapshot_id,reason,pinned,created_at,device_label) VALUES($1,$2,$3,$4,'restoreBefore',true,now(),$5)").bind(&p.account_id).bind(occurrence).bind(c.work_id).bind(current.as_slice()).bind(device_label).execute(&mut **tx).await?;
         sqlx::query("INSERT INTO sync_v2.restore_receipts(account_id,command_id,work_id,selected_snapshot_id,pre_restore_snapshot_id,result_snapshot_id) VALUES($1,$2,$3,$4,$5,$6)").bind(&p.account_id).bind(c.command_id).bind(c.work_id).bind(selected.as_slice()).bind(current.as_slice()).bind(new_id.as_slice()).execute(&mut **tx).await?;
         sqlx::query("INSERT INTO sync_v2.head_events(account_id,work_id,generation,snapshot_id,command_id,command_work_id,command_kind,command_scope,created_at) VALUES($1,$2,$3,$4,$5,$2,'restore','sameWork',now())").bind(&p.account_id).bind(c.work_id).bind(next).bind(new_id.as_slice()).bind(c.command_id).execute(&mut **tx).await?;
         self.append_catalog_event(tx, p, c.work_id, next, new_id.as_slice())

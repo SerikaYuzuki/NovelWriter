@@ -8,10 +8,10 @@ struct ConflictSheet: View {
     let application: SyncV2Application
     let workID: WorkID
     let conflict: SyncV2ConflictProjection
-    let deviceLabel: String
-    var serverLabel = "サーバー"
     let choose: @MainActor (SyncV2ConflictChoice) async -> Bool
     let cancel: () -> Void
+    @AppStorage private var deviceOverride: String
+    @State private var remoteDeviceLabel: String?
     @State private var loadedConflict: SyncV2ConflictProjection?
     @State private var deviceDifference: SnapshotDifference?
     @State private var serverDifference: SnapshotDifference?
@@ -24,6 +24,24 @@ struct ConflictSheet: View {
     @State private var capturesReductionConfirmation = false
     #endif
     @State private var preview: SyncV2ConflictChoice?
+
+    init(application: SyncV2Application, workID: WorkID, conflict: SyncV2ConflictProjection, defaults: UserDefaults,
+         choose: @escaping @MainActor (SyncV2ConflictChoice) async -> Bool, cancel: @escaping () -> Void) {
+        self.application = application
+        self.workID = workID
+        self.conflict = conflict
+        self.choose = choose
+        self.cancel = cancel
+        _deviceOverride = AppStorage(wrappedValue: "", DeviceLabel.defaultsKey, store: defaults)
+    }
+
+    private var deviceLabel: String {
+        DeviceLabel.current(deviceOverride, defaultLabel: DeviceLabelSettings.defaultLabel)
+    }
+
+    private var serverLabel: String {
+        DeviceLabel.validated(remoteDeviceLabel ?? conflict.remoteDeviceLabel) ?? DeviceLabel.unknown
+    }
 
     var body: some View {
         ScrollView {
@@ -128,6 +146,7 @@ struct ConflictSheet: View {
         confirmation = nil
         preview = nil
         failed = false
+        remoteDeviceLabel = nil
         do {
             let device = try await application.snapshotDifference(workID: workID, before: conflict.remoteSnapshotID, after: conflict.localSnapshotID)
             let server = try await application.snapshotDifference(workID: workID, before: conflict.localSnapshotID, after: conflict.remoteSnapshotID)
@@ -145,6 +164,13 @@ struct ConflictSheet: View {
             guard !Task.isCancelled else { return }
             deviceDate = localDate
             serverDate = remoteDate
+            // Device labels are an opt-in remote read; the sheet stays usable
+            // with the local projection when the server is unreachable.
+            if let remote = try? await application.remoteConflict(workID: workID), !Task.isCancelled,
+               remote.conflictID == conflict.conflictID, remote.revision == conflict.revision,
+               remote.localSnapshotID == conflict.localSnapshotID, remote.remoteSnapshotID == conflict.remoteSnapshotID {
+                remoteDeviceLabel = remote.remoteDeviceLabel
+            }
         } catch {
             guard !Task.isCancelled else { return }
             failed = true

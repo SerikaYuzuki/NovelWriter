@@ -212,6 +212,7 @@ actor ProductionSyncV2RemoteClient: SyncV2RemoteClient {
     let session: URLSession
     let snapshotCache: (any SnapshotCache)?
     let backfillPersistence: (any HistoryBackfillPersistence)?
+    let deviceLabel: DeviceLabelProvider
     let mediaType = "application/vnd.fuminiwa.sync.v2+jcs"
 
     init(
@@ -222,8 +223,10 @@ actor ProductionSyncV2RemoteClient: SyncV2RemoteClient {
         session: URLSession? = nil,
         sessionProvider: (any SyncV2SessionProvider)? = nil,
         snapshotCache: (any SnapshotCache)? = nil,
-        backfillPersistence: (any HistoryBackfillPersistence)? = nil
+        backfillPersistence: (any HistoryBackfillPersistence)? = nil,
+        deviceLabel: @escaping DeviceLabelProvider = { nil }
     ) {
+        self.deviceLabel = deviceLabel
         self.origin = origin
         self.snapshotCache = snapshotCache
         self.backfillPersistence = backfillPersistence

@@ -641,7 +641,9 @@ async fn upgrade_review_20260913(pool: &PgPool, server_instance_id: &str) -> Res
     let retention: Vec<_> = (1..=8).map(|version| (version, true)).collect();
     let browser: Vec<_> = (1..=10).map(|version| (version, true)).collect();
     let indexes: Vec<_> = (1..=11).map(|version| (version, true)).collect();
-    if versions != browser
+    let labels: Vec<_> = (1..=12).map(|version| (version, true)).collect();
+    if versions != labels
+        && versions != browser
         && versions != indexes
         && versions != previous
         && versions != intermediate
@@ -655,6 +657,6 @@ async fn upgrade_review_20260913(pool: &PgPool, server_instance_id: &str) -> Res
     // checked-in migration; unknown/changed history fails closed.
     sqlx::migrate!("./migrations").run(pool).await?;
     Repository::apply_runtime_grants(pool, RUNTIME_ROLE).await?;
-    println!("Known v2 schema migrations through 0011 applied and recorded");
+    println!("Known v2 schema migrations through 0012 applied and recorded");
     Ok(())
 }

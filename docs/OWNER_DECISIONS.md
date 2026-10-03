@@ -37,3 +37,5 @@
 予約・取消の画面、通知route差分、CA export修正、Windowsの要件内toolchain選定は実装上の残件であり、決定済みの30日・1年・Windows 11を再承認する必要はない。認証providerの追加とMac配布方針は[Mac DMG配布](MAC_DMG_DISTRIBUTION.md)に記す。公開対象や料金、既定UI、原稿保全方針を変える場合は、その変更に必要な判断だけを提示する。
 
 現行実装は[CODE_HEALTH](CODE_HEALTH.md)、採択済みの設計は[DECISIONS](DECISIONS.md)。
+
+- 2026-10-04 承認済み: 保存した端末名は公開ごとに表示し、既定iPhone／iPad／Mac、端末内で変更可、値なしは「別の端末」。

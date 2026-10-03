@@ -111,3 +111,11 @@ objects and must not populate `total_snapshots`. Page commits and terminal state
 changes notify observers. Validation details are a fixed user-facing explanation,
 never a raw error, URL, database path, or ID. Status transitions and readiness to
 restore are announced without moving focus or blocking editing.
+
+## 保存した端末名
+
+履歴のremote行はoccurrenceのdeviceLabel、欠落・NULLは「別の端末」。この端末のlocal行は現在の設定名。
+両OSの競合表示はこの端末の現在名と、相手版のremoteDeviceLabel（値なしは「別の端末」）を併記する。
+設定はUserDefaultsの`fuminiwa.deviceLabel`に端末内だけで保存し、空欄の既定はiPhone／iPad／Mac。
+Macのコンピュータ名を使わない。入力はNFC後40 Unicode scalarまで、制御文字と改行を除く。
+設定値はアプリからNovelKitへproviderで注入し、NovelKitはUserDefaultsを読まない。
