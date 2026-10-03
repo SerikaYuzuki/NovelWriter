@@ -13,6 +13,14 @@ async fn explicit_grace_cancel_restart_and_scoped_erasure() {
     };
     let ctx = support::run_repository_scenarios(&url).await.unwrap();
     let pool = &ctx.repo.pool;
+    let labelled: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM sync_v2.history WHERE account_id=$1 AND device_label IS NOT NULL",
+    )
+    .bind(&ctx.account_a.account_id)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert!(labelled > 0);
     let account = &ctx.account_a.account_id;
     for id in [account, &ctx.account_b.account_id] {
         sqlx::query("INSERT INTO auth_v1.accounts(account_id,tenant_id,state,auth_epoch,fence) VALUES($1,$2,'active',1,$3)")
@@ -140,6 +148,13 @@ async fn explicit_grace_cancel_restart_and_scoped_erasure() {
             .await
             .unwrap();
     assert_eq!(own_ai, 0);
+    let labels: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM sync_v2.history WHERE account_id=$1")
+            .bind(account)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    assert_eq!(labels, 0);
     assert_eq!(other_ai, 1);
     let after: i64 = sqlx::query_scalar("SELECT count(*) FROM sync_v2.works WHERE account_id=$1")
         .bind(&ctx.account_b.account_id)

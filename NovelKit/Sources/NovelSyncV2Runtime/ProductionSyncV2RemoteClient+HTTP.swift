@@ -40,6 +40,9 @@ extension ProductionSyncV2RemoteClient {
         request.httpMethod = "POST"
         request.httpBody = command.canonicalBytes
         addHeaders(&request, session: session, binding: command.binding)
+        if [.publish, .resolveDevice, .resolveServer, .cloneWork, .restore].contains(command.kind) {
+            await request.setValue(DeviceLabel.header(deviceLabel()), forHTTPHeaderField: "Fuminiwa-Device-Label")
+        }
         let (data, response) = try await requestData(request, session: session)
         if (response as? HTTPURLResponse)?.statusCode == 404 {
             try await rejectKnownRemoteDeletion(workID: remoteClientWorkID(for: command))
@@ -50,7 +53,8 @@ extension ProductionSyncV2RemoteClient {
 
     func getJSON(
         path: String,
-        query: [URLQueryItem]
+        query: [URLQueryItem],
+        includesDeviceLabel: Bool = false
     ) async throws -> [String: Any] {
         let sessionValue = try await loadSession()
         var components = URLComponents(
@@ -70,7 +74,19 @@ extension ProductionSyncV2RemoteClient {
             serverInstanceId: sessionValue.serverInstanceID.uuidString.lowercased()
         )
         addHeaders(&request, session: sessionValue, binding: binding)
-        let (data, response) = try await requestData(request, session: sessionValue)
+        if includesDeviceLabel {
+            var optIn = components
+            optIn?.queryItems = query + [URLQueryItem(name: "include", value: "deviceLabel")]
+            guard let url = optIn?.url else { throw SyncV2Failure.fatal(.unexpected) }
+            request.url = url
+        }
+        var (data, response, _) = try await requestDataWithSession(request, session: sessionValue)
+        try Self.validateTransportStatus(response)
+        if includesDeviceLabel, let http = response as? HTTPURLResponse,
+           [400, 404, 405, 422].contains(http.statusCode) {
+            request.url = url
+            (data, response, _) = try await requestDataWithSession(request, session: sessionValue)
+        }
         let contentType = httpContentType(response)
         guard let http = response as? HTTPURLResponse,
               http.statusCode == 200,

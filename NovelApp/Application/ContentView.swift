@@ -15,7 +15,7 @@ struct ContentView: View {
         rootContent
             .sheet(isPresented: $showingConflict) {
                 if let selection = appState.snapshotSyncV2ConflictSelection {
-                    ConflictSheet { choice in
+                    ConflictSheet(selection: selection, application: appState.snapshotSyncV2Application, defaults: appState.userDefaults) { choice in
                         Task {
                             if await appState.resolveSnapshotConflict(using: choice, selection: selection) {
                                 showingConflict = false
@@ -103,6 +103,9 @@ private struct RecoveryPane: View {
 }
 
 struct ConflictSheet: View {
+    let selection: SnapshotSyncV2ConflictSelection
+    let application: SyncV2Application?
+    let defaults: UserDefaults
     let choose: (SyncV2ConflictChoice) -> Void
     let cancel: () -> Void
 
@@ -112,6 +115,8 @@ struct ConflictSheet: View {
                 .font(.title2.weight(.semibold))
             Text("この端末の版とサーバーの版が分かれています。選択中の入力は先に端末へ保存されます。")
                 .foregroundStyle(.secondary)
+            ConflictDeviceLabels(conflict: selection.conflict, application: application, workID: selection.workID, defaults: defaults)
+                .id(selection)
             VStack(alignment: .leading, spacing: 8) {
                 choiceRow("この端末の版を使う", symbol: "internaldrive", description: "この端末の変更をサーバーへ送ります。", choice: .useDevice)
                 choiceRow("サーバーの版を使う", symbol: "arrow.down.circle", description: "サーバーで確認済みの版を、この端末へ適用します。", choice: .useServer)

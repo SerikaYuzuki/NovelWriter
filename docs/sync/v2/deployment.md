@@ -147,14 +147,14 @@ Retain the previous image/container and backup before replacing the API.
 The old runtime cannot attest the added schema and must not be restarted
 against version 5 without an explicitly reviewed rollback.
 
-## Exact role-split v2 upgrade: known migrations (0006–0011)
+## Exact role-split v2 upgrade: known migrations (0006–0012)
 
 The explicit `sync_v2_migrator --upgrade-server-fixes-20261001` path (the older
 `--upgrade-review-20260913` flag remains an alias) accepts only an
 attested role-split database with the checked-in migration checksums and a
-complete history through version 5, 6, 7, 8, 9, 10 or 11. Under the existing deployment lock,
+complete history through version 5, 6, 7, 8, 9, 10, 11 or 12. Under the existing deployment lock,
 SQLx applies only the remaining migrations. Ordinary startup does not upgrade.
-The current runtime requires account deletion (0008), independent AI records/recovery receipts (0009), browser auth (0010), and the reference indexes (0011), and refuses an older database. Runtime privileges remain DML-only.
+The current runtime requires account deletion (0008), independent AI records/recovery receipts (0009), browser auth (0010), and the reference indexes (0011), occurrence device labels (0012), and refuses an older database. Runtime privileges remain DML-only.
 
 0006 adds the verified Apple authentication watermark and durable provider
 validation state. A verified login supersedes pending validation across all
@@ -255,3 +255,12 @@ checks URLSession's gzip negotiation, and compares returned bytes and SHA-256
 with the uncompressed fixture. This is a client transport smoke test, not a
 Caddy deployment or device-acceptance gate. Restricted sandboxes which deny
 local socket bind cannot execute the transport portion of this test.
+
+### 0012: history occurrenceの端末名
+
+`history.device_label text NULL`とNFC後scalar数に対応する`char_length BETWEEN 1 AND 40` CHECKを追加する。
+既存historyはNULL、snapshotsとcanonical列は変えない。サーバーを先行し、API writerを止めてbackupを
+隔離DBへ復元・検証後、既存の明示migrator upgradeで0012まで反映し、runtimeの起動・旧応答・opt-inを
+確認してwriterを再開する。その後新clientを配布する。旧clientはヘッダなし／opt-inなしで継続できる。
+旧serverも未知ヘッダを無視し、opt-in拒否時は新clientが旧読取へ戻る。ロールバックは追加列を残して
+旧server imageへ戻す（既存データを落とすdown migrationは行わない）。本変更では本番へ接続・反映していない。

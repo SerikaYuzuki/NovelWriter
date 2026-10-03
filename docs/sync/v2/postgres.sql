@@ -422,3 +422,9 @@ CREATE INDEX snapshot_history_cursor ON sync_v2.history(account_id, work_id, eve
 -- Reference lookups for blob GC and account-scoped object reads.
 CREATE INDEX account_objects_object_id ON sync_v2.account_objects(object_id);
 CREATE INDEX snapshot_entries_account_object ON sync_v2.snapshot_entries(account_id, object_id);
+
+-- Presentation metadata belongs to a history occurrence, never a snapshot.
+ALTER TABLE sync_v2.history ADD COLUMN device_label text NULL
+  CONSTRAINT history_device_label_length CHECK (
+    device_label IS NULL OR char_length(device_label) BETWEEN 1 AND 40
+  );

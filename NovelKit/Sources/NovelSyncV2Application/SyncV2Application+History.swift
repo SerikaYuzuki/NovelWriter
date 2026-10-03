@@ -120,7 +120,8 @@ private func projectHistoryPage(
                 createdAt: entry.createdAt,
                 source: entry.source,
                 localAvailability: localAvailability,
-                onlineAvailability: onlineAvailability
+                onlineAvailability: onlineAvailability,
+                deviceLabel: entry.deviceLabel
             )
         )
     }
@@ -145,6 +146,7 @@ private struct HistoryCursor: Codable {
         let localGeneration: Int64?
         let createdAt: Date
         let source: SyncV2HistorySource
+        let deviceLabel: String?
 
         init(_ item: SyncV2LocalHistoryOccurrence) {
             occurrenceID = item.occurrenceID
@@ -154,6 +156,7 @@ private struct HistoryCursor: Codable {
             localGeneration = item.localGeneration
             createdAt = item.createdAt
             source = .local
+            deviceLabel = nil
         }
 
         init(_ item: SyncV2RemoteHistoryEntry) {
@@ -164,6 +167,7 @@ private struct HistoryCursor: Codable {
             localGeneration = nil
             createdAt = item.createdAt
             source = .remote
+            deviceLabel = item.deviceLabel
         }
 
         static func order(_ lhs: Entry, before rhs: Entry) -> Bool {

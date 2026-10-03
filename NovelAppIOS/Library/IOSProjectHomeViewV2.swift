@@ -55,6 +55,10 @@ struct IOSProjectHomeView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         if let displayedSelection = store.snapshotSyncV2DisplayedConflictSelection {
+                            ConflictDeviceLabels(conflict: displayedSelection.conflict, application: store.snapshotSyncV2Application,
+                                                 workID: displayedSelection.workID, defaults: store.userDefaults)
+                                .id(displayedSelection.session)
+                                .id(displayedSelection.accountScope)
                             ForEach([
                                 SyncV2ConflictChoice.useDevice,
                                 .useServer,

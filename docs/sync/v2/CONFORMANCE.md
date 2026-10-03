@@ -114,3 +114,5 @@ by its pre-existing DDL builder. It remains fail-closed; tests do not claim that
 unsupported historical schema migrated. Other reproducible legacy candidates,
 the pre-deletion base, deletion tail, fresh schema and tampering are exercised.
 See [verification record](shallow-history-verification.md) for actual runs.
+
+端末名: canonical fixtureは変更しない。Rust integration gateで全history書込経路・opt-inなしbytes・cursor・再送・復旧・作品実消去を確認し、account deletion gateでラベル付きhistoryのscope付き実消去を確認する。SwiftのDeviceLabelTestsと両OS app testsで入力・注入・HTTPヘッダ対象・旧server fallback・表示モデルを確認する。

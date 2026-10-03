@@ -532,7 +532,7 @@ private struct SnapshotHistorySheet: View {
                                 application: application, workID: workID, snapshotID: entry.snapshotID,
                                 rowDate: entry.createdAt,
                                 rowKind: HistoryPresentation().subtitle(entry),
-                                historyItem: entry,
+                                historyItem: entry, userDefaults: appState.userDefaults,
                                 announcesStatus: newest
                             ) {
                                 guard appState.documentSessionToken == session,
@@ -545,7 +545,7 @@ private struct SnapshotHistorySheet: View {
                             .listRowSeparator(.hidden)
                             .listRowBackground(Color.clear)
                         } else {
-                            SnapshotHistoryLabel(item: entry)
+                            SnapshotHistoryLabel(item: entry, userDefaults: appState.userDefaults)
                                 .surfaceCard()
                                 .listRowSeparator(.hidden)
                                 .listRowBackground(Color.clear)

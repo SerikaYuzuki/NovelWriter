@@ -359,3 +359,5 @@ macOS and iOS use the projection and Japanese labels in
 [`ui-state.md`](sync/v2/ui-state.md). In particular, an explicit sync with no
 pending work returns successful `noChanges`/`同期済み`; it is never rendered as
 同期失敗. Local durability and remote progress remain separate indicators.
+
+保存した端末名は公開ごとの任意metadata（HTTPヘッダ送信・history/conflict読取のopt-in）として扱い、snapshot／sealed commandのcanonical bytesへ含めない。[wire契約](sync/v2/wire.md#保存した端末名2026-10-04)参照。

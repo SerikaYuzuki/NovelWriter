@@ -28,7 +28,7 @@ struct IOSSnapshotHistoryView: View {
                         HistoryFetchControls(
                             application: application, workID: workID, snapshotID: entry.snapshotID,
                             rowDate: entry.createdAt, rowKind: HistoryPresentation().subtitle(entry),
-                            historyItem: entry,
+                            historyItem: entry, userDefaults: store.userDefaults,
                             announcesStatus: newest
                         ) {
                             guard store.currentDocumentSessionToken == session,
@@ -41,7 +41,7 @@ struct IOSSnapshotHistoryView: View {
                         .listRowInsets(EdgeInsets(top: Spacing.extraSmall, leading: Spacing.outer,
                                                   bottom: Spacing.extraSmall, trailing: Spacing.outer))
                     } else {
-                        SnapshotHistoryLabel(item: entry)
+                        SnapshotHistoryLabel(item: entry, userDefaults: store.userDefaults)
                     }
                 }
                 if store.syncV2HistoryCursor != nil {

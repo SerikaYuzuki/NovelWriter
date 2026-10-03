@@ -138,6 +138,7 @@ paths:
     get:
       operationId: v2ListHistory
       parameters:
+        - { $ref: '#/components/parameters/DeviceLabelInclude' }
         - { $ref: '#/components/parameters/WorkId' }
         - { $ref: '#/components/parameters/ServerInstance' }
         - { $ref: '#/components/parameters/ProtocolEpoch' }
@@ -291,6 +292,7 @@ paths:
     post:
       operationId: v2Publish
       parameters:
+        - { $ref: '#/components/parameters/DeviceLabelHeader' }
         - { $ref: '#/components/parameters/WorkId' }
         - { $ref: '#/components/parameters/ServerInstance' }
         - { $ref: '#/components/parameters/ProtocolEpoch' }
@@ -309,6 +311,7 @@ paths:
     get:
       operationId: v2GetConflict
       parameters:
+        - { $ref: '#/components/parameters/DeviceLabelInclude' }
         - { $ref: '#/components/parameters/WorkId' }
         - { $ref: '#/components/parameters/ServerInstance' }
         - { $ref: '#/components/parameters/ProtocolEpoch' }
@@ -326,6 +329,7 @@ paths:
     post:
       operationId: v2ResolveConflict
       parameters:
+        - { $ref: '#/components/parameters/DeviceLabelHeader' }
         - { $ref: '#/components/parameters/WorkId' }
         - { $ref: '#/components/parameters/ServerInstance' }
         - { $ref: '#/components/parameters/ProtocolEpoch' }
@@ -344,6 +348,7 @@ paths:
     post:
       operationId: v2Restore
       parameters:
+        - { $ref: '#/components/parameters/DeviceLabelHeader' }
         - { $ref: '#/components/parameters/WorkId' }
         - { $ref: '#/components/parameters/ServerInstance' }
         - { $ref: '#/components/parameters/ProtocolEpoch' }
@@ -379,6 +384,16 @@ components:
   securitySchemes:
     bearerAuth: { type: http, scheme: bearer }
   parameters:
+    DeviceLabelInclude:
+      name: include
+      in: query
+      description: Opt in to occurrence device metadata. Omitted responses retain exact legacy bytes and cursors.
+      schema: { type: string, enum: [deviceLabel] }
+    DeviceLabelHeader:
+      name: Fuminiwa-Device-Label
+      in: header
+      description: Optional RFC3986 percent-encoded UTF-8. NFC, 1-40 Unicode scalars, no C0/C1 controls or U+2028/U+2029. Invalid or missing becomes NULL without failing the command. Never canonical or logged.
+      schema: { type: string, maxLength: 4096 }
     ClientVersion: { name: X-Fuminiwa-Client-Version, in: header, required: true, schema: { type: string, minLength: 1, maxLength: 64 } }
     ServerInstance: { name: X-Fuminiwa-Server-Instance, in: header, required: true, schema: { type: string, minLength: 1, maxLength: 128 } }
     ProtocolEpoch: { name: X-Fuminiwa-Protocol-Epoch, in: header, required: true, schema: { type: integer, const: 2 } }
@@ -461,7 +476,18 @@ components:
         pinned: { type: boolean }
         reason: { type: string }
         snapshotId: { $ref: '#/components/schemas/Digest' }
-    HistoryPage:
+    HistoryEntryWithDeviceLabel:
+      type: object
+      additionalProperties: false
+      required: [createdAt, deviceLabel, occurrenceId, pinned, reason, snapshotId]
+      properties:
+        deviceLabel: { type: [string, 'null'], minLength: 1, maxLength: 40 }
+        createdAt: { type: string, format: date-time }
+        occurrenceId: { $ref: '#/components/schemas/UUID' }
+        pinned: { type: boolean }
+        reason: { type: string }
+        snapshotId: { $ref: '#/components/schemas/Digest' }
+    LegacyHistoryPage:
       type: object
       additionalProperties: false
       required: [items, nextCursor, result]
@@ -469,6 +495,18 @@ components:
         items: { type: array, items: { $ref: '#/components/schemas/HistoryEntry' } }
         nextCursor: { type: [string, 'null'] }
         result: { const: noChanges }
+    HistoryPageWithDeviceLabel:
+      type: object
+      additionalProperties: false
+      required: [items, nextCursor, result]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/HistoryEntryWithDeviceLabel' } }
+        nextCursor: { type: [string, 'null'] }
+        result: { const: noChanges }
+    HistoryPage:
+      anyOf:
+        - { $ref: '#/components/schemas/LegacyHistoryPage' }
+        - { $ref: '#/components/schemas/HistoryPageWithDeviceLabel' }
     ManifestResponse:
       type: object
       additionalProperties: false
@@ -663,12 +701,25 @@ components:
         revision: { type: integer, minimum: 1 }
         sourceGeneration: { type: integer, minimum: 1, maximum: 9007199254740991 }
         workId: { $ref: '#/components/schemas/UUID' }
+    ConflictWithDeviceLabel:
+      type: object
+      additionalProperties: false
+      required: [baseSnapshotId, conflictId, localSnapshotId, remoteSnapshotId, revision, sourceGeneration, workId, remoteDeviceLabel]
+      properties:
+        remoteDeviceLabel: { type: [string, 'null'], minLength: 1, maxLength: 40 }
+        baseSnapshotId: { type: [string, 'null'], pattern: '^[0-9a-f]{64}$' }
+        conflictId: { $ref: '#/components/schemas/UUID' }
+        localSnapshotId: { $ref: '#/components/schemas/Digest' }
+        remoteSnapshotId: { $ref: '#/components/schemas/Digest' }
+        revision: { type: integer, minimum: 1 }
+        sourceGeneration: { type: integer, minimum: 1, maximum: 9007199254740991 }
+        workId: { $ref: '#/components/schemas/UUID' }
     ConflictResponse:
       type: object
       additionalProperties: false
       required: [conflict, result]
       properties:
-        conflict: { oneOf: [ { $ref: '#/components/schemas/Conflict' }, { type: 'null' } ] }
+        conflict: { oneOf: [ { $ref: '#/components/schemas/Conflict' }, { $ref: '#/components/schemas/ConflictWithDeviceLabel' }, { type: 'null' } ] }
         result: { const: noChanges }
     ReadBackPredicate:
       type: object
