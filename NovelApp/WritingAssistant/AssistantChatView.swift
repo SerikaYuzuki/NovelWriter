@@ -61,7 +61,6 @@ struct AssistantChatView: View {
     let chapters: [Chapter]
     let currentEpisodeID: EpisodeID?
     @Binding var referenceScope: AssistantScope
-    @Environment(\.scenePhase) private var scenePhase
     @State private var entries: [WritingEnvelope] = []
     @State private var conversationId: UUID?
     @State private var input = ""
@@ -167,23 +166,20 @@ struct AssistantChatView: View {
                     .toolbar { Button("閉じる") { showingPrompts = false } }
             }.frame(minWidth: 350, minHeight: 460)
         }
+        .modifier(WritingSyncVisibility(host: host))
         .task(id: host.contextID) {
             await reload()
             if conversationId == nil, input.isEmpty, requestTask == nil {
                 conversationId = conversations.last?.id
             }
-            while !Task.isCancelled {
-                if scenePhase == .active {
-                    do { try await host.synchronize(); syncNotice = nil; await reload() }
-                    catch {
-                        if !Task.isCancelled {
-                            syncNotice = "会話はこの端末に保存済み。同期は接続できると再試行します。"
-                        }
-                    }
-                }
-                do { try await Task.sleep(for: .seconds(10)) } catch { return }
-            }
         }
+        .onChange(of: host.syncScheduler?.revision) { _, _ in
+            Task { await reload() }
+        }
+        .onChange(of: host.syncScheduler?.failed, initial: true) { _, failed in
+            syncNotice = failed == true ? "会話はこの端末に保存済み。同期は接続できると再試行します。" : nil
+        }
+
         .onChange(of: host.contextID) { _, _ in requestTask?.cancel(); conversationId = nil; entries = []; scope = .advice }
         .onDisappear { requestTask?.cancel() }
     }
@@ -223,7 +219,7 @@ struct AssistantChatView: View {
                 let grant = try requestedScope.grant(capture)
                 let preferences = AssistantPreferences(defaults: defaults)
                 let config = try preferences.configuration(.advice)
-                try? await host.synchronize()
+                try? await host.synchronizeNow()
                 try await WritingPrompts.migrateIfNeeded(host: host, defaults: defaults)
                 let prompt = try await WritingPrompts.effective(host: host, defaults: defaults, purpose: .advice)
                 try Task.checkCancellation()

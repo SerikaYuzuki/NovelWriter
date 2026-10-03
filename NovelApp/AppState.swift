@@ -8,6 +8,7 @@ import NovelSyncV2
 import NovelSyncV2Application
 import NovelSyncV2PortableBridge
 import NovelWritingProgress
+import NovelWritingSupport
 import Observation
 
 enum DocumentSaveState: Equatable {
@@ -95,6 +96,7 @@ typealias DocumentSessionToken = AppDocumentSessionToken
 @Observable
 final class AppState {
     let syncSessionController = SyncSessionController<AppDocumentSessionToken, SnapshotSyncV2AccountScopeToken, Bool>()
+    let writingSyncScheduler = WritingSyncScheduler()
     let writingProgress: WritingProgressTracker
     let writingProgressRoot: URL?
     var document: NovelDocument

@@ -4,6 +4,7 @@ struct AssistantFeedbackList: View {
     let records: [AssistantFeedback]
     @Binding var selection: UUID?
     var usesNavigationLinks = false
+    var writingHost: WritingAssistantHost?
     let delete: (AssistantFeedback) async -> Bool
     @State private var pendingDeletion: AssistantFeedback?
     @State private var deletionFailed = false
@@ -14,7 +15,10 @@ struct AssistantFeedbackList: View {
             ForEach(records) { record in
                 Group {
                     if usesNavigationLinks {
-                        NavigationLink { AssistantFeedbackDetail(record: records.first { $0.id == record.id }) } label: {
+                        NavigationLink {
+                            AssistantFeedbackDetail(record: records.first { $0.id == record.id })
+                                .modifier(WritingSyncVisibility(host: writingHost))
+                        } label: {
                             row(record)
                         }
                     } else {
@@ -105,6 +109,7 @@ struct MacAssistantFeedbackOutline: View {
             await appState.deleteAssistantFeedback(record, session: session, account: account)
         }.id("\(session)-\(account)")
             .workbenchGlassOutlineStyle()
+            .modifier(WritingSyncVisibility(host: appState.writingAssistantHost))
     }
 }
 #endif

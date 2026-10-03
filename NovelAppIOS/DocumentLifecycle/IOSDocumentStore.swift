@@ -8,6 +8,7 @@ import NovelSyncV2Application
 import NovelSyncV2PortableBridge
 import NovelSyncV2Runtime
 import NovelWritingProgress
+import NovelWritingSupport
 import Observation
 
 enum IOSStartupState: Equatable { case loading, library, ready, recovery(message: String) }
@@ -246,6 +247,7 @@ final class IOSDocumentStore {
     static var testRuntimeConfigurations: [URL: TestRuntimeConfiguration] = [:]
     #endif
 
+    let writingSyncScheduler = WritingSyncScheduler()
     let writingProgress: WritingProgressTracker
     var document: NovelDocument
     var documentCreatedAt: Date

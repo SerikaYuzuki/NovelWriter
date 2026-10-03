@@ -28,8 +28,17 @@ struct WritingAssistantHost {
     let synchronize: () async throws -> Void
     let apply: (WritingEdit, WritingGrant) async throws -> Void
     let undo: (UUID) async throws -> Void
+    var syncScheduler: WritingSyncScheduler?
     var editState: (UUID) async throws -> String? = { _ in nil }
     var editOutcome: (WritingEdit) async throws -> String? = { _ in nil }
+
+    func synchronizeNow() async throws {
+        if let syncScheduler {
+            try await syncScheduler.synchronize(contextID: contextID)
+        } else {
+            try await synchronize()
+        }
+    }
 
     func captureWhenReady() async throws -> WritingCapture {
         try await WritingCompositionBoundary.capture(capture)

@@ -67,12 +67,13 @@ struct WritingPromptsView: View {
                 }
             }
         }.formStyle(.grouped).navigationTitle("同期するプロンプト")
+            .modifier(WritingSyncVisibility(host: host))
             .task(id: "\(host.contextID)-\(purpose.id)-\(common)") { await load() }
     }
 
     private func load() async {
         do {
-            try? await host.synchronize()
+            try? await host.synchronizeNow()
             try await WritingPrompts.migrateIfNeeded(host: host, defaults: defaults)
             records = try await host.records(common)
             let latest = WritingPrompts.latest(records, purpose: purpose)
@@ -90,7 +91,7 @@ struct WritingPromptsView: View {
                                            parentId: base, payload: WritingRecord.payload(WritingPrompt(text: text)))
             try await host.append(record); base = record.id
             notice = "この端末に保存しました。接続できると同期します。"
-            do { try await host.synchronize() } catch { return }
+            do { try await host.synchronizeNow() } catch { return }
             records = try await host.records(common)
             if records.first(where: { $0.id == record.id })?.conflicted == true {
                 notice = "別端末の変更と重なりました。両方の案を残しました。内容を確認して保存し直してください。"
