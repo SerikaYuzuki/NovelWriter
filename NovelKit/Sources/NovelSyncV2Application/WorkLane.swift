@@ -4,6 +4,7 @@ import NovelSyncV2
 /// All process-local ownership for one work. Task owners survive cancellation
 /// until their guarded completion, so an old completion cannot clear a new task.
 struct WorkLane {
+    var lastBodyEdit: Date?
     var promotionDeadline: Date?
     var foregroundObservation: SyncV2ForegroundObservation?
     var syncDiagnostic: String?

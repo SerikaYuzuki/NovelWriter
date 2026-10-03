@@ -2,10 +2,37 @@ import Foundation
 import NovelSyncV2
 @testable import NovelSyncV2Application
 @testable import NovelSyncV2Runtime
+import NovelTiming
 import Testing
 
 @Suite("D-103 durable leaf promotion")
 struct LeafPromotionTests {
+    @Test func injectedPromotionIntervals() async throws {
+        let idleFixture = try await LeafRuntimeFixture.make(timing: FuminiwaTiming(promotionIdleSeconds: 4, promotionMaximumSeconds: 9))
+        let idleDocument = try await idleFixture.edit("idle")
+        try await leafEventually { idleFixture.clock.waitingCount == 1 }
+        idleFixture.clock.advance(3)
+        #expect(await idleFixture.configuration.remote.recordedOperations().isEmpty)
+        idleFixture.clock.advance(1)
+        try await idleFixture.assertOnePublication(expected: idleDocument)
+        await idleFixture.close()
+
+        let fixture = try await LeafRuntimeFixture.make(timing: FuminiwaTiming(promotionIdleSeconds: 4, promotionMaximumSeconds: 9))
+        _ = try await fixture.edit("first")
+        try await leafEventually { fixture.clock.waitingCount == 1 }
+        fixture.clock.advance(3)
+        _ = try await fixture.edit("second")
+        try await leafEventually { fixture.clock.waitingCount == 1 }
+        fixture.clock.advance(3)
+        let latest = try await fixture.edit("third")
+        try await leafEventually { fixture.clock.waitingCount == 1 }
+        fixture.clock.advance(2)
+        #expect(await fixture.configuration.remote.recordedOperations().isEmpty)
+        fixture.clock.advance(1)
+        try await fixture.assertOnePublication(expected: latest)
+        await fixture.close()
+    }
+
     @Test("autosaves do not call any remote command; manual and lifecycle saves publish latest only", arguments: [
         SyncV2CheckpointReason.explicit, .navigation, .close, .migration
     ])

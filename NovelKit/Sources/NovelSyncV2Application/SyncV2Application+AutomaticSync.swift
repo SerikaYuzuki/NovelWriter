@@ -16,26 +16,57 @@ public struct SyncV2AutomaticSyncCandidate: Sendable {
 }
 
 public extension SyncV2Application {
-    /// Application-owned cadence: 10 seconds normally, 60 after a read failure.
+    /// Called only after the platform's existing body/session/IME guards accept an edit.
+    func recordBodyEdit(workID: WorkID) {
+        lanes[workID, default: WorkLane()].lastBodyEdit = promotionClock.now()
+    }
+
+    internal func foregroundPollDelay(workID: WorkID, since lastCheck: Date, failed: Bool) -> TimeInterval {
+        let now = promotionClock.now()
+        let typing = lanes[workID]?.lastBodyEdit.map {
+            now.timeIntervalSince($0) < timing.headPollTypingWindowSeconds
+        } ?? false
+        let interval = failed ? timing.headPollFailureSeconds :
+            (typing ? timing.headPollTypingSeconds : timing.headPollNormalSeconds)
+        return max(0, interval - now.timeIntervalSince(lastCheck))
+    }
+
     internal func pollForeground(
         workID: WorkID,
         refresh: @Sendable () async -> Void
     ) async {
+        var lastCheck: Date?
+        var failed = false
         while !Task.isCancelled {
-            var delay: UInt64 = 10_000_000_000
+            if let lastCheck {
+                let remaining = foregroundPollDelay(workID: workID, since: lastCheck, failed: failed)
+                if remaining > 0 {
+                    // Re-evaluate typing while waiting. Returning to idle must not
+                    // leave the remainder of a 120-second sleep outstanding.
+                    var delay = failed ? remaining : min(remaining, timing.headPollNormalSeconds)
+                    if !failed, let edited = lanes[workID]?.lastBodyEdit {
+                        let untilIdle = timing.headPollTypingWindowSeconds - promotionClock.now().timeIntervalSince(edited)
+                        if untilIdle > 0 {
+                            delay = min(delay, untilIdle)
+                        }
+                    }
+                    do { try await automaticSyncSleep(UInt64(delay * 1_000_000_000)) }
+                    catch { return }
+                    continue
+                }
+            }
+            failed = false
             do {
                 _ = try await checkForRemoteUpdates(workID: workID)
             } catch is CancellationError {
                 return
             } catch {
                 // A read failure must not quarantine a command or show a modal.
-                delay = 60_000_000_000
+                failed = true
             }
+            lastCheck = promotionClock.now()
             guard !Task.isCancelled else { return }
             await refresh()
-            do {
-                try await automaticSyncSleep(delay)
-            } catch { return }
         }
     }
 

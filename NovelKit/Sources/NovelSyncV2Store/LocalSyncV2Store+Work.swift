@@ -57,7 +57,7 @@ public extension LocalSyncV2Store {
     /// Promote durable bytes only. This never captures or installs editor text.
     @discardableResult
     func promoteCurrentLeaf(workID: WorkID, scope: V2LocalWorkScope) throws -> Bool {
-        try inTransaction {
+        try inCheckpointNeutralTransaction {
             try workRepository.promoteCurrentLeafTransaction(workID: workID, scope: scope)
         }
     }

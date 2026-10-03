@@ -5,6 +5,7 @@ import NovelAuth
 import NovelAuthApple
 import NovelSyncV2Application
 import NovelSyncV2Runtime
+import NovelTiming
 import SwiftUI
 
 @main
@@ -71,13 +72,15 @@ struct FuminiwaApp: App {
         checkpointOverride: SnapshotSyncV2CheckpointOverride? = nil,
         openOverride: SnapshotSyncV2OpenOverride? = nil
     ) -> AppDependencies {
+        let timing = FuminiwaTiming(defaults: userDefaults)
         var dependencies = AppDependencies(
             userDefaults: userDefaults,
             defaultDocumentDirectoryName: "\(AppBuildFlavor.defaultDocumentDirectoryName)-TestHost",
             editorCommandSession: editorCommandSession,
             snapshotSyncV2Factory: {
-                try await SnapshotSyncV2Runtime.makeApplication(mode: .test(configuration))
-            }
+                try await SnapshotSyncV2Runtime.makeApplication(mode: .test(configuration), timing: timing)
+            },
+            writingProgressRoot: configuration.localRoot.url
         )
         dependencies.snapshotSyncV2CheckpointOverride = checkpointOverride
         dependencies.snapshotSyncV2OpenOverride = openOverride
@@ -136,19 +139,17 @@ struct FuminiwaApp: App {
         let appleSignInCoordinator = AppleSignInCoordinator()
         let orchestrator: AppleAuthenticationOrchestrator? = nil
 
+        let runtimeConfiguration = try? ProductionRuntimeConfiguration(
+            origin: explicitOrigin, vault: authVault, authSessionCoordinator: authCoordinator,
+            documentGate: platformGate, clientVersion: "0.1.0", clientPlatform: .macos
+        )
+        let timing = FuminiwaTiming(defaults: userDefaults)
         let factory: (@Sendable () async throws -> SyncV2Application)? = {
             // The production configuration is typed and always receives the
             // Keychain vault plus the macOS gate. The runtime opens SQLite
             // even when the HTTPS lane is unreachable; it reports offline.
-            let configuration = try ProductionRuntimeConfiguration(
-                origin: explicitOrigin,
-                vault: authVault,
-                authSessionCoordinator: authCoordinator,
-                documentGate: platformGate,
-                clientVersion: "0.1.0",
-                clientPlatform: .macos
-            )
-            return try await SnapshotSyncV2Runtime.makeApplication(mode: .production(configuration))
+            guard let configuration = runtimeConfiguration else { throw SyncV2ApplicationError.invalidRuntimeMode }
+            return try await SnapshotSyncV2Runtime.makeApplication(mode: .production(configuration), timing: timing)
         }
 
         return AppDependencies(
@@ -159,7 +160,8 @@ struct FuminiwaApp: App {
             appleSignInCoordinator: appleSignInCoordinator,
             appleAuthenticationOrchestrator: orchestrator,
             snapshotSyncV2Factory: factory,
-            snapshotSyncV2DocumentGate: platformGate
+            snapshotSyncV2DocumentGate: platformGate,
+            writingProgressRoot: runtimeConfiguration?.localRoot.url
         )
     }
     #endif
@@ -435,6 +437,18 @@ private struct WorkbenchFindCommands: View {
             }
         }
         .keyboardShortcut("f", modifiers: .command)
+
+        Button("作品全体を検索…") {
+            Task { await appState.presentWorkSearch() }
+        }
+        .keyboardShortcut("f", modifiers: [.command, .shift])
+        .disabled(!appState.permitsDocumentInteraction)
+
+        Button("表記をチェック…") {
+            Task { await appState.presentTextCheck() }
+        }
+        .keyboardShortcut("k", modifiers: [.command, .option])
+        .disabled(!appState.permitsDocumentInteraction)
 
         Button("次を検索") {
             guard appState.workspaceSelection.section == .structure else { return }

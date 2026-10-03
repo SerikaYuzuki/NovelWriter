@@ -42,6 +42,7 @@
 | `NovelApp/` | macOSの作品状態、Workbench、入力・OS境界 |
 | `NovelAppIOS/` | iPhone / iPadの作品棚、段階navigation、入力・OS境界 |
 | `NovelKit/Sources/NovelCore/` | 文書・章・話・関連モデルと値型、依存ゼロ |
+| `NovelTiming` | 端末内の起動時時間設定。Foundationのみ。保存・同期のデータには含めない |
 | `NovelSyncV2` | canonical Snapshot・command・scope等の値と契約 |
 | `NovelSyncV2Store` | SQLite transaction、Snapshot / objects、Outbox / Inbox、履歴・競合 |
 | `NovelSyncV2Application` | ローカル操作、同期計画・worker、account transitionの共通窓口 |
@@ -49,6 +50,7 @@
 | `NovelSyncV2PortableBridge` | 検証済みpackageとv2作品の明示Import / Export変換 |
 | `NovelAuth` / `NovelAuthApple` | session / HTTP認証とApple・Keychain境界 |
 | `NovelWritingSupport` / `NovelWritingStore` | AI記録・範囲付き編集の値型と検証 / 本文と独立したSQLite・outbox・Undo journal |
+| `NovelTextAnalysis` | 全話本文の検索・置換、人物の登場、端末内の表記チェック（Foundation / CoreFoundation / NovelCore） |
 | `NovelStorage` / `NovelExport` | package codec / 配布用原稿の生成 |
 | `EditorKit` / `NovelUI` / `PreviewSupport` | 本文エディタ / 共有UI / 固定previewデータ |
 | `SyncServerV2/` | `/v2`同期、`auth_v1`認証、PostgreSQL、運用境界 |
@@ -68,6 +70,10 @@ v2 storeはcurrent state、immutable Snapshotとobjects、head / generation、ac
 `LocalSyncV2Store`だけを公開actorとし、内部の`OutboxRepository`（intent・command・receipt・upload・復旧）、`InboxRepository`（staging・attestation・adoption・shallow/backfill）、`ConflictRepository`（候補・keepBoth・restore）、`AccountRepository`（binding・scope遷移）、`DeletionRepository`（削除intentと順序付きpurge）、`WorkRepository`（work・snapshot・object・履歴・remote対応）へ委譲する。repositoryは同期的なstructで、同じ`SQLiteExecutor`を保持する。個別のactorやconnectionは作らない。
 
 Storeがcheckpoint、install/adopt、publish acknowledgement、account transition、deletion等のtransactionを開始する。repositoryの`...Transaction` / `...InTransaction`と永続化helperはそのtransaction内で呼び、SQLの実行順序を保つ。executorはconnection・statement cache・query/exec/changes・transaction内のobject検証cacheを所有し、ネストは従来どおり拒否する。schemaの移行判断とSQL順序は`Schema.swift`、低水準のCSQLite操作は`SQLiteExecutor.swift` / `SQLiteExecutor+Schema.swift`に置く。
+
+通常保存のscope解決は、同じStore actorが完全検証した現在版、または直前のautosaveでcommitした検証済み版に限り、既存本文・添付・portable resourceの全読込／再hash／全decodeを省く。cacheは本文コピーを持たず、WorkID・account scope・snapshot ID・世代・document anchor・SQLiteの`data_version`と`total_changes()`を照合する。作品openは必ず完全検証し、成功した安定読取は次のautosaveのstampを記録する。読込中の外部書込やcache記帳失敗はstampを捨てるだけで、完全読込に成功したopenを失敗へ変えない。cache missの完全検証も記録するため、resolverとStoreで同じ版を二度検証しない。
+
+本文を変えないと監査したStore内部のoutbox／upload書込とleaf昇格は、書込前のstampが有効で、書込後もcurrent pointer・世代・scope・anchor・`data_version`が同じ時だけ`total_changes()`を更新して引き継ぐ。対象は[CODE_HEALTH](CODE_HEALTH.md#同期onでのcheckpoint-cache)に列挙する。object／snapshot／entries／parentsのimmutability triggerに加え、対象経路は既存entriesへの追加insertやresource変更もしない。未分類transaction、account／作品切替、import・remote install／adoption・復元、世代不一致、close／再open、rollbackは無効化する。別connectionのSQL変更も検知し、書込lock取得後に`data_version`を再確認する。取り込み時の完全検証と新規snapshotの全decode／検証は維持する。cache記帳失敗をCOMMIT後の保存失敗へ変えない。
 
 NovelStorageはpackageの詳細を所有する。Importは外部原本を変えずnew WorkIDへ取り込み、Exportは既存のWorkID / session / binding / Undoを変えない。v2との接続は`NovelSyncV2PortableBridge`を使う。
 
@@ -174,6 +180,34 @@ macOSは[ContentView](../NovelApp/Application/ContentView.swift)から作品選�
 
 現在の両Appは`V2DocumentSaveCoordinator`からv2 checkpointへ委譲する。`Cmd+S`・自動保存・遷移前保存を同じ直列化境界へ集める。document operation gateの内側で保存を待つが、network完了は待たない。gate付きpublic APIを相互に呼んで再入待ちにしない。
 
+通常のautosaveは入力停止2秒のdebounceで一回分だけ保存する。保存中に新しいrevisionが届いた場合は、その入力のdebounceを待つ。timerが保存中に満了した場合は再予約する。`saveNow`とexclusive flushは最新revisionまで直ちにdrainし、IME確定、話／作品切替、終了、background、明示保存／同期・スナップショット保存の境界を保つ。途中のrevisionだけ保存された時はdirty表示を保ち、未保存分があるのにsavedとは通知しない。
+
+保存・promotion・更新確認・送信retry・AI記録同期・進み具合の公開間隔は`NovelTiming.FuminiwaTiming`に集約し、両OSのhost生成時にアプリ側の`FuminiwaTiming+Defaults`でUserDefaultsから読み込み、NovelKitのruntime／schedulerへ値を注入する。NovelKitの時間設定型はUserDefaultsを読まない。変更はアプリ再起動後に反映する。以下のキーはすべて`fuminiwa.timing.`を先頭に付ける。単位は秒。数値は範囲内へclampし、非数値・bool・NaN・無限大は既定値に戻す。retry maximumはinitial以上、promotion maximumはidle以上にする。
+
+| キーの末尾 | 既定値 | 範囲 |
+| --- | ---: | ---: |
+| `autosaveDebounceSeconds` | 2 | 0.25〜60 |
+| `autosavePostSaveWaitSeconds` | 2 | 0.25〜60 |
+| `writingSyncVisibleSeconds` | 10 | 1〜600 |
+| `writingSyncHiddenSeconds` | 300 | 5〜3600 |
+| `writingSyncRetryInitialSeconds` | 20 | 1〜600 |
+| `writingSyncRetryMaximumSeconds` | 600 | 1〜3600（initial以上） |
+| `progressPublishSeconds` | 3 | 0.1〜60 |
+| `promotionIdleSeconds` | 60 | 1〜600 |
+| `promotionMaximumSeconds` | 300 | 1〜3600（idle以上） |
+| `headPollNormalSeconds` | 10 | 1〜600 |
+| `headPollTypingSeconds` | 120 | 1〜3600 |
+| `headPollFailureSeconds` | 60 | 1〜3600 |
+| `headPollTypingWindowSeconds` | 60 | 1〜600 |
+| `sendRetryInitialSeconds` | 2 | 0.25〜60 |
+| `sendRetryMaximumSeconds` | 60 | 0.25〜600（initial以上） |
+
+`autosavePostSaveWaitSeconds`は保存・exclusive操作中にtimerが満了して再予約する待機と、保存完了時に未保存revisionが残りtimerがない場合の待機に使う。入力が予約したtimerは通常のdebounceを使う。即時flushには適用しない。AI記録はinitialから倍増してmaximumで止め、成功でリセットする。進み具合の値はUI公開の間隔で、別DBへの永続化retry間隔ではない。
+
+macOSではアプリを終了し、たとえば`defaults write dev.serikayuzuki.fuminiwa fuminiwa.timing.autosaveDebounceSeconds -float 4`を実行して再起動する。戻す時は`defaults delete dev.serikayuzuki.fuminiwa fuminiwa.timing.autosaveDebounceSeconds`。iOS開発ビルドはXcode SchemeのRun → Arguments Passed On Launchに`-fuminiwa.timing.autosaveDebounceSeconds`と`4`を追加して起動する（NSArgumentDomainの上書き）。外すと端末の保存値／既定値へ戻る。設定UIは追加しない。
+
+前面で開いている作品の更新確認は、最後の本文編集から60秒未満なら120秒間隔、それ以外は10秒間隔、失敗後は60秒間隔にする。待機中も注入時計で入力状態を再判定する。前面復帰と章・話・作品の遷移完了は即時確認を起動するが、遷移は通信を待たない。本文編集以外のメタデータ変更は入力中の期限を延ばさない。promotion／uploadと競合処理は既存の経路を保つ。送信retryはinitialから倍増し、既存の0.75〜1.25倍のjitterを掛け、maximumで止める。
+
 遷移の最終保存からinstallまでWorkbench全体の変更を止め、終了要求後は新しい作品操作を受け付けない（D-041）。
 
 保存失敗時はdirty状態と旧作品を保持し、保存済みと表示しない。保存成功はSQLiteへの耐久化を表し、remote read-backの成功と分ける。
@@ -186,9 +220,43 @@ macOSは[ContentView](../NovelApp/Application/ContentView.swift)から作品選�
 
 Appleログイン、削除予約・取消API、720時間後の削除workerは実装済み。自宅サーバーで日次暗号化backupを1暦年保持する。予約・取消のアプリ画面と別機器への退避は未対応。通常の再認証・session復旧と独自のアカウント回復サービスは区別する。[AUTH](AUTH.md)と[運用](ACCOUNT_RETENTION_OPERATIONS.md)を参照。
 
+### 6.7 執筆の進み具合（端末内）
+
+`NovelWritingProgress`は日別加筆量・純増、継続、目標、区切りの到達を両Appで共有する。加筆量は手入力の本文変更ごとの`max(0, 新字数−旧字数)`の合計、純増は差分の合計。字数は改行を除く既存`ManuscriptMetrics`規則。既存guardを通ったmacOS／iOSの`updateEpisodeContent`だけが計上し、EditorKit内のhookは追加しない。通常Undo／Redoもこの入口を通り、Redoは再加算する。
+
+AI／MCP編集とそのUndo、open／import／remote install／復元、話の追加・削除・移動は計上しない。AIのネイティブ置換から同期的に届くonTextChangeも、App側の呼出区間で集計だけを抑止し、モデル反映・保存は維持する。全体字数の既存超過は日付なしの「以前に到達」とし、手入力で下から跨いだ区切りだけを一度通知する。標準の1万・3万・5万・10万・15万・20万、以後10万ごとと目標値を区切りにする。
+
+集計キーはpayloadのdocument IDではなく作品WorkIDと端末のローカル暦日（0:00区切り）。直前の話別字数を保持し、通常は変更話の新字数だけを数える。本文差し替え時はinstall／synchronizeで更新し、手入力時にキャッシュ本文との不一致を見つけた場合も文書全体の字数を再同期してから差分を計上する。日別値と到達記録はruntimeと同じlocal rootの独立WAL `writing-progress.sqlite`（user_version=1）、目標・任意の締切は`fuminiwa.progress.goal.<workID>`のUserDefaults JSONへ保存する。初回履歴読込は独立Taskで開始し、起動・本文保存・document transitionは完了を待たない。集計flushだけが履歴読込の完了を待ち、読込中の加筆を一度だけ併合する。手入力中は集計を非観測の内部状態へ積み、UIのrecords／totalは約3秒ごと、保存・install・画面表示時にまとめて公開する。同じ公開値は再代入しない。手入力後のdirty通知では全話synchronizeを重複実行せず、AI等の非手入力通知とキャッシュ不一致時には全体再同期を保つ。未計上値がない保存ではflush Taskを作らない。SQLiteは別actorで3秒ごと／保存時にまとめて書き、macOS終了・iOS backgroundでもflushする。失敗はメモリ保持と指数バックオフ（3秒から失敗ごとに倍増、最大180秒）へ閉じ込め、unsupportedVersionでは再試行を停止する。失敗中もUI集計の公開は約3秒以内を保ち、本文保存の成功条件や待機条件にしない。端末外への同期・package出力は行わず、v2 schema／wire／fixtureを増やさない。
+
+継続は書いた日数を数え、完了した未執筆日が2日続くと途切れる。今日の未執筆では途切れず、1日休みは継続する。締切までの日数は今日を含め、必要日量は残り字数を日数で割って切り上げる。
+
+### 6.9 作品全体の検索・置換と人物の登場
+
+検索は章・話の配列順に全話本文だけを対象とし、話名・メモ・人物設定は含めない。FoundationのcaseInsensitiveによるプレーン文字列一致とUTF-16範囲はEditorKit.TextSearchと同じ。前後20書記素の文脈を示す。検索・登場検出は表示中の250ms debounce後にバックグラウンドで計算する。覆われた画面／onDisappear後は計算を止め、結果を保持して古くなった印だけを付け、再表示時に一回更新する。表示中の検索も本文変更では再検索せず、古くなった表示と「再検索」で更新する。query変更は表示中だけ再検索する。古い検索結果での置換操作は無効にし、ジャンプは従来の本文一致判定を通す。session/account変更では古いscopeを拒否する。
+
+置換は一致ごとの除外（既定は全件）と件数確認を経て、document gate内でIME確定→端末保存→明示checkpoint（explicit）→適用→端末保存と進む。明示履歴に保存できなければ本文を変更しない。検索時から対象話の本文が一つでも変わっていたら全体を中止し、再検索を促す。適用前後のWorkID/session/accountを固定し、本文一致はUTF-8 bytesで確認する。置換結果の計算もバックグラウンドで行う。
+
+開いている話はEditorCommandSession.applyProofreadingを通す一回のネイティブ編集としてUndoを保つ。入力停止は明示checkpoint完了まで維持し、同期的な適用区間だけ再開して直後に停止し、全対象話を一回の文書変更として保存する。AI編集のjournal・記録laneへは書かず、withUncountedEditorChangeとdirty時のsynchronizeで進み具合の手入力集計から除外する。
+
+直前の置換一回を戻す一時操作は、置換後の本文と一致する話だけを一回の変更・保存で戻す。後から編集された話は保持し、置換前の履歴からの復元を案内する。作品/session/account切替やアプリ終了をまたいで保持しない。保存失敗では変更本文とdirty状態を保持し、再保存を案内する。
+
+人物の登場は名前と読みを同じ照合規則で検索し、話ごとの回数・最初／最後の話を表示する。重なる名前／読みは一回と数える。既存の名前・読みの照合語は維持し、ジャンプは名前優先から本文内で最初の一致へ変更する（最初の登場位置を選択するため）。人物名の変更は本文へ自動反映せず、人物詳細menuの「本文の名前を置換…」で検索語を入力した検索画面を開く。モデル・同期schemaは追加しない。
+
+### 6.10 表記・記号チェック（端末内）
+
+`NovelTextAnalysis.TextChecker`が記号、組込み辞書・同じ読みの表記ゆれ、登録人物名に似た語を検出する。作品全体／現在の話の不変snapshotを「チェック」時だけ非同期解析し、本文・人物設定・対象・会話文オプション・WorkID/session/account変更で結果を失効する。入力中には実行せず、ネットワークやAIへ本文を送らない。
+
+読みは日本語localeのApple `CFStringTokenizer`のLatin transcriptionを`CFStringTransform`でひらがな化する。`JapaneseTextTokenizing`で差し替え可能。語の分割・読み・同音異義語の精度は保証しない。各表記2件以上、2字以上、漢字を含む組に限定し、助詞・数字・記号を除く。組込み辞書は代表的な活用を含む40組で、同じ組の読み一致は二重報告しない。
+
+記号はルビ・傍点記法の内部を除外する。表記チェックは親字を扱い、ルビの読みと記法delimiterは数えない。会話文（「」『』内）除外は既定OFFで、表記ゆれと人物名だけに適用する。地の文の行頭はIndentRulesの全角字下げと鉤括弧除外を維持する。
+
+結果はルール→章・話順に件数と文脈を示し、第2弾の保存・scope・本文一致確認つきジャンプで指摘範囲を選択する。多数派を正解とは決めず、同数なら置換提案をしない。「置換…」は最少数の表記を検索欄、最多数を置換欄へ入れて既存の作品全体検索を開く。確認・明示履歴・Undoは第2弾へ委ね、この機能には本文の書込操作を持たせない。
+
+指摘単位／表記の組単位の無視と解除は`fuminiwa.textcheck.ignored.<workID>`のUserDefaultsへ端末内保存し、同期しない。個別無視の識別には話ID・位置・文脈を使うため、周辺を編集すると再度指摘される場合がある。
+
 ## 7. 未実装・将来の機能
 
-作品全体検索・置換、人物関係グラフ、時系列ビュー、PDF出力、追加provider SDK、Windows実装は現在の利用可能機能に含めない。追加時に目的と受入条件を定める。UIに未実装placeholderを置いて完成に見せない（D-040）。
+人物関係グラフ、時系列ビュー、PDF出力、追加provider SDK、Windows実装は現在の利用可能機能に含めない。追加時に目的と受入条件を定める。UIに未実装placeholderを置いて完成に見せない（D-040）。
 
 ## 8. 実装ルール
 

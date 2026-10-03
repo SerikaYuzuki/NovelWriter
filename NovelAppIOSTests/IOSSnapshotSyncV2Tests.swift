@@ -91,11 +91,19 @@ struct IOSSnapshotSyncV2Tests {
             workID: originalWorkID
         )
 
+        // Offline is retryable, not an empty outbox. openLocal intentionally wakes pending work;
+        // drain both lanes before measuring whether this clean reopen creates any remote operation.
+        await runtimeConfiguration.remote.setCommandHandler { try acknowledgeCheckpointTestCommand($0) }
+        try await application.resumePending()
+        try await waitForCompletedCheckpointWorker(application, workID: targetWorkID)
+        try await waitForCompletedCheckpointWorker(application, workID: originalWorkID)
+
         let stateBeforeCleanReopen = try #require(await application.uiState(workID: originalWorkID))
         let remoteOperationsBeforeCleanReopen = await runtimeConfiguration.remote.recordedOperations()
         #expect(await store.openSnapshotSyncV2(workID: originalWorkID.rawValue))
         let stateAfterCleanReopen = try #require(await application.uiState(workID: originalWorkID))
         #expect(stateAfterCleanReopen.localDurability == stateBeforeCleanReopen.localDurability)
+        try await waitForCompletedCheckpointWorker(application, workID: originalWorkID)
         let remoteOperationsAfterCleanReopen = await runtimeConfiguration.remote.recordedOperations()
         #expect(remoteOperationsAfterCleanReopen.count == remoteOperationsBeforeCleanReopen.count)
     }

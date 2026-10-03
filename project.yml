@@ -132,6 +132,12 @@ targets:
       - package: NovelKit
         product: NovelWritingSupport
       - package: NovelKit
+        product: NovelTiming
+      - package: NovelKit
+        product: NovelWritingProgress
+      - package: NovelKit
+        product: NovelTextAnalysis
+      - package: NovelKit
         product: NovelStorage
       - package: NovelKit
         product: EditorKit
@@ -206,12 +212,15 @@ targets:
       - path: NovelApp/ConnectivityRecovery.swift
       - path: NovelApp/HistoryFetchControls.swift
       - path: NovelApp/SyncPresentation
+      - path: NovelApp/WorkSearch/Common
+      - path: NovelApp/TextCheck/Common
       - path: NovelApp/WritingAssistant
         excludes:
           - ResizableAssistantLayout.swift
       - path: NovelApp/Features/AssistantFeedback
       - path: NovelApp/ManuscriptCopy.swift
       - path: NovelApp/DocumentLifecycle/DocumentOperationGate.swift
+      - path: NovelApp/DocumentLifecycle/FuminiwaTiming+Defaults.swift
       - path: NovelApp/DocumentLifecycle/V2DocumentSaveCoordinator.swift
       - path: NovelApp/DocumentLifecycle/SyncSessionController.swift
       - path: NovelApp/DocumentLifecycle/SyncSessionController+Deletion.swift
@@ -220,6 +229,12 @@ targets:
         product: NovelCore
       - package: NovelKit
         product: NovelWritingSupport
+      - package: NovelKit
+        product: NovelTiming
+      - package: NovelKit
+        product: NovelWritingProgress
+      - package: NovelKit
+        product: NovelTextAnalysis
       - package: NovelKit
         product: NovelStorage
       - package: NovelKit
@@ -263,9 +278,12 @@ targets:
     platform: iOS
     deploymentTarget: "17.0"
     sources:
+      - path: NovelAppTests/WorkSearchSessionTests.swift
+      - path: NovelAppTests/TextCheckSessionTests.swift
       - path: NovelAppTests/AssistantClientTests.swift
       - path: NovelAppTests/AssistantChatContextTests.swift
       - path: NovelAppTests/AssistantConversationTests.swift
+      - path: NovelAppTests/FuminiwaTimingDefaultsTests.swift
       - path: NovelAppTests/V2DocumentSaveCoordinatorTests.swift
       - path: NovelAppTests/SyncSessionControllerTests.swift
       - path: NovelAppTests/SnapshotHistoryPresentationTests.swift

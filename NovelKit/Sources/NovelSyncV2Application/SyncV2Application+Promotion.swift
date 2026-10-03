@@ -3,8 +3,6 @@ import NovelSyncV2
 
 /// One policy for both Apple applications; tests advance the injected clock.
 package struct SyncV2PromotionClock: Sendable {
-    package static let idleInterval: TimeInterval = 60
-    package static let maximumInterval: TimeInterval = 300
     package let now: @Sendable () -> Date
     package let sleep: @Sendable (TimeInterval) async throws -> Void
     package init(now: @escaping @Sendable () -> Date,
@@ -45,9 +43,9 @@ extension SyncV2Application {
     func scheduleLeafPromotion(workID: WorkID) {
         lanes[workID, default: WorkLane()].promotionTask?.cancel()
         let now = promotionClock.now()
-        let maximum = lanes[workID, default: WorkLane()].promotionDeadline ?? now.addingTimeInterval(SyncV2PromotionClock.maximumInterval)
+        let maximum = lanes[workID, default: WorkLane()].promotionDeadline ?? now.addingTimeInterval(timing.promotionMaximumSeconds)
         lanes[workID, default: WorkLane()].promotionDeadline = maximum
-        let deadline = min(now.addingTimeInterval(SyncV2PromotionClock.idleInterval), maximum)
+        let deadline = min(now.addingTimeInterval(timing.promotionIdleSeconds), maximum)
         let clock = promotionClock
         let owner = UUID()
         let task = Task<Void, Never> { [weak self] in

@@ -73,7 +73,8 @@ final class EditorSearchSession {
         selectionRequest = EditorSelectionRequest(range: range)
     }
 
-    func requestSelection(range: NSRange) {
+    func requestSelection(range: NSRange, episodeID: EpisodeID? = nil) {
+        lastSearchEpisodeID = episodeID
         selectionRequest = EditorSelectionRequest(range: range)
     }
 

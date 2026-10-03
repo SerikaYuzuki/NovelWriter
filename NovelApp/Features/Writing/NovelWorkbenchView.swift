@@ -1,5 +1,6 @@
 import EditorKit
 import NovelCore
+import NovelTextAnalysis
 import NovelThumbnail
 import NovelUI
 import SwiftUI
@@ -132,7 +133,9 @@ struct NovelWorkbenchView: View {
                       appState.selectedEpisodeID == episodeID,
                       appState.snapshotSyncV2AccountScopeToken == account,
                       appState.permitsDocumentInteraction else { return false }
-                return appState.editorCommandSession.applyProofreading(expectedText: manuscript.content, replacement: replacement)
+                return appState.writingProgress.withUncountedEditorChange {
+                    appState.editorCommandSession.applyProofreading(expectedText: manuscript.content, replacement: replacement)
+                }
             },
             saveFeedback: { feedback in
                 await appState.saveAssistantFeedback(feedback, session: session, account: account)
@@ -238,7 +241,13 @@ struct NovelWorkbenchView: View {
     private var workbenchContent: some View {
         switch appState.workspaceSelection.section {
         case .structure:
-            OutlineContainerView()
+            if appState.textCheck.isPresented {
+                MacTextCheckView()
+            } else if appState.workSearch.isPresented {
+                MacWorkSearchView()
+            } else {
+                OutlineContainerView()
+            }
         case .characters:
             CharacterListView()
                 .navigationTitle("登場人物")
@@ -303,13 +312,18 @@ struct NovelWorkbenchView: View {
             }
         case .characters:
             CharacterDetailView { appearance in
+                let scope = appState.workSearchScope
                 Task {
-                    guard await appState.selectProjectSectionAfterTransition(.structure) else { return }
+                    guard appState.workSearchScope == scope, await appState.selectProjectSectionAfterTransition(.structure),
+                          appState.workSearchScope == scope else { return }
                     guard await appState.selectEpisodeAfterTransition(
                         appearance.episodeID,
                         in: appearance.chapterID
                     ) else { return }
-                    editorSearchSession.requestSelection(range: appearance.range)
+                    guard appState.workSearchScope == scope,
+                          let current = appState.document.episode(appearance.episodeID)?.episode.content,
+                          WorkTextSearch.sameText(current, appearance.source) else { return }
+                    editorSearchSession.requestSelection(range: appearance.range, episodeID: appearance.episodeID)
                 }
             }
         case .plot:
@@ -640,6 +654,7 @@ private struct ProjectInfoView: View {
                         MacThumbnailEditor(owner: ThumbnailOwner(.work, appState.document.id), title: appState.document.title)
                         WorkInfoSummary(document: appState.document, showsCover: false)
                     }
+                    WritingProgressCard(tracker: appState.writingProgress)
                     GroupBox("編集") {
                         VStack(alignment: .leading, spacing: 8) {
                             WorkbenchLabeledField("作品タイトル") {

@@ -9,6 +9,41 @@ import Testing
 
 @MainActor
 struct WritingAssistantIntegrationTests {
+    @Test func appendingLocalRecordWakesSharedSchedulerAfterPersistence() async throws {
+        let configuration = try TestRuntimeConfiguration(account: nil)
+        let application = try await SnapshotSyncV2Runtime.makeApplication(mode: .test(configuration))
+        let state = AppState(dependencies: AppDependencies(userDefaults: makeIsolatedTestUserDefaults()), initialStartupState: .ready)
+        state.snapshotSyncV2Application = application
+        let document = NovelDocument.newDocument(title: "同期wake"), work = WorkID(UUID())
+        state.installV2Document(document, workID: work, createdAt: Date())
+        #expect(await state.checkpointSnapshotSyncV2(document))
+        let host = try #require(state.writingAssistantHost)
+        let scheduler = try #require(host.syncScheduler)
+        var calls = 0
+        var waiter: CheckedContinuation<Void, Never>?
+        scheduler.attach(contextID: host.contextID, foreground: true) {
+            calls += 1
+            waiter?.resume(); waiter = nil
+        }
+        if calls == 0 {
+            await withCheckedContinuation { waiter = $0 }
+        }
+        let record = try WritingRecord(workId: host.capture().workId, kind: "prompt", key: "advice",
+                                       payload: WritingRecord.payload(WritingPrompt(text: "作品別指示")))
+        try await host.append(record)
+        if calls < 2 {
+            await withCheckedContinuation { waiter = $0 }
+        }
+        #expect(calls == 2)
+        #expect(try await host.records(false).contains { $0.id == record.id })
+        scheduler.setForeground(false, contextID: host.contextID)
+        try await host.append(WritingRecord(workId: record.workId, kind: "prompt", key: "advice", parentId: record.id,
+                                            payload: WritingRecord.payload(WritingPrompt(text: "更新"))))
+        try await host.synchronizeNow()
+        #expect(calls == 2)
+        scheduler.detach(contextID: host.contextID)
+    }
+
     @Test func composingWaitsAndRevalidatesInsteadOfDiscardingUnrelatedEdit() async throws {
         var attempts = 0
         let result = try await WritingCompositionBoundary.capture(timeout: .seconds(1)) {

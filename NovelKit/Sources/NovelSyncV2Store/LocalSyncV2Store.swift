@@ -7,6 +7,10 @@ public actor LocalSyncV2Store {
     let executor: SQLiteExecutor
 
     var lastBackfillWriteDuration: Duration?
+    var checkpointValidation: CheckpointValidationStamp?
+    var checkpointFullValidationCount = 0
+    /// Opt-in phase observation for the synthetic public-path benchmark.
+    var checkpointTimingObserver: (@Sendable (String, Duration) -> Void)?
 
     public init(root: URL, policy: V2StoreOpenPolicy) throws {
         try Self.validateRoot(root)
@@ -28,6 +32,7 @@ public actor LocalSyncV2Store {
     }
 
     public func close() {
+        checkpointValidation = nil
         executor.close()
     }
 }
@@ -78,7 +83,7 @@ public extension LocalSyncV2Store {
     }
 
     func open(workID: WorkID, scope: V2LocalWorkScope) throws -> V2OpenResult {
-        try workRepository.open(workID: workID, scope: scope)
+        try fullyValidatedOpen(workID: workID, scope: scope)
     }
 
     func checkpoint(
@@ -88,6 +93,7 @@ public extension LocalSyncV2Store {
         try deletionRepository.requireNotDeleting(request.workID)
         let existing = try workRepository.scopedWorkRow(workID: request.workID, scope: scope)
         if existing == nil, try workRepository.workExists(workID: request.workID) {
+            checkpointValidation = nil
             throw SyncV2StoreError.workNotFound
         }
         let anchor = try StoreValueCoding.iso8601(request.documentCreatedAt)
@@ -97,6 +103,7 @@ public extension LocalSyncV2Store {
             guard existing.documentID == DocumentID(request.document.id).description,
                   existing.localGeneration == request.expectedGeneration,
                   existing.documentCreatedAt == anchor else {
+                checkpointValidation = nil
                 throw SyncV2StoreError.generationMismatch
             }
             if let bytes = existing.currentSnapshotID {
@@ -105,6 +112,14 @@ public extension LocalSyncV2Store {
                 parents = try workRepository.checkpointParents(workID: request.workID, current: current)
             }
         }
+        let dataVersion: Int64
+        if let existing {
+            dataVersion = try validatedCheckpointBase(workID: request.workID, scope: scope, row: existing).dataVersion
+        } else {
+            checkpointValidation = nil
+            dataVersion = try checkpointDataVersion()
+        }
+        let encodeStart = checkpointTimingObserver == nil ? nil : ContinuousClock.now
         let encoded = try SnapshotCodec.encode(
             SnapshotModel(
                 workId: request.workID,
@@ -114,6 +129,10 @@ public extension LocalSyncV2Store {
             ),
             parents: parents
         )
+        if let encodeStart {
+            checkpointTimingObserver?("encode", encodeStart.duration(to: .now))
+        }
+        let compareStart = checkpointTimingObserver == nil ? nil : ContinuousClock.now
         let resourcesMatch = if let resources = request.resources {
             try workRepository.portableResourcesEqual(workID: request.workID, resources: resources)
         } else {
@@ -126,20 +145,42 @@ public extension LocalSyncV2Store {
                candidate: encoded
            ),
            resourcesMatch {
-            return try commitNoChangeCheckpoint(
+            if let compareStart {
+                checkpointTimingObserver?("compare", compareStart.duration(to: .now))
+            }
+            let result = try commitNoChangeCheckpoint(
                 request,
                 scope: scope,
                 current: current,
-                anchor: anchor
+                anchor: anchor,
+                expectedDataVersion: dataVersion
             )
+            if request.reason == .autosave {
+                rememberCheckpoint(result, workID: request.workID, scope: scope, dataVersion: dataVersion)
+            }
+            return result
         }
 
-        return try commitCheckpointTransaction(
+        if let compareStart {
+            checkpointTimingObserver?("compare", compareStart.duration(to: .now))
+        }
+        let sqliteStart = checkpointTimingObserver == nil ? nil : ContinuousClock.now
+        defer {
+            if let sqliteStart {
+                checkpointTimingObserver?("sqlite", sqliteStart.duration(to: .now))
+            }
+        }
+        let result = try commitCheckpointTransaction(
             request,
             scope: scope,
             createWork: existing == nil,
-            encoded: encoded
+            encoded: encoded,
+            expectedDataVersion: dataVersion
         )
+        if request.reason == .autosave {
+            rememberCheckpoint(result, workID: request.workID, scope: scope, dataVersion: dataVersion)
+        }
+        return result
     }
 
     func pendingIntents(
@@ -268,10 +309,14 @@ extension LocalSyncV2Store {
         _ request: V2CheckpointRequest,
         scope: V2LocalWorkScope,
         createWork: Bool,
-        encoded: EncodedSnapshot
+        encoded: EncodedSnapshot,
+        expectedDataVersion: Int64? = nil
     ) throws -> V2CheckpointResult {
         let anchor = try StoreValueCoding.iso8601(request.documentCreatedAt)
         return try inTransaction {
+            if let expectedDataVersion, try checkpointDataVersion() != expectedDataVersion {
+                throw SyncV2StoreError.generationMismatch
+            }
             if createWork {
                 try workRepository.insertWork(
                     workID: request.workID,
@@ -355,8 +400,12 @@ extension LocalSyncV2Store {
         }
     }
 
-    func inTransaction<T>(_ body: () throws -> T) throws -> T {
-        try executor.inTransaction(body)
+    func inTransaction<T>(preservingCheckpoint: Bool = false, _ body: () throws -> T) throws -> T {
+        if preservingCheckpoint {
+            return try inCheckpointNeutralTransaction(body)
+        }
+        defer { checkpointValidation = nil }
+        return try executor.inTransaction(body)
     }
 
     func exec(_ sql: String, _ bindings: [SQLiteValue] = []) throws {
@@ -377,9 +426,13 @@ extension LocalSyncV2Store {
         _ request: V2CheckpointRequest,
         scope: V2LocalWorkScope,
         current: SnapshotID,
-        anchor: String
+        anchor: String,
+        expectedDataVersion: Int64? = nil
     ) throws -> V2CheckpointResult {
         try inTransaction {
+            if let expectedDataVersion, try checkpointDataVersion() != expectedDataVersion {
+                throw SyncV2StoreError.generationMismatch
+            }
             guard let latest = try workRepository.scopedWorkRow(
                 workID: request.workID,
                 scope: scope

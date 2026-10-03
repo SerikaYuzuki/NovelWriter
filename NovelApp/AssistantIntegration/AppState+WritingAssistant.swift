@@ -21,21 +21,27 @@ extension AppState {
             let result = try await application.writingContext(workID: work)
             try validate(); return result
         }
-        var host = WritingAssistantHost(contextID: "\(session)-\(account)", capture: { [weak self] in
+        let contextID = "\(workUUID)-\(session)-\(account)"
+        let scheduler = writingSyncScheduler
+        var host = WritingAssistantHost(contextID: contextID, capture: { [weak self] in
             try validate(); guard let self else { throw WritingError.changedScope }
             return try captureWritingDocument(workUUID: workUUID)
         }, records: { common in
             try await application.writingRecords(context: context(), common: common)
         }, append: { record in
             try await application.appendWritingRecord(record, context: context())
+            try validate()
+            scheduler.recordAppended(contextID: contextID)
         }, synchronize: {
             try await application.synchronizeWriting(context: context())
         }, apply: { [weak self] edit, grant in
             try validate(); guard let self else { throw WritingError.changedScope }
+            defer { scheduler.recordAppended(contextID: contextID) }
             let ctx = try await context()
             try await applyWritingEdit(edit, grant: grant, application: application, context: ctx, validate: validate)
         }, undo: { [weak self] id in
             try validate(); guard let self else { throw WritingError.changedScope }
+            defer { scheduler.recordAppended(contextID: contextID) }
             let ctx = try await context()
             guard let journal = try await application.writingEdit(id: id, context: ctx),
                   ["applied", "prepared"].contains(journal.state) else { throw WritingError.interrupted }
@@ -46,7 +52,7 @@ extension AppState {
             }
             try await applyWritingEdit(edit.inverse, grant: .wholeWork, application: application, context: ctx, validate: validate)
             try await application.finishWritingEdit(id: id, state: "undone", context: ctx)
-        }, editState: { id in
+        }, syncScheduler: scheduler, editState: { id in
             try await application.writingEdit(id: id, context: context())?.state
         }, editOutcome: { edit in
             try await application.writingEditOutcome(edit, context: context())
@@ -57,6 +63,7 @@ extension AppState {
         }
         host.applyThumbnail = { [weak self] request, grant in
             try validate(); guard let self else { throw WritingError.changedScope }
+            defer { scheduler.recordAppended(contextID: contextID) }
             return try await applyMCPThumbnail(request, grant: grant, application: application, context: context(), validate: validate)
         }
         return host
@@ -112,7 +119,10 @@ extension AppState {
                        let old = current.document.chapters.flatMap(\.episodes).first(where: { $0.id == id }),
                        let new = replacement.chapters.flatMap(\.episodes).first(where: { $0.id == id }), old.content != new.content {
                         if case .captured = self.activeCommittedTextCapture() {
-                            guard self.editorCommandSession.applyProofreading(expectedText: old.content, replacement: new.content) else { throw WritingError.changedTarget }
+                            let applied = self.writingProgress.withUncountedEditorChange {
+                                self.editorCommandSession.applyProofreading(expectedText: old.content, replacement: new.content)
+                            }
+                            guard applied else { throw WritingError.changedTarget }
                         } else {
                             self.editorContentGeneration &+= 1
                         }

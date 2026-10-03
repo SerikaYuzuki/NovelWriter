@@ -1,6 +1,7 @@
 import Foundation
 import NovelCore
 import NovelSyncV2
+import NovelTiming
 import NovelWritingSupport
 
 public struct SyncV2OperationResult: Sendable {
@@ -22,6 +23,7 @@ public struct SyncV2OperationResult: Sendable {
 }
 
 public actor SyncV2Application {
+    let timing: FuminiwaTiming
     let promotionClock: SyncV2PromotionClock
     var stateChangeContinuations: [UUID: SyncV2StateObserver] = [:]
     var lifecycleWake: SyncV2WakeFlight?
@@ -59,6 +61,7 @@ public actor SyncV2Application {
     /// page can append stale rows.
     var historyScopeGeneration: UInt64 = 0 {
         didSet {
+            clearLaneValues(\.lastBodyEdit)
             backfillTask?.cancel()
             backfillQueue.removeAll()
             clearLaneFlag(\.allowsConstrainedBackfill)
@@ -76,6 +79,7 @@ public actor SyncV2Application {
         mode: RuntimeMode,
         composition: SyncV2RuntimeComposition,
         remoteOnlyImportTimeout: Duration = .seconds(60),
+        timing: FuminiwaTiming = .init(),
         promotionClock: SyncV2PromotionClock = .live,
         automaticSyncSleep: @escaping @Sendable (UInt64) async throws -> Void = { try await Task.sleep(nanoseconds: $0) }
     ) throws {
@@ -86,6 +90,7 @@ public actor SyncV2Application {
             false
         }
         guard valid else { throw SyncV2ApplicationError.invalidRuntimeMode }
+        self.timing = timing
         self.automaticSyncSleep = automaticSyncSleep
         self.promotionClock = promotionClock
         self.remoteOnlyImportTimeout = remoteOnlyImportTimeout

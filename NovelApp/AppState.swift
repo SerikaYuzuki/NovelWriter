@@ -7,6 +7,9 @@ import NovelCore
 import NovelSyncV2
 import NovelSyncV2Application
 import NovelSyncV2PortableBridge
+import NovelTiming
+import NovelWritingProgress
+import NovelWritingSupport
 import Observation
 
 enum DocumentSaveState: Equatable {
@@ -94,6 +97,10 @@ typealias DocumentSessionToken = AppDocumentSessionToken
 @Observable
 final class AppState {
     let syncSessionController = SyncSessionController<AppDocumentSessionToken, SnapshotSyncV2AccountScopeToken, Bool>()
+    let timing: FuminiwaTiming
+    let writingSyncScheduler: WritingSyncScheduler
+    let writingProgress: WritingProgressTracker
+    let writingProgressRoot: URL?
     var document: NovelDocument
     var selectedChapterID: ChapterID?
     var selectedEpisodeID: EpisodeID?
@@ -129,6 +136,9 @@ final class AppState {
             userDefaults.set(workspaceSelection.section.rawValue, forKey: Self.projectSectionKey)
         }
     }
+
+    let workSearch = WorkSearchSession()
+    let textCheck: TextCheckSession
 
     var outlinePresentation = OutlinePresentationState()
     var attachments: [Attachment]
@@ -187,6 +197,8 @@ final class AppState {
     @ObservationIgnored var bootstrapTask: Task<Void, Never>?
     @ObservationIgnored var manuscriptCopyNoticeDismissTask: Task<Void, Never>?
     @ObservationIgnored var hasCompletedBootstrap = false
+    var documentChangeRevision: UInt64 = 0
+    @ObservationIgnored var editorProgressAlreadyTracked = false
     @ObservationIgnored var saveCoordinator: V2DocumentSaveCoordinator!
     @ObservationIgnored let resignActiveObserver = NotificationObserverToken()
     @ObservationIgnored let systemSleepObserver = NotificationObserverToken(center: NSWorkspace.shared.notificationCenter)
@@ -194,7 +206,6 @@ final class AppState {
     @ObservationIgnored let systemWakeObserver = NotificationObserverToken(center: NSWorkspace.shared.notificationCenter)
 
     static let projectSectionKey = AppPreferenceKey.projectSection
-    static let autosaveDebounceNanoseconds: UInt64 = 2_000_000_000
 
     var usesSnapshotSyncV2Runtime: Bool {
         snapshotSyncV2Application != nil || snapshotSyncV2Factory != nil
@@ -239,6 +250,12 @@ final class AppState {
         dependencies: AppDependencies,
         initialStartupState: AppStartupState = .loading
     ) {
+        let timing = FuminiwaTiming(defaults: dependencies.userDefaults)
+        self.timing = timing
+        writingSyncScheduler = WritingSyncScheduler(timing: timing)
+        textCheck = TextCheckSession(defaults: dependencies.userDefaults)
+        writingProgress = WritingProgressTracker(defaults: dependencies.userDefaults, timing: timing)
+        writingProgressRoot = dependencies.writingProgressRoot
         portableBridge = dependencies.portableBridge
         userDefaults = dependencies.userDefaults
         fileManager = dependencies.fileManager
@@ -299,7 +316,7 @@ final class AppState {
         )
 
         saveCoordinator = V2DocumentSaveCoordinator(
-            debounceNanoseconds: Self.autosaveDebounceNanoseconds,
+            timing: timing,
             currentDocument: { [weak self] in
                 guard let self, startupState.isReady else { return nil }
                 return document

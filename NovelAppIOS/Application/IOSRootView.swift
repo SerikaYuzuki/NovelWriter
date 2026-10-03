@@ -1,3 +1,4 @@
+import NovelCore
 import NovelSyncV2Application
 import NovelUI
 import SwiftUI
@@ -39,9 +40,10 @@ struct IOSRootView: View {
         .task(id: AutomaticSyncObservationID(
             session: store.currentDocumentSessionToken,
             account: store.snapshotSyncV2AccountScope,
-            isActive: scenePhase == .active && store.startupState == .ready
+            chapter: store.selectedChapterID, episode: store.selectedEpisodeID,
+            isActive: scenePhase == .active && store.startupState == .ready && !store.isDocumentTransitionInProgress
         )) {
-            if scenePhase == .active {
+            if scenePhase == .active, !store.isDocumentTransitionInProgress {
                 await store.runAutomaticSnapshotSyncV2()
             }
         }
@@ -204,5 +206,7 @@ private struct IOSShareSheet: UIViewControllerRepresentable {
 private struct AutomaticSyncObservationID: Equatable {
     let session: IOSDocumentSessionToken?
     let account: IOSSnapshotSyncV2AccountScope
+    var chapter: ChapterID?
+    var episode: EpisodeID?
     let isActive: Bool
 }

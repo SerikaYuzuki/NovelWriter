@@ -108,9 +108,14 @@ struct IOSCharacterOutlineView: View {
             } label: {
                 HStack(spacing: Spacing.small) {
                     ThumbnailImage(data: store.thumbnailData(ThumbnailOwner(.character, character.id.rawValue)),
-                                   kind: .character, title: character.name, size: 28, color: character.colorHex.flatMap { Color(hex: $0) })
+                                   kind: .character, title: character.name, size: 28,
+                                   color: character.colorHex.flatMap { Color(hex: $0) })
                         .accessibilityHidden(true)
-                    Circle().fill(character.colorHex.flatMap { Color(hex: $0) } ?? FuminiwaColor.textTertiary.color).frame(width: 8, height: 8).accessibilityHidden(true)
+                    Circle().fill(character.colorHex.flatMap { Color(hex: $0) } ?? FuminiwaColor.textTertiary.color)
+                        .frame(
+                            width: 8,
+                            height: 8
+                        ).accessibilityHidden(true)
                     IOSCharacterRow(character: character)
                 }
             }
@@ -120,9 +125,14 @@ struct IOSCharacterOutlineView: View {
             } label: {
                 HStack(spacing: Spacing.small) {
                     ThumbnailImage(data: store.thumbnailData(ThumbnailOwner(.character, character.id.rawValue)),
-                                   kind: .character, title: character.name, size: 28, color: character.colorHex.flatMap { Color(hex: $0) })
+                                   kind: .character, title: character.name, size: 28,
+                                   color: character.colorHex.flatMap { Color(hex: $0) })
                         .accessibilityHidden(true)
-                    Circle().fill(character.colorHex.flatMap { Color(hex: $0) } ?? FuminiwaColor.textTertiary.color).frame(width: 8, height: 8).accessibilityHidden(true)
+                    Circle().fill(character.colorHex.flatMap { Color(hex: $0) } ?? FuminiwaColor.textTertiary.color)
+                        .frame(
+                            width: 8,
+                            height: 8
+                        ).accessibilityHidden(true)
                     IOSCharacterRow(character: character)
                 }
             }
@@ -170,6 +180,8 @@ struct IOSCharacterDetailView: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var deletionRequest: IOSSingleCharacterDeletionRequest?
+    @State private var showingNameReplacement = false
+    @State private var showingAppearanceEditor = false
 
     var body: some View {
         Group {
@@ -216,7 +228,12 @@ struct IOSCharacterDetailView: View {
         Form {
             Section {
                 HStack(alignment: .top, spacing: Spacing.group) {
-                    IOSThumbnailEditor(store: store, owner: ThumbnailOwner(.character, character.id.rawValue), title: character.name, color: character.colorHex.flatMap { Color(hex: $0) })
+                    IOSThumbnailEditor(
+                        store: store,
+                        owner: ThumbnailOwner(.character, character.id.rawValue),
+                        title: character.name,
+                        color: character.colorHex.flatMap { Color(hex: $0) }
+                    )
                     VStack(alignment: .leading, spacing: Spacing.small) {
                         Text(NovelDocument.normalizedCharacterName(character.name)).font(.title2.weight(.semibold))
                         if !character.kana.isEmpty {
@@ -224,7 +241,10 @@ struct IOSCharacterDetailView: View {
                         }
                         if let role = character.role, !role.isEmpty {
                             Text(role).font(.caption).padding(Spacing.extraSmall)
-                                .background(FuminiwaColor.accentMuted.color, in: RoundedRectangle(cornerRadius: Radius.chip))
+                                .background(
+                                    FuminiwaColor.accentMuted.color,
+                                    in: RoundedRectangle(cornerRadius: Radius.chip)
+                                )
                         }
                     }
                 }
@@ -240,32 +260,8 @@ struct IOSCharacterDetailView: View {
                 TextField("性別", text: optionalCharacterBinding(character.id, \.gender))
             }
 
-            Section("人物の色") {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 44))]) {
-                    ForEach(CharacterColorPreset.hexValues, id: \.self) { hex in
-                        Button {
-                            var updated = character
-                            updated.colorHex = hex
-                            guard let expectedSession else { return }
-                            _ = store.updateCharacter(updated, expectedSession: expectedSession)
-                        } label: {
-                            Circle().fill(Color(hex: hex) ?? FuminiwaColor.sunken.color)
-                                .frame(width: 28, height: 28)
-                                .overlay(Circle().strokeBorder(character.colorHex == hex ? FuminiwaColor.accent.color : FuminiwaColor.separator.color, lineWidth: character.colorHex == hex ? 2 : 0.5))
-                                .overlay {
-                                    if character.colorHex == hex {
-                                        Image(systemName: "checkmark").font(.caption.bold()).foregroundStyle(.white)
-                                    }
-                                }
-                                .frame(width: 44, height: 44)
-                        }
-                        .buttonStyle(.plain)
-                        .help(CharacterColorPreset.name(for: hex))
-                        .accessibilityLabel(CharacterColorPreset.name(for: hex))
-                        .accessibilityAddTraits(character.colorHex == hex ? .isSelected : [])
-                    }
-                }
-            }
+            characterColorSection(character)
+
             Section("話し方") {
                 TextField("一人称", text: optionalCharacterBinding(character.id, \.firstPerson))
                 TextField("二人称", text: optionalCharacterBinding(character.id, \.secondPerson))
@@ -291,6 +287,8 @@ struct IOSCharacterDetailView: View {
                     .accessibilityLabel("自由メモ")
             }
 
+            IOSCharacterAppearancesSection(store: store, character: character) { showingAppearanceEditor = true }
+
             Section {
                 Button("登場人物を削除", role: .destructive) {
                     guard let expectedSession else { return }
@@ -307,6 +305,59 @@ struct IOSCharacterDetailView: View {
         .background(FuminiwaColor.paper.color)
         .navigationTitle(NovelDocument.normalizedCharacterName(character.name))
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar { characterOperations }
+        .navigationDestination(isPresented: $showingAppearanceEditor) {
+            IOSEditorPane(store: store, userDefaults: store.userDefaults)
+        }
+        .navigationDestination(isPresented: $showingNameReplacement) {
+            IOSWorkSearchView(store: store, initialQuery: character.name)
+        }
+    }
+
+    private func characterColorSection(_ character: NovelCore.Character) -> some View {
+        Section("人物の色") {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 44))]) {
+                ForEach(CharacterColorPreset.hexValues, id: \.self) { hex in
+                    Button {
+                        var updated = character
+                        updated.colorHex = hex
+                        guard let expectedSession else { return }
+                        _ = store.updateCharacter(updated, expectedSession: expectedSession)
+                    } label: {
+                        Circle().fill(Color(hex: hex) ?? FuminiwaColor.sunken.color)
+                            .frame(width: 28, height: 28)
+                            .overlay(Circle().strokeBorder(
+                                character.colorHex == hex ? FuminiwaColor.accent.color : FuminiwaColor.separator
+                                    .color,
+                                lineWidth: character.colorHex == hex ? 2 : 0.5
+                            ))
+                            .overlay {
+                                if character.colorHex == hex {
+                                    Image(systemName: "checkmark").font(.caption.bold()).foregroundStyle(.white)
+                                }
+                            }
+                            .frame(width: 44, height: 44)
+                    }
+                    .buttonStyle(.plain)
+                    .help(CharacterColorPreset.name(for: hex))
+                    .accessibilityLabel(CharacterColorPreset.name(for: hex))
+                    .accessibilityAddTraits(character.colorHex == hex ? .isSelected : [])
+                }
+            }
+        }
+    }
+
+    private var characterOperations: some View {
+        Menu("人物の操作", systemImage: "ellipsis.circle") {
+            Button("本文の名前を置換…") {
+                let scope = store.workSearchScope
+                Task {
+                    guard await store.prepareForEditorSurfaceDeparture(),
+                          store.workSearchScope == scope else { return }
+                    showingNameReplacement = true
+                }
+            }
+        }
     }
 
     private func characterEditor(

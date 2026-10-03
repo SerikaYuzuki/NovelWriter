@@ -28,6 +28,7 @@ extension IOSDocumentStore {
         let retainedChapter = preservingSelection ? value.chapters.first(where: { $0.id == selectedChapterID }) : nil
         document = value
         syncV2ActiveWorkID = opened.workID
+        writingProgress.install(value, workID: opened.workID.rawValue)
         documentCreatedAt = opened.documentCreatedAt
         // v2 does not derive identity from a path or create a WorkID folder.
         // Keep this URL only as the import/export compatibility boundary.

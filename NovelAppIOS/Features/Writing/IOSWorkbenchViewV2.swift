@@ -46,6 +46,7 @@ struct IOSAdaptiveWritingView: View {
     let openEpisode: (ChapterID, EpisodeID) -> Void
     let expectedSession: IOSDocumentSessionToken?
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @State private var toolDestination: IOSWritingTool?
     @State private var regularProjectSection: IOSRegularProjectSection? = .writing
     @State private var presentedHorizontalSizeClass: UserInterfaceSizeClass?
     @State private var selectedPlotItem: IOSPlotSelection?
@@ -68,10 +69,10 @@ struct IOSAdaptiveWritingView: View {
             if effectiveHorizontalSizeClass == .regular {
                 regularLayout
             } else {
-                IOSWritingOutlineList(store: store, openEpisode: openEpisode)
+                IOSWritingOutlineList(store: store, openEpisode: openEpisode, presentTool: presentTool)
             }
         }
-        .modifier(WritingSyncPulse(host: store.writingAssistantHost))
+        .modifier(IOSWritingToolPresentationModifier(store: store, destination: $toolDestination))
         .environment(\.horizontalSizeClass, effectiveHorizontalSizeClass)
         .onAppear {
             if presentedHorizontalSizeClass == nil {
@@ -123,7 +124,7 @@ struct IOSAdaptiveWritingView: View {
     private var regularContent: some View {
         switch regularProjectSection ?? .writing {
         case .writing:
-            IOSWritingOutlineList(store: store) { chapterID, episodeID in
+            IOSWritingOutlineList(store: store, openEpisode: { chapterID, episodeID in
                 Task {
                     guard await store.selectEpisodeAfterDeviceSyncDeparture(
                         chapterID: chapterID,
@@ -131,7 +132,7 @@ struct IOSAdaptiveWritingView: View {
                     ) else { return }
                     openEpisode(chapterID, episodeID)
                 }
-            }
+            }, presentTool: presentTool)
         case .plot:
             IOSPlotOutlineView(
                 store: store,
@@ -197,6 +198,7 @@ struct IOSAdaptiveWritingView: View {
             )
         case .feedback:
             AssistantFeedbackDetail(record: store.assistantFeedback.first { $0.id == selectedFeedbackID })
+                .modifier(WritingSyncVisibility(host: store.writingAssistantHost))
         case .references:
             IOSReferenceDetailView(
                 store: store,
@@ -231,11 +233,23 @@ struct IOSAdaptiveWritingView: View {
             }
         )
     }
+
+    private func presentTool(_ destination: IOSWritingTool) {
+        let scope = store.workSearchScope
+        Task {
+            guard await store.prepareForEditorSurfaceDeparture(), store.workSearchScope == scope else { return }
+            if destination == .textCheck {
+                store.synchronizeTextCheck()
+            }
+            toolDestination = destination
+        }
+    }
 }
 
 private struct IOSWritingOutlineList: View {
     let store: IOSDocumentStore
     let openEpisode: (ChapterID, EpisodeID) -> Void
+    let presentTool: (IOSWritingTool) -> Void
 
     var body: some View {
         List {
@@ -281,6 +295,16 @@ private struct IOSWritingOutlineList: View {
                 } label: {
                     Label("章を追加", systemImage: "plus")
                 }
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                Menu {
+                    Button("作品全体を検索", systemImage: "text.magnifyingglass") {
+                        presentTool(.workSearch)
+                    }
+                    Button("表記をチェック", systemImage: "text.badge.checkmark") {
+                        presentTool(.textCheck)
+                    }
+                } label: { Label("執筆のメニュー", systemImage: "ellipsis.circle") }
             }
             ToolbarItem(placement: .topBarTrailing) {
                 EditButton()
@@ -384,6 +408,7 @@ private struct IOSEpisodeOutlineRow: View {
     let episode: Episode
 
     var body: some View {
+        let count = ManuscriptCountCache.shared.count(episode)
         HStack(spacing: 16) {
             Image(systemName: "doc.text")
                 .foregroundStyle(FuminiwaColor.accent.color)
@@ -392,7 +417,7 @@ private struct IOSEpisodeOutlineRow: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(episode.title.isEmpty ? "名称未設定の話" : episode.title)
                     .foregroundStyle(.primary)
-                Text("\(ManuscriptMetrics.countCharacters(in: episode.content))字")
+                Text("\(count)字")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
@@ -408,7 +433,7 @@ private struct IOSEpisodeOutlineRow: View {
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
         .accessibilityLabel(episode.title.isEmpty ? "名称未設定の話" : episode.title)
-        .accessibilityValue("\(ManuscriptMetrics.countCharacters(in: episode.content))字")
+        .accessibilityValue("\(count)字")
         .accessibilityHint("本文を開きます。")
     }
 }
@@ -428,6 +453,7 @@ struct IOSWorkbenchView: View {
                 destination(route)
             }
         }
+        .modifier(WritingSyncPulse(host: store.writingAssistantHost))
         .onAppear {
             if let session = store.currentDocumentSessionToken {
                 navigation.documentDidChange(to: session)
@@ -559,6 +585,7 @@ struct IOSEditorPane: View {
                         editorContentGeneration: editingToken.editorContentGeneration
                     ),
                     initialText: episode.content,
+                    selectionRequest: store.currentWorkTextSelectionRequest,
                     commandSession: store.editorCommandSession,
                     selectionContextMenuCommands: [
                         EditorSelectionContextMenuCommand(title: "選択範囲をコピー", systemImageName: "doc.on.clipboard") { snapshot in

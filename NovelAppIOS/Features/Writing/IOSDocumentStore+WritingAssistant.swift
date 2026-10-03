@@ -16,7 +16,9 @@ extension IOSDocumentStore {
                                     account: IOSSnapshotSyncV2AccountScope) -> Bool {
         guard writingInteractionAllowed, currentEpisodeEditingToken == editingToken,
               matchesSyncAccount(account) else { return false }
-        return editorCommandSession.applyProofreading(expectedText: manuscript.content, replacement: replacement)
+        return writingProgress.withUncountedEditorChange {
+            editorCommandSession.applyProofreading(expectedText: manuscript.content, replacement: replacement)
+        }
     }
 
     var writingAssistantHost: WritingAssistantHost? {
@@ -32,28 +34,34 @@ extension IOSDocumentStore {
             let result = try await application.writingContext(workID: work)
             try validate(); return result
         }
-        return WritingAssistantHost(contextID: "\(String(describing: session))-\(account)", capture: { [weak self] in
+        let contextID = "\(workUUID)-\(String(describing: session))-\(account)"
+        let scheduler = writingSyncScheduler
+        return WritingAssistantHost(contextID: contextID, capture: { [weak self] in
             try validate(); guard let self else { throw WritingError.changedScope }
             return try captureWritingDocument(workUUID: workUUID)
         }, records: { common in
             try await application.writingRecords(context: context(), common: common)
         }, append: { record in
             try await application.appendWritingRecord(record, context: context())
+            try validate()
+            scheduler.recordAppended(contextID: contextID)
         }, synchronize: {
             try await application.synchronizeWriting(context: context())
         }, apply: { [weak self] edit, grant in
             try validate(); guard let self else { throw WritingError.changedScope }
+            defer { scheduler.recordAppended(contextID: contextID) }
             let ctx = try await context()
             try await applyWritingEdit(edit, grant: grant, application: application, context: ctx, validate: validate)
         }, undo: { [weak self] id in
             try validate(); guard let self else { throw WritingError.changedScope }
+            defer { scheduler.recordAppended(contextID: contextID) }
             let ctx = try await context()
             guard let journal = try await application.writingEdit(id: id, context: ctx),
                   ["applied", "prepared"].contains(journal.state) else { throw WritingError.interrupted }
             let edit = try JSONDecoder().decode(WritingStoredEdit.self, from: Data(journal.payload.utf8)).prepared
             try await applyWritingEdit(edit.inverse, grant: .wholeWork, application: application, context: ctx, validate: validate)
             try await application.finishWritingEdit(id: id, state: "undone", context: ctx)
-        }, editState: { id in
+        }, syncScheduler: scheduler, editState: { id in
             try await application.writingEdit(id: id, context: context())?.state
         }, editOutcome: { edit in
             try await application.writingEditOutcome(edit, context: context())
@@ -111,7 +119,10 @@ extension IOSDocumentStore {
                        let old = current.document.chapters.flatMap(\.episodes).first(where: { $0.id == id }),
                        let new = replacement.chapters.flatMap(\.episodes).first(where: { $0.id == id }), old.content != new.content {
                         if case .captured = self.editorCommandSession.captureActiveCommittedText() {
-                            guard self.editorCommandSession.applyProofreading(expectedText: old.content, replacement: new.content) else { throw WritingError.changedTarget }
+                            let applied = self.writingProgress.withUncountedEditorChange {
+                                self.editorCommandSession.applyProofreading(expectedText: old.content, replacement: new.content)
+                            }
+                            guard applied else { throw WritingError.changedTarget }
                         } else {
                             self.editorContentGeneration &+= 1
                         }

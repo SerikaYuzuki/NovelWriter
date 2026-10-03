@@ -51,7 +51,9 @@ struct WritingEditHistoryView: View {
                     }
                 }
             }
-        }.navigationTitle("AIの変更履歴").task(id: host.contextID) { await load() }
+        }.navigationTitle("AIの変更履歴")
+            .modifier(WritingSyncVisibility(host: host))
+            .task(id: host.contextID) { await load() }
     }
 
     private func load() async {
