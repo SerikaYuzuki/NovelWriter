@@ -352,7 +352,7 @@ struct LineageFixture: Sendable {
             snapshots: snapshots,
             publishResponse: publishResponse
         )
-        LineageURLProtocol.state = state
+        let host = LineageURLProtocol.register(state)
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [LineageURLProtocol.self]
         let session = URLSession(configuration: configuration)
@@ -379,7 +379,7 @@ struct LineageFixture: Sendable {
             )
         )
         return try ProductionSyncV2RemoteClient(
-            origin: ProductionHTTPSOrigin(url: URL(string: "https://lineage.test")!),
+            origin: ProductionHTTPSOrigin(url: URL(string: "https://\(host)")!),
             vault: InMemoryAuthSessionVault(session: auth),
             session: session,
             snapshotCache: localStore, backfillPersistence: localStore

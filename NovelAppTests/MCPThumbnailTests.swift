@@ -147,8 +147,9 @@ struct MCPThumbnailTests {
             initialStartupState: .ready
         )
         state.snapshotSyncV2Application = restarted
-        state.installV2Document(document, workID: fixture.work, createdAt: Date())
-        state.snapshotSyncV2Attachments = local.attachments
+        // Reinstall as a real relaunch does: the stored creation time anchors the next checkpoint.
+        #expect(state.installV2Document(document, workID: fixture.work, createdAt: local.documentCreatedAt,
+                                        attachments: local.attachments, resources: local.resources))
         await state.reloadAttachments()
         let host = try #require(state.writingAssistantHost)
         args["sessionId"] = host.contextID
