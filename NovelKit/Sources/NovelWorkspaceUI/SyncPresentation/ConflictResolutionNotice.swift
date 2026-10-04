@@ -3,21 +3,32 @@ import NovelSyncV2Application
 import NovelUI
 import SwiftUI
 
-struct ConflictResolutionNotice: Identifiable {
-    let id = UUID()
+public struct ConflictResolutionNotice: Identifiable {
+    public init(title: String, undo: (@MainActor () async -> Bool)?, history: @escaping @MainActor () -> Void) {
+        self.title = title
+        self.undo = undo
+        self.history = history
+    }
+
+    public let id = UUID()
     let title: String
     let undo: (@MainActor () async -> Bool)?
     let history: @MainActor () -> Void
 }
 
-struct ConflictResolutionNoticeView: View {
+public struct ConflictResolutionNoticeView: View {
+    public init(notice: ConflictResolutionNotice, dismiss: @escaping () -> Void) {
+        self.notice = notice
+        self.dismiss = dismiss
+    }
+
     let notice: ConflictResolutionNotice
     let dismiss: () -> Void
     @State private var undoTask: Task<Void, Never>?
     @State private var busy = false
     @State private var failed = false
 
-    var body: some View {
+    public var body: some View {
         HStack(spacing: Spacing.small) {
             Text(failed ? "反映待ち、または復元できませんでした。履歴を確認してください。" : busy ? "版の反映を待っています…" : notice.title)
                 .font(FuminiwaType.rowSecondary)

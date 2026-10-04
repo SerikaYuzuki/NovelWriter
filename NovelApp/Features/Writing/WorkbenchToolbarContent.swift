@@ -4,6 +4,7 @@ import NovelSyncV2Application
 import NovelTextAnalysis
 import NovelUI
 import NovelWorkspace
+import NovelWorkspaceUI
 import Observation
 import SwiftUI
 

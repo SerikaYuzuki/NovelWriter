@@ -1,4 +1,5 @@
 import NovelUI
+import NovelWorkspaceUI
 import SwiftUI
 
 struct IOSSettingsView: View {

@@ -1,5 +1,6 @@
 import Foundation
 import NovelCore
+import NovelWorkspaceUI
 
 extension Notification.Name {
     static let toggleWritingInspector = Notification.Name("dev.serikayuzuki.fuminiwa.toggleWritingInspector")

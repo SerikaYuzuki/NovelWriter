@@ -57,11 +57,15 @@ jq -e '
     ["NovelCore", "NovelSyncV2", "NovelSyncV2Application", "NovelAuth", "NovelAuthApple",
      "EditorKit", "NovelWritingSupport", "NovelWritingProgress", "NovelTextAnalysis",
      "NovelThumbnail", "NovelTiming"] | index($dependency) != null)) and
-  (closure($package; ["NovelWorkspace"]) | all(. as $dependency |
+  ([.targets[] | select(.name == "NovelWorkspaceUI")] | length == 1) and
+  (dependencies($package; "NovelWorkspaceUI") | all(. as $dependency |
+    ["NovelWorkspace", "NovelUI", "NovelSyncV2Application", "NovelExport", "NovelCore",
+     "NovelThumbnail", "NovelWritingSupport", "EditorKit"] | index($dependency) != null)) and
+  (closure($package; ["NovelWorkspace", "NovelWorkspaceUI"]) | all(. as $dependency |
     ["NovelSyncV2Runtime", "NovelSyncV2Store", "NovelSyncV2PortableBridge", "NovelStorage"] |
     index($dependency) == null))
 ' "$workspace_package" >/dev/null || {
-  echo "error: NovelWorkspace crossed the D-111 dependency boundary" >&2
+  echo "error: workspace modules crossed the D-111 dependency boundary" >&2
   exit 1
 }
 

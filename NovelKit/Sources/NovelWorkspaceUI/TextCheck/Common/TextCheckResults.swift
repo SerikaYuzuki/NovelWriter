@@ -3,12 +3,18 @@ import NovelTextAnalysis
 import NovelWorkspace
 import SwiftUI
 
-struct TextCheckResults: View {
+public struct TextCheckResults: View {
+    public init(session: TextCheckSession, onJump: @escaping (TextCheckOccurrence) -> Void, onReplace: @escaping (TextCheckIssue) -> Void) {
+        self.session = session
+        self.onJump = onJump
+        self.onReplace = onReplace
+    }
+
     @Bindable var session: TextCheckSession
     let onJump: (TextCheckOccurrence) -> Void
     let onReplace: (TextCheckIssue) -> Void
 
-    var body: some View {
+    public var body: some View {
         let visible = session.visibleIssues
         ForEach(TextCheckRule.allCases, id: \.self) { rule in
             let issues = visible.filter { $0.rule == rule }

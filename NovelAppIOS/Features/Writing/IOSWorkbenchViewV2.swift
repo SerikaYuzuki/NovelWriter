@@ -2,6 +2,7 @@ import EditorKit
 import NovelCore
 import NovelSyncV2
 import NovelUI
+import NovelWorkspaceUI
 import SwiftUI
 
 @MainActor

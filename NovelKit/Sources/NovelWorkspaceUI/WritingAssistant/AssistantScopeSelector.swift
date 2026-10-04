@@ -1,7 +1,13 @@
 import NovelCore
 import SwiftUI
 
-struct AssistantScopeSelector: View {
+public struct AssistantScopeSelector: View {
+    public init(chapters: [Chapter], currentID: EpisodeID?, scope: Binding<AssistantScope>) {
+        self.chapters = chapters
+        self.currentID = currentID
+        _scope = scope
+    }
+
     let chapters: [Chapter]
     let currentID: EpisodeID?
     @Binding var scope: AssistantScope
@@ -11,7 +17,7 @@ struct AssistantScopeSelector: View {
         scope.selectedEpisodeIDs(chapters: chapters, currentID: currentID)
     }
 
-    var body: some View {
+    public var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Text("送る範囲").font(.subheadline.bold())

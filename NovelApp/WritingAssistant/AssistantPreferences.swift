@@ -1,4 +1,5 @@
 import Foundation
+import NovelWorkspaceUI
 import Security
 
 struct AssistantPreferences {

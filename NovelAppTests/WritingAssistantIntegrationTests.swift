@@ -4,6 +4,7 @@ import NovelCore
 import NovelSyncV2
 import NovelSyncV2Application
 import NovelSyncV2Runtime
+import NovelWorkspaceUI
 import NovelWritingSupport
 import Testing
 

@@ -1,10 +1,14 @@
 import SwiftUI
 
 /// A read-only native renderer; source Markdown stays unchanged in storage.
-struct AssistantMarkdownView: View {
+public struct AssistantMarkdownView: View {
+    public init(source: String) {
+        self.source = source
+    }
+
     let source: String
 
-    var body: some View {
+    public var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             ForEach(Array(AssistantMarkdown.blocks(source).enumerated()), id: \.offset) { _, block in
                 blockView(block)

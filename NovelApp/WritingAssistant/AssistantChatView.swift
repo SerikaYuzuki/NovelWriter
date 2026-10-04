@@ -1,31 +1,9 @@
 import Foundation
 import NovelCore
 import NovelUI
+import NovelWorkspaceUI
 import NovelWritingSupport
 import SwiftUI
-
-struct WritingConversation: Codable {
-    let title: String
-    let documentId: UUID
-    /// Retained for compatibility with existing conversation records.
-    let readConsent: Bool
-
-    static func recordForSending(selectedID: UUID?, conversations: [WritingEnvelope], capture: WritingCapture) throws -> WritingRecord {
-        if let selectedID {
-            guard let item = conversations.first(where: { $0.id == selectedID }),
-                  item.record.kind == "conversation", item.record.workId == capture.workId,
-                  let conversation = try? item.record.decoded(Self.self),
-                  conversation.documentId == capture.document.id else { throw WritingError.changedScope }
-            return item.record
-        }
-        return try WritingRecord(workId: capture.workId, kind: "conversation", key: "conversation",
-                                 payload: WritingRecord.payload(Self(
-                                     title: "会話 \(Date().formatted(date: .abbreviated, time: .shortened))",
-                                     documentId: capture.document.id,
-                                     readConsent: true
-                                 )))
-    }
-}
 
 private struct WritingTurnState: Codable {
     let state: String

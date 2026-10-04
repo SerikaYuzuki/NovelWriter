@@ -1,6 +1,6 @@
 import Foundation
-@testable import FUMINIWA
 import NovelSyncV2Application
+@testable import NovelWorkspaceUI
 import Testing
 
 @MainActor

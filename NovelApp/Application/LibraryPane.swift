@@ -2,6 +2,7 @@ import NovelCore
 import NovelSyncV2
 import NovelSyncV2Application
 import NovelUI
+import NovelWorkspaceUI
 import SwiftUI
 
 struct LibraryPane: View {
@@ -356,7 +357,7 @@ private extension LibraryPane {
                 }
             }
             if let note = work.historyBackfillNote, let application = appState.snapshotSyncV2Application {
-                HistoryFetchControls(application: application, workID: work.workID, snapshotID: nil, progressNote: note)
+                HistoryFetchControls(application: application, workID: work.workID, snapshotID: nil, progressNote: note, userDefaults: appState.userDefaults)
                     .id(appState.snapshotSyncV2AccountScopeToken)
             }
             if !usesGrid {

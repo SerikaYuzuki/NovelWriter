@@ -3,7 +3,13 @@ import NovelSyncV2Application
 import NovelUI
 import SwiftUI
 
-struct SnapshotRestoreComparison: View {
+public struct SnapshotRestoreComparison: View {
+    public init(application: SyncV2Application, workID: WorkID, snapshotID: SnapshotID) {
+        self.application = application
+        self.workID = workID
+        self.snapshotID = snapshotID
+    }
+
     let application: SyncV2Application
     let workID: WorkID
     let snapshotID: SnapshotID
@@ -11,7 +17,7 @@ struct SnapshotRestoreComparison: View {
     @State private var failed = false
     @State private var showsPreview = false
 
-    var body: some View {
+    public var body: some View {
         VStack(alignment: .leading, spacing: Spacing.small) {
             Text("現在の版との違い").font(.caption).foregroundStyle(.secondary)
             Text(difference?.line ?? (failed ? "内容を確認できません" : "確認中…"))

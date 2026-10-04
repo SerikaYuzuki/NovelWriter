@@ -2,8 +2,8 @@ import Foundation
 import NovelCore
 import NovelWritingSupport
 
-struct AssistantChatAnswer: Decodable {
-    struct Change: Decodable {
+public struct AssistantChatAnswer: Decodable {
+    public struct Change: Decodable {
         let path: [String]
         let beforeJson: String?
         let afterJson: String?
@@ -11,16 +11,16 @@ struct AssistantChatAnswer: Decodable {
             try text.map { try JSONDecoder().decode(WritingValue.self, from: Data($0.utf8)) }
         }
 
-        func change() throws -> WritingChange {
+        public func change() throws -> WritingChange {
             try WritingChange(path: path, before: value(beforeJson), after: value(afterJson))
         }
     }
 
-    let reply: String
-    let changes: [Change]
+    public let reply: String
+    public let changes: [Change]
 }
 
-extension AssistantConfiguration {
+public extension AssistantConfiguration {
     func chatRequest(capture: WritingCapture, grant: WritingGrant, messages: [WritingMessage], apiKey: String,
                      effectivePrompt: String, referenceScope: AssistantScope) throws -> URLRequest {
         guard !apiKey.isEmpty else { throw AssistantError.missingKey }
