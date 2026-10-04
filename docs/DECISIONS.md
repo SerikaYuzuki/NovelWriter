@@ -145,9 +145,11 @@ macOS toolbarの同期状態は形と色で示し、状態名はhelpとaccessibi
 
 ## D-111: 共通App層の段階移設（2026-10-04）
 
-共通処理をNovelKitの`NovelWorkspace`（非UI、@MainActorのservice／port）と`NovelWorkspaceUI`（共有SwiftUI、後続P2）へ移す。`AppState`／`IOSDocumentStore`は薄いadapterとし、後続phaseで`WorkspaceHost` portを導入する。P1は移設・公開範囲・import・compositionの接続だけを変更し、挙動と既存テストを維持する。
+共通処理をNovelKitの`NovelWorkspace`（非UI、@MainActorのservice／port）と`NovelWorkspaceUI`（共有SwiftUI）へ移す。`AppState`／`IOSDocumentStore`は薄いadapterとし、後続phaseで`WorkspaceHost` portを導入する。P1は移設・公開範囲・import・compositionの接続だけを変更し、挙動と既存テストを維持する。
 
 `NovelWorkspace`の依存許可はNovelCore、NovelSyncV2、NovelSyncV2Application、NovelAuth、NovelAuthApple、EditorKit、NovelWritingSupport、NovelWritingProgress、NovelTextAnalysis、NovelThumbnail、NovelTiming。必要なものだけを宣言し、NovelSyncV2Runtime、NovelSyncV2Store、NovelSyncV2PortableBridge、NovelStorageには依存しない。`NovelWorkspaceUI`はNovelWorkspace、NovelUI、NovelSyncV2Application、NovelExportへ依存する。compositionと明示Import／Export、AppKit／UIKit、scene／window／終了、background task、pasteboard／panel、MCP、MacSyncV2DocumentGate／ProductionDocumentGate、IOSPrivateWorkingCopyLocationはAppに残す。
+
+P2完了：SyncPresentation、HistoryFetchControls／ConnectivityRecovery、WorkSearch／TextCheckの共有View、AssistantFeedbackDetail、AssistantScopeSelector／MarkdownViewとapp非依存のAI値・request／decode処理をNovelWorkspaceUIへ移設し、純粋テストをpackageへ移した。
 
 片方の意味を暗黙に採用しない。以下は後続phaseの統合方針であり、P1では適用しない。
 

@@ -128,6 +128,8 @@ targets:
       - path: NovelApp
     dependencies:
       - package: NovelKit
+        product: NovelWorkspaceUI
+      - package: NovelKit
         product: NovelWorkspace
       - package: NovelKit
         product: NovelCore
@@ -212,16 +214,13 @@ targets:
       - path: NovelAppIOS
         excludes:
           - Info.plist
-      - path: NovelApp/ConnectivityRecovery.swift
-      - path: NovelApp/HistoryFetchControls.swift
-      - path: NovelApp/SyncPresentation
-      - path: NovelApp/WorkSearch/Common
-      - path: NovelApp/TextCheck/Common
       - path: NovelApp/WritingAssistant
         excludes:
           - ResizableAssistantLayout.swift
       - path: NovelApp/Features/AssistantFeedback
     dependencies:
+      - package: NovelKit
+        product: NovelWorkspaceUI
       - package: NovelKit
         product: NovelWorkspace
       - package: NovelKit
@@ -279,8 +278,6 @@ targets:
     sources:
       - path: NovelAppTests/WorkSearchIntegrationTestSupport.swift
       - path: NovelAppTests/AssistantClientTests.swift
-      - path: NovelAppTests/AssistantChatContextTests.swift
-      - path: NovelAppTests/AssistantConversationTests.swift
       - path: NovelAppTests/SnapshotHistoryPresentationTests.swift
       - path: NovelAppTests/SnapshotConflictPresentationTests.swift
       - path: NovelAppIOSTests

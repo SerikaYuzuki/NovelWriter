@@ -5,6 +5,7 @@ import NovelCore
 import NovelSyncV2
 import NovelSyncV2Application
 import NovelThumbnail
+import NovelWorkspaceUI
 import NovelWritingSupport
 
 extension AppState {

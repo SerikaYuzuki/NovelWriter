@@ -81,8 +81,8 @@ for defaults_boundary in \
 done
 
 # Shared services receive defaults from the app composition root too.
-if rg -n 'UserDefaults\.standard' NovelKit/Sources/NovelWorkspace --glob '*.swift'; then
-  echo "error: NovelWorkspace must receive an explicit UserDefaults domain" >&2
+if rg -n 'UserDefaults\.standard' NovelKit/Sources/NovelWorkspace NovelKit/Sources/NovelWorkspaceUI --glob '*.swift'; then
+  echo "error: workspace modules must receive an explicit UserDefaults domain" >&2
   exit 1
 fi
 
@@ -150,7 +150,7 @@ while IFS= read -r source; do
     exit 1
   fi
 done < <(
-  rg --files NovelApp NovelAppIOS NovelAppTests NovelAppIOSTests NovelKit/Sources/NovelWorkspace \
+  rg --files NovelApp NovelAppIOS NovelAppTests NovelAppIOSTests NovelKit/Sources/NovelWorkspace NovelKit/Sources/NovelWorkspaceUI NovelKit/Tests/NovelWorkspaceUITests \
     --glob '*.swift'
 )
 
@@ -213,7 +213,7 @@ done < <(
 
 # The LAN development endpoint belongs only to the runtime resolver. App
 # composition must never embed a fallback URL that bypasses the test gate.
-if rg -n '192\.168\.11\.5:18080' NovelApp NovelAppIOS; then
+if rg -n '192\.168\.11\.5:18080' NovelApp NovelAppIOS NovelKit/Sources/NovelWorkspaceUI; then
   echo "error: app target embeds the development sync endpoint" >&2
   exit 1
 fi

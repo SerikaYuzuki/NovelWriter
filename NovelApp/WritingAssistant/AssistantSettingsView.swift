@@ -1,3 +1,4 @@
+import NovelWorkspaceUI
 import SwiftUI
 
 struct AssistantSettingsView: View {

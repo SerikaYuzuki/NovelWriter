@@ -1,4 +1,5 @@
 import Foundation
+import NovelWorkspaceUI
 #if os(macOS)
 import AppKit
 @testable import FUMINIWA
@@ -49,8 +50,8 @@ struct SnapshotConflictPresentationTests {
             try await capture(view, name: "conflict-\(dark ? "dark" : "light")")
         }
         let confirmation = ConflictSheet(application: app, workID: workID, conflict: conflict,
-                                         defaults: UserDefaults(suiteName: "conflict-sheet-capture") ?? .standard) { _ in true } cancel: {}
-            .presentingReductionForCapture()
+                                         defaults: UserDefaults(suiteName: "conflict-sheet-capture") ?? .standard,
+                                         capturesReductionConfirmation: true) { _ in true } cancel: {}
         try await capture(confirmation, name: "reduction-confirmation")
         _ = await app.beginAccountTransitionRemoteSuspension()
     }

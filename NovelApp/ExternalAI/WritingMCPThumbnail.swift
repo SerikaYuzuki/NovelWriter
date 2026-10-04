@@ -5,6 +5,7 @@ import Foundation
 import ImageIO
 import NovelCore
 import NovelThumbnail
+import NovelWorkspaceUI
 import NovelWritingSupport
 import UniformTypeIdentifiers
 

@@ -1,6 +1,7 @@
 import NovelSyncV2
 import NovelSyncV2Application
 import NovelUI
+import NovelWorkspaceUI
 import SwiftUI
 
 struct IOSLibraryImportRow: View {
@@ -61,7 +62,7 @@ struct IOSLibraryImportRow: View {
                 .accessibilityHint(isRenaming ? "作品名を変更中です" : isImporting ? LibraryImportProgress.hint(SyncV2LibraryPresentation.longImportNotice) :
                     item.availability == .remoteOnly ? SyncV2LibraryPresentation.remoteOnlyHint : "")
                 if let note = item.historyBackfillNote, let application = store.snapshotSyncV2Application {
-                    HistoryFetchControls(application: application, workID: item.workID, snapshotID: nil, progressNote: note)
+                    HistoryFetchControls(application: application, workID: item.workID, snapshotID: nil, progressNote: note, userDefaults: store.userDefaults)
                         .id(store.snapshotSyncV2AccountScope)
                 }
                 if isImporting {

@@ -1,5 +1,6 @@
 import NovelCore
 import NovelUI
+import NovelWorkspaceUI
 import NovelWritingSupport
 import SwiftUI
 

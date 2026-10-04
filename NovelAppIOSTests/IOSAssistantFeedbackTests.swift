@@ -1,5 +1,6 @@
 import Foundation
 @testable import FUMINIWAIOS
+import NovelWorkspaceUI
 import Testing
 
 @MainActor

@@ -4,11 +4,16 @@ import NovelUI
 import NovelWorkspace
 import SwiftUI
 
-struct WorkSearchResults: View {
+public struct WorkSearchResults: View {
+    public init(search: WorkSearchSession, onJump: @escaping (EpisodeTextMatches, WorkTextMatch) -> Void) {
+        self.search = search
+        self.onJump = onJump
+    }
+
     @Bindable var search: WorkSearchSession
     let onJump: (EpisodeTextMatches, WorkTextMatch) -> Void
 
-    var body: some View {
+    public var body: some View {
         ForEach(chapterIDs, id: \.self) { chapterID in
             Section(search.results.first { $0.chapterID == chapterID }?.chapterTitle ?? "") {
                 ForEach(search.results.filter { $0.chapterID == chapterID }) { result in

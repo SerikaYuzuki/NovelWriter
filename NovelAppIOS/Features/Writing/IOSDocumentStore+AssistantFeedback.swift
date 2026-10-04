@@ -1,6 +1,7 @@
 import Foundation
 import NovelCore
 import NovelThumbnail
+import NovelWorkspaceUI
 
 extension IOSDocumentStore {
     var assistantFeedback: [AssistantFeedback] {

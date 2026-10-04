@@ -5,6 +5,7 @@ import NovelSyncV2
 import NovelSyncV2Application
 import NovelSyncV2Store
 import NovelUI
+import NovelWorkspaceUI
 import SwiftUI
 import Testing
 import UIKit
@@ -85,7 +86,8 @@ struct ShallowHistoryCaptureTests {
             await application.setHistoryBackfillNetwork(online: true, constrained: true)
             let restore = HistoryFetchControls(application: application, workID: fixture.workID,
                                                snapshotID: fixture.snapshots[0].snapshotId,
-                                               rowDate: Date(timeIntervalSince1970: 1_780_000_000), rowKind: "手動保存").presentingRestoreForCapture()
+                                               rowDate: Date(timeIntervalSince1970: 1_780_000_000), rowKind: "手動保存",
+                                               userDefaults: fixture.store.userDefaults, showsRestoreInitially: true)
             try await capture(NavigationStack { List { restore }.navigationTitle("履歴") }, dark: dark,
                               url: directory.appendingPathComponent("restore-unfetched-\(suffix).png"))
             await application.setHistoryBackfillNetwork(online: true, constrained: false)

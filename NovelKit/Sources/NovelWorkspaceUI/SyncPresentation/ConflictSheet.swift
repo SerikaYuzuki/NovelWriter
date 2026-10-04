@@ -4,7 +4,7 @@ import NovelUI
 import SwiftUI
 
 /// Both platforms use this sheet; platform gates remain in the supplied action.
-struct ConflictSheet: View {
+public struct ConflictSheet: View {
     let application: SyncV2Application
     let workID: WorkID
     let conflict: SyncV2ConflictProjection
@@ -20,18 +20,18 @@ struct ConflictSheet: View {
     @State private var failed = false
     @State private var choiceGate = SnapshotConflictChoiceGate()
     @State private var confirmation: SyncV2ConflictChoice?
-    #if FUMINIWA_TEST_COMPOSITION
-    @State private var capturesReductionConfirmation = false
-    #endif
+    private let capturesReductionConfirmation: Bool
     @State private var preview: SyncV2ConflictChoice?
 
-    init(application: SyncV2Application, workID: WorkID, conflict: SyncV2ConflictProjection, defaults: UserDefaults,
-         choose: @escaping @MainActor (SyncV2ConflictChoice) async -> Bool, cancel: @escaping () -> Void) {
+    public init(application: SyncV2Application, workID: WorkID, conflict: SyncV2ConflictProjection, defaults: UserDefaults,
+                capturesReductionConfirmation: Bool = false,
+                choose: @escaping @MainActor (SyncV2ConflictChoice) async -> Bool, cancel: @escaping () -> Void) {
         self.application = application
         self.workID = workID
         self.conflict = conflict
         self.choose = choose
         self.cancel = cancel
+        self.capturesReductionConfirmation = capturesReductionConfirmation
         _deviceOverride = AppStorage(wrappedValue: "", DeviceLabel.defaultsKey, store: defaults)
     }
 
@@ -43,7 +43,7 @@ struct ConflictSheet: View {
         DeviceLabel.validated(remoteDeviceLabel ?? conflict.remoteDeviceLabel) ?? DeviceLabel.unknown
     }
 
-    var body: some View {
+    public var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: Spacing.group) {
                 Label("使う版を選ぶ", systemImage: "exclamationmark.triangle")
@@ -154,11 +154,9 @@ struct ConflictSheet: View {
             loadedConflict = conflict
             deviceDifference = device
             serverDifference = server
-            #if FUMINIWA_TEST_COMPOSITION
             if capturesReductionConfirmation {
                 confirmation = .useServer
             }
-            #endif
             let localDate = try await application.localSnapshotDate(workID: workID, snapshotID: conflict.localSnapshotID)
             let remoteDate = try? await application.remoteSnapshotDate(workID: workID, snapshotID: conflict.remoteSnapshotID)
             guard !Task.isCancelled else { return }
@@ -178,18 +176,8 @@ struct ConflictSheet: View {
     }
 }
 
-extension SyncV2ConflictChoice: @retroactive Identifiable {
+extension SyncV2ConflictChoice: Identifiable {
     public var id: String {
         rawValue
     }
 }
-
-#if FUMINIWA_TEST_COMPOSITION
-extension ConflictSheet {
-    func presentingReductionForCapture() -> Self {
-        var sheet = self
-        sheet._capturesReductionConfirmation = State(initialValue: true)
-        return sheet
-    }
-}
-#endif

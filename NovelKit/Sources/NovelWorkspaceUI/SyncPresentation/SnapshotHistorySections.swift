@@ -4,7 +4,16 @@ import NovelUI
 import SwiftUI
 
 /// All history surfaces share ordering, grouping, accessible labels and row appearance.
-struct SnapshotHistorySections<Row: View>: View {
+public struct SnapshotHistorySections<Row: View>: View {
+    public init(items: [SyncV2HistoryItem], application: SyncV2Application? = nil, workID: WorkID? = nil,
+                presentation: HistoryPresentation = .init(), @ViewBuilder row: @escaping (SyncV2HistoryItem) -> Row) {
+        self.items = items
+        self.application = application
+        self.workID = workID
+        self.presentation = presentation
+        self.row = row
+    }
+
     let items: [SyncV2HistoryItem]
     var application: SyncV2Application?
     var workID: WorkID?
@@ -12,7 +21,7 @@ struct SnapshotHistorySections<Row: View>: View {
     @State private var currentSnapshotID: SnapshotID?
     @ViewBuilder var row: (SyncV2HistoryItem) -> Row
 
-    var body: some View {
+    public var body: some View {
         let context = SnapshotHistoryContext(items: items, presentation: presentation, currentSnapshotID: currentSnapshotID)
         ForEach(presentation.days(items)) { day in
             Section {
@@ -56,10 +65,10 @@ struct SnapshotHistorySections<Row: View>: View {
     }
 }
 
-struct SnapshotHistoryLabel: View {
+public struct SnapshotHistoryLabel: View {
     @AppStorage private var deviceLabelOverride: String
 
-    init(item: SyncV2HistoryItem, presentation: HistoryPresentation = .init(), userDefaults: UserDefaults = .standard) {
+    public init(item: SyncV2HistoryItem, presentation: HistoryPresentation = .init(), userDefaults: UserDefaults) {
         self.item = item
         self.presentation = presentation
         _deviceLabelOverride = AppStorage(wrappedValue: "", DeviceLabel.defaultsKey, store: userDefaults)
@@ -72,7 +81,7 @@ struct SnapshotHistoryLabel: View {
     let item: SyncV2HistoryItem
     var presentation = HistoryPresentation()
 
-    var body: some View {
+    public var body: some View {
         Label {
             VStack(alignment: .leading, spacing: Spacing.extraSmall) {
                 Text(presentation.time(item.createdAt))

@@ -5,6 +5,7 @@ import Foundation
 import NovelCore
 import NovelSyncV2
 import NovelSyncV2Application
+import NovelWorkspaceUI
 import SwiftUI
 import Testing
 

@@ -3,6 +3,7 @@ import Foundation
 @testable import FUMINIWAIOS
 import NovelTiming
 import NovelWorkspace
+import NovelWorkspaceUI
 import Testing
 
 @MainActor

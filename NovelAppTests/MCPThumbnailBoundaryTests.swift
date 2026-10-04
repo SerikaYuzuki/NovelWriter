@@ -4,6 +4,7 @@ import ImageIO
 import NovelCore
 import NovelSyncV2
 import NovelThumbnail
+import NovelWorkspaceUI
 import NovelWritingSupport
 import Testing
 
