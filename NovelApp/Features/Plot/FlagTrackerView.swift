@@ -312,7 +312,7 @@ private struct FlagEditor: View {
                 }
             }
             Section("メモ") {
-                TextEditor(text: $note)
+                TextEditor(text: $note).japaneseTextEditorStyle()
                     .frame(minHeight: 120, idealHeight: 200)
                     .accessibilityLabel("伏線のメモ")
             }

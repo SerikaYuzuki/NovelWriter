@@ -197,7 +197,7 @@ struct ChapterMemoPopover: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("話メモ")
                 .font(.headline)
-            TextEditor(text: memoBinding)
+            TextEditor(text: memoBinding).japaneseTextEditorStyle()
         }
         .padding(12)
     }

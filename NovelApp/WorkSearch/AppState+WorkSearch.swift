@@ -4,7 +4,7 @@ import NovelCore
 import NovelTextAnalysis
 import NovelWorkspace
 
-extension AppState {
+extension AppState: WorkspaceReplacementHost {
     var workSearchScope: String {
         "\(documentSessionToken)-\(snapshotSyncV2AccountScopeToken)-\(String(describing: snapshotSyncV2ActiveWorkID))"
     }
@@ -36,7 +36,7 @@ extension AppState {
 
     var episodeHistoryCurrentBody: String? {
         guard let episode = selectedEpisode else { return nil }
-        switch activeCommittedTextCapture() {
+        switch captureCommittedText() {
         case let .captured(text): return text
         case .compositionInProgress: return nil
         case .notActive: return episode.content
@@ -48,56 +48,30 @@ extension AppState {
         let allowed = { [self] in
             guard selectedEpisodeID == episodeID, document.episode(episodeID) != nil else { return false }
             return host.validate() && snapshotSyncConflict == nil
-                && activeCommittedTextCapture() != .compositionInProgress
+                && captureCommittedText() != .compositionInProgress
         }
         return WorkReplacementHost(scope: host.scope, validate: allowed, document: host.document,
                                    boundary: host.boundary, snapshot: host.snapshot, apply: host.apply)
     }
 
     var workReplacementHost: WorkReplacementHost {
-        let session = documentSessionToken, account = snapshotSyncV2AccountScopeToken, work = snapshotSyncV2ActiveWorkID
-        let validate = { [self] in documentSessionToken == session && snapshotSyncV2AccountScopeToken == account
-            && snapshotSyncV2ActiveWorkID == work && work != nil && permitsDocumentInteraction && !Task.isCancelled
-        }
-        return WorkReplacementHost(
-            scope: workSearchScope,
-            validate: validate,
-            document: { self.document },
-            boundary: { operation in
-                guard validate() else { return false }
-                return await self.performSnapshotDataMutation(expectedSession: session) {
-                    guard validate() else { return false }
-                    return await operation()
-                }
-            },
-            snapshot: {
-                guard validate() else { return false }
-                return await self.checkpointSnapshotSyncV2(self.document, reason: .explicit)
-            },
-            apply: { changes in
-                guard validate(), changes.allSatisfy({ $0.matches(self.document) }) else { return false }
-                if self.workspaceSelection.section == .structure,
-                   let active = changes.first(where: { $0.episodeID == self.selectedEpisodeID }) {
-                    if case .captured = self.activeCommittedTextCapture() {
-                        self.editorCommandSession.resumeAfterDocumentTransition()
-                        let applied = self.writingProgress.withUncountedEditorChange {
-                            self.editorCommandSession.applyProofreading(
-                                expectedText: active.before,
-                                replacement: active.after
-                            )
-                        }
-                        let prepared = self.editorCommandSession.prepareForDocumentTransition()
-                        guard applied, prepared else { return false }
-                    } else {
-                        self.editorContentGeneration &+= 1
-                    }
-                }
-                for change in changes {
-                    self.document.updateEpisodeContent(change.after, for: change.episodeID, in: change.chapterID)
-                }
-                self.markDocumentDirty()
-                return true
-            }
-        )
+        WorkReplacementHostFactory.make(host: self, scope: workSearchScope)
+    }
+
+    func checkpointBeforeReplacement() async -> Bool {
+        await checkpointSnapshotSyncV2(document, reason: .explicit)
+    }
+
+    var replacementInteractionAllowed: Bool {
+        permitsDocumentInteraction && snapshotSyncV2ActiveWorkID != nil
+    }
+
+    var selectedEpisodeEditorActive: Bool {
+        workspaceSelection.section == .structure
+    }
+
+    func replacementBoundary(context: WorkspaceOperationContext, operation: @MainActor () async -> Bool) async -> Bool {
+        guard let session = context.session else { return false }
+        return await performSnapshotDataMutation(expectedSession: session) { await operation() }
     }
 }

@@ -261,7 +261,7 @@ private struct CharacterSheetView: View {
 
     private func labeledEditor(_ title: String, text: Binding<String>) -> some View {
         WorkbenchLabeledEditor(title) {
-            TextEditor(text: text)
+            TextEditor(text: text).japaneseTextEditorStyle()
                 .frame(minHeight: 160, idealHeight: 240)
         }
     }

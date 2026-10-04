@@ -20,7 +20,7 @@ struct AssistantSettingsView: View {
                 TextField("API URL", text: $endpoint, prompt: Text("/responses または /chat/completions"))
                     .assistantCredentialInputStyle()
                 ForEach(AssistantPurpose.allCases) { item in
-                    TextField("\(item.rawValue)", text: Binding(
+                    TextField("\(item.label)", text: Binding(
                         get: { models[item.id] ?? "" }, set: { models[item.id] = $0 }
                     )).assistantCredentialInputStyle()
                     if !catalog.isEmpty {
@@ -46,7 +46,7 @@ struct AssistantSettingsView: View {
                 NavigationLink("同期するプロンプト") { WritingPromptsView(host: writingHost, defaults: defaults) }
             } else {
                 Section("プロンプト") {
-                    Text("作品を開くと、共通設定と作品別の指示を編集できます。AI支援の「アドバイス」から「指示」も開けます。")
+                    Text("作品を開くと、共通設定と作品別の指示を編集できます。AI支援の「チャット」から「指示」も開けます。")
                         .foregroundStyle(.secondary)
                 }
             }
