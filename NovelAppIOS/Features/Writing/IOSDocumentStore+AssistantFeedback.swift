@@ -18,6 +18,7 @@ extension IOSDocumentStore {
 
     func saveAssistantFeedback(_ feedback: AssistantFeedback, session: IOSDocumentSessionToken,
                                account: IOSSnapshotSyncV2AccountScope) async -> Bool {
+        guard feedback.purpose == .impressions else { return false }
         guard currentDocumentSessionToken == session, matchesSyncAccount(account),
               !syncV2AccountTransitionInProgress else { return false }
         if let existing = assistantFeedback.first(where: { $0.id == feedback.id }) {

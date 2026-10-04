@@ -20,7 +20,7 @@ public struct AssistantFeedbackDetail: View {
                 .navigationTitle(record.purpose.rawValue)
         } else {
             ContentUnavailableView("回答を選択してください", systemImage: "text.bubble",
-                                   description: Text("左の一覧から、保存した感想・アドバイスを読めます。"))
+                                   description: Text("左の一覧から、保存した感想を読めます。"))
         }
     }
 }

@@ -11,7 +11,7 @@ public enum ProjectSectionStyle: String, CaseIterable, Sendable {
         case .characters: "登場人物"
         case .worldbuilding: "世界観"
         case .references: "資料"
-        case .feedback: "感想・アドバイス"
+        case .feedback: "感想"
         case .settings: "設定"
         }
     }
