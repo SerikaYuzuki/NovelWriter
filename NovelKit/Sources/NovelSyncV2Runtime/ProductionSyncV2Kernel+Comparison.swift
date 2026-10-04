@@ -2,6 +2,10 @@ import Foundation
 import NovelSyncV2
 
 extension ProductionSyncV2Kernel {
+    func episodeBodyVersions(workID: WorkID, episodeKey: String) async throws -> [SnapshotID: SnapshotEntry] {
+        try await store.episodeBodyVersions(workID: workID, episodeKey: episodeKey, scope: scope.existingScope(workID: workID))
+    }
+
     func localSnapshotManifest(workID: WorkID, snapshotID: SnapshotID) async throws -> SnapshotManifest? {
         try await store.comparisonManifest(workID: workID, snapshotID: snapshotID, scope: scope.existingScope(workID: workID))
     }

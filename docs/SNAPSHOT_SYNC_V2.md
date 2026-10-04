@@ -375,3 +375,7 @@ pending work returns successful `noChanges`/`同期済み`; it is never rendered
 同期失敗. Local durability and remote progress remain separate indicators.
 
 保存した端末名は公開ごとの任意metadata（HTTPヘッダ送信・history/conflict読取のopt-in）として扱い、snapshot／sealed commandのcanonical bytesへ含めない。[wire契約](sync/v2/wire.md#保存した端末名2026-10-04)参照。
+
+## Episode history (D-114)
+
+While editing, history selects the episode body entries in one scoped SQLite query (including verified inbox entries), collapses consecutive equal object IDs, and lists unfetched versions in one trailing fetch control. Visible rows lazily read only the selected episode via the existing preview API; counts are cached by Work/object ID and cleared on account changes. Episode restore uses the shared document/edit boundary, an explicit pre-edit checkpoint (displayed as 手動保存), and the common persistent Undo journal. It never invokes whole-work restore and changes no wire/schema/fixture.

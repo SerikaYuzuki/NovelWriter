@@ -229,6 +229,9 @@ struct FuminiwaApp: App {
                 .keyboardShortcut("s", modifiers: [.command, .option])
                 .disabled(!appState.permitsDocumentInteraction)
 
+                Button("スナップショット…") { appState.presentWholeWorkHistory() }
+                    .disabled(!appState.permitsDocumentInteraction)
+
                 SnapshotRestoreCommands(
                     appState: appState,
                     presenter: snapshotMenuPresenter

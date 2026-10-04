@@ -41,7 +41,7 @@ let package = Package(
         ),
         .target(
             name: "NovelWorkspace",
-            dependencies: ["NovelCore", "NovelTextAnalysis", "NovelSyncV2", "NovelSyncV2Application", "NovelTiming"]
+            dependencies: ["NovelCore", "NovelTextAnalysis", "NovelSyncV2", "NovelSyncV2Application", "NovelWritingSupport", "NovelTiming"]
         ),
         .testTarget(
             name: "NovelWorkspaceTests",
@@ -153,6 +153,7 @@ let package = Package(
         .testTarget(
             name: "NovelSyncV2ApplicationTests",
             dependencies: [
+                "NovelWorkspace",
                 "NovelSyncV2Application",
                 "NovelSyncV2Runtime",
                 "NovelTiming",
