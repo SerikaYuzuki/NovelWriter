@@ -1,3 +1,4 @@
+import NovelUI
 import NovelWorkspaceUI
 import NovelWritingSupport
 import SwiftUI
@@ -74,7 +75,7 @@ struct WritingPromptsView: View {
                 }.disabled(saving)
                 Text("共通設定に作品別の指定を加え、次の依頼から使用します。競合した案も残ります。")
                     .font(.caption).foregroundStyle(.secondary)
-                TextEditor(text: $text).frame(minHeight: 200, idealHeight: 300)
+                TextEditor(text: $text).japaneseTextEditorStyle().frame(minHeight: 200, idealHeight: 300)
                     .accessibilityLabel("AIに渡すプロンプト")
                 Button("この内容を保存") { Task { await save() } }.disabled(saving)
                 Button("初期値を読み込む") { resetTarget = .prompt }.disabled(saving)

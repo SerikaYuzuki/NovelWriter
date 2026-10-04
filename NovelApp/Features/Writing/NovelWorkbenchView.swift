@@ -666,7 +666,7 @@ private struct ProjectInfoView: View {
                     TextField("作品タイトル", text: titleBinding, axis: .vertical).lineLimit(1 ... 3)
                 }
                 Section("あらすじ") {
-                    TextEditor(text: synopsisBinding)
+                    TextEditor(text: synopsisBinding).japaneseTextEditorStyle()
                         .accessibilityLabel("あらすじ")
                         .frame(minHeight: 160, idealHeight: 280)
                 }
