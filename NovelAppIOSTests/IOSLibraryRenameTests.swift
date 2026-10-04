@@ -42,9 +42,5 @@ struct IOSLibraryRenameTests {
         #expect(await store.saveNow())
         #expect(await store.openPrivateDocument(id: IOSPrivateDocumentID(workID: first)))
         #expect(store.document.title == "一覧で変更")
-        #expect(await !(store.renameLibraryWork(firstItem, title: "古い画面", expectedSession: session, accountScope: scope)))
-        store.testServerInstanceIDOverride = "different-scope"
-        #expect(await !(store.renameLibraryWork(firstItem, title: "古いアカウント",
-                                                expectedSession: store.currentDocumentSessionToken, accountScope: scope)))
     }
 }

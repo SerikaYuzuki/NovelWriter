@@ -1,5 +1,3 @@
-import Foundation
-import NovelSyncV2
 import NovelSyncV2Application
 import NovelWorkspace
 
@@ -9,43 +7,18 @@ extension IOSDocumentStore {
         expectedSession: WorkspaceSessionToken?,
         accountScope: WorkspaceAccountScope
     ) async -> Bool {
-        let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !title.isEmpty, let application = snapshotSyncV2Application,
-              currentDocumentSessionToken == expectedSession,
-              matchesSyncAccount(accountScope),
-              !isSyncV2AccountTransitionActive else { return false }
+        guard let application = snapshotSyncV2Application else { return false }
+        let context = WorkspaceOperationContext(workID: syncV2ActiveWorkID, session: expectedSession,
+                                                account: accountScope, editGeneration: nil)
+        var operations = LibraryOperations(application: application)
+        operations.downloadForRename = { [self] in _ = try await openRemoteOnlyWithBackgroundTime(application, workID: $0) }
         do {
-            // Only a server-only work needs a download; local renames stay offline.
-            if item.availability == .remoteOnly {
-                // The application joins any open already importing this WorkID.
-                _ = try await openRemoteOnlyWithBackgroundTime(application, workID: item.workID)
-            }
-            let renamed = await documentOperationGate.perform { [weak self] in
-                guard let self, currentDocumentSessionToken == expectedSession,
-                      matchesSyncAccount(accountScope),
-                      !isSyncV2AccountTransitionActive else { return false }
-                return await performDocumentTransition {
-                    try await saveCoordinator.performExclusive {
-                        guard currentDocumentSessionToken == expectedSession,
-                              matchesSyncAccount(accountScope),
-                              !isSyncV2AccountTransitionActive else {
-                            throw SyncV2ApplicationError.safeBoundaryRejected
-                        }
-                        _ = try await application.renameLocalWork(workID: item.workID, title: title)
-                        guard currentDocumentSessionToken == expectedSession,
-                              matchesSyncAccount(accountScope) else {
-                            throw SyncV2ApplicationError.safeBoundaryRejected
-                        }
-                        if syncV2ActiveWorkID == item.workID {
-                            document.title = title
-                        }
-                    }
-                }
-            }
-            guard renamed else { return false }
-            _ = await refreshLibrary()
-            return true
+            return try await LibraryCoordinator(operations: operations).rename(
+                workID: item.workID, remoteOnly: item.availability == .remoteOnly, title: title,
+                context: context, host: self
+            )
         } catch {
+            guard LibraryCoordinator.matches(context, host: self) else { return false }
             operationErrorMessage = "作品名を変更できませんでした。接続を確認して再試行してください。"
             return false
         }
