@@ -115,8 +115,14 @@ struct ContentView: View {
                 .disabled(!appState.permitsDocumentInteraction)
         case .recovery:
             RecoveryPane()
-        case .loading, .documentSelection:
+        case .documentSelection:
             LibraryView()
+        case .loading:
+            ZStack {
+                FuminiwaColor.paper.color.ignoresSafeArea()
+                ProgressView("作品を読み込んでいます…")
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 }
