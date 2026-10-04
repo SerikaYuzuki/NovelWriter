@@ -112,7 +112,7 @@ struct LibraryPane: View {
             }
             .overlay {
                 if filteredWorks.isEmpty {
-                    if appState.startupState == .loading || appState.snapshotSyncLibraryIsLoading {
+                    if appState.snapshotSyncLibraryIsLoading {
                         ProgressView("作品一覧を読み込み中…")
                     } else if let failure = appState.snapshotSyncLibraryFailure ?? appState.snapshotSyncLibraryLocalFailure {
                         ContentUnavailableView(SyncV2LibraryPresentation.isOffline(failure) ? "オフラインです" : "作品一覧を読み込めませんでした",
@@ -236,6 +236,7 @@ struct LibraryPane: View {
             guard observesImports, let application = appState.snapshotSyncV2Application else { return }
             for await _ in await application.stateChanges() {
                 guard !Task.isCancelled else { return }
+                guard !appState.isDocumentTransitionInProgress, !appState.startupState.isReady else { continue }
                 await appState.refreshSnapshotLibrary()
             }
         }

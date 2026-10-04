@@ -24,33 +24,53 @@ extension AppState {
         }
     }
 
+    private var shouldPresentRefreshedLibrary: Bool {
+        switch startupState {
+        case .documentSelection:
+            true
+        case .loading:
+            hasCompletedBootstrap && bootstrapTask == nil
+        case .ready, .recovery:
+            false
+        }
+    }
+
     func refreshSnapshotLibrary() async {
         guard let application = snapshotSyncV2Application else { return }
         let accountScope = snapshotSyncV2AccountScopeToken
-        let shouldPresentSelection = !startupState.isReady
         let connection: StartupLibraryConnection = switch authUIState {
         case .signedIn: .available
         case .signedOut, .unavailable, .signingIn, .failed: .offline
         }
         let projection: SyncV2LibraryProjection
         do {
+            #if FUMINIWA_TEST_COMPOSITION
+            projection = if let snapshotSyncV2LibraryOverride {
+                try await snapshotSyncV2LibraryOverride(application)
+            } else {
+                try await application.library()
+            }
+            #else
             projection = try await application.library()
+            #endif
+        } catch is CancellationError {
+            return
         } catch {
-            guard matchesSnapshotSyncV2AccountScope(accountScope) else { return }
+            guard !Task.isCancelled, matchesSnapshotSyncV2AccountScope(accountScope) else { return }
             snapshotSyncLibraryLocalFailure = syncV2FailureKind(error)
             logSyncV2PresentationFailure(error)
             // Keep the last verified shelf on read failure.
-            if shouldPresentSelection {
+            if shouldPresentRefreshedLibrary {
                 startupState = .documentSelection(.init(works: snapshotSyncLibraryWorks,
                                                         presentation: .localAndRemote, connection: connection))
             }
             return
         }
-        guard matchesSnapshotSyncV2AccountScope(accountScope) else { return }
+        guard !Task.isCancelled, matchesSnapshotSyncV2AccountScope(accountScope) else { return }
         snapshotSyncLibraryLocalFailure = nil
         let pendingDeletionIDs = await (try? application.pendingDeletionWorkIDs()) ?? []
         let deletedIDs = await (try? application.deletedWorkIDs()) ?? []
-        guard matchesSnapshotSyncV2AccountScope(accountScope) else { return }
+        guard !Task.isCancelled, matchesSnapshotSyncV2AccountScope(accountScope) else { return }
         snapshotSyncPendingDeletionWorkIDs = pendingDeletionIDs
         let parkedWorkIDs = Set(
             projection.items
@@ -93,7 +113,7 @@ extension AppState {
         }
         let works = worksByID.values.sorted { SyncV2LibraryPresentation.precedes(title: $0.title, workID: $0.workID, otherTitle: $1.title, otherWorkID: $1.workID) }
         snapshotSyncLibraryWorks = works
-        if shouldPresentSelection {
+        if shouldPresentRefreshedLibrary {
             startupState = .documentSelection(.init(works: works, presentation: .localAndRemote, connection: connection))
         }
     }
