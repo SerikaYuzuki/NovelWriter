@@ -346,6 +346,15 @@ extension AppState {
         }
     }
 
+    private func loadStartupSnapshotLibrary() async {
+        await refreshSnapshotLibrary()
+        startupState = .documentSelection(.init(
+            works: snapshotSyncLibraryWorks,
+            presentation: .localAndRemote,
+            connection: lastStartupLibraryConnection
+        ))
+    }
+
     func bootstrap(opening: URL? = nil, localFirst _: Bool = true) async {
         guard snapshotSyncV2Application != nil else {
             if case .recovery = startupState {} else {
@@ -370,12 +379,7 @@ extension AppState {
                 return
             }
             if userDefaults.bool(forKey: "fuminiwa.v2.startInLibrary") {
-                await refreshSnapshotLibrary()
-                startupState = .documentSelection(.init(
-                    works: snapshotSyncLibraryWorks,
-                    presentation: .localAndRemote,
-                    connection: lastStartupLibraryConnection
-                ))
+                await loadStartupSnapshotLibrary()
                 return
             }
             let workID = userDefaults.string(forKey: "fuminiwa.v2.activeWorkID")
@@ -406,12 +410,7 @@ extension AppState {
                 } catch SyncV2ApplicationError.workDeletionPending {
                     userDefaults.removeObject(forKey: "fuminiwa.v2.activeWorkID")
                     userDefaults.set(true, forKey: "fuminiwa.v2.startInLibrary")
-                    await refreshSnapshotLibrary()
-                    startupState = .documentSelection(.init(
-                        works: snapshotSyncLibraryWorks,
-                        presentation: .localAndRemote,
-                        connection: lastStartupLibraryConnection
-                    ))
+                    await loadStartupSnapshotLibrary()
                     return
                 } catch SyncV2ApplicationError.workNotFound {
                     // A fresh database may follow quarantine of an old v2
