@@ -1,5 +1,6 @@
 import NovelSyncV2Application
 import NovelUI
+import NovelWorkspace
 import SwiftUI
 
 struct ExplicitSyncButton: View {
@@ -64,8 +65,8 @@ struct ExplicitSyncButton: View {
 @Observable
 final class ExplicitSyncPresentation {
     var showingSetup = false
-    var session: AppDocumentSessionToken?
-    var account: SnapshotSyncV2AccountScopeToken?
+    var session: WorkspaceSessionToken?
+    var account: WorkspaceAccountScope?
 
     @MainActor
     func requestSync(appState: AppState) {

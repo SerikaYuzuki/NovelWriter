@@ -1,12 +1,13 @@
 import NovelCore
 import NovelThumbnail
 import NovelUI
+import NovelWorkspace
 import SwiftUI
 
 @MainActor
 struct IOSWorldbuildingFeatureView: View {
     let store: IOSDocumentStore
-    let expectedSession: IOSDocumentSessionToken?
+    let expectedSession: WorkspaceSessionToken?
     @State private var selection: WorldNoteID?
 
     init(store: IOSDocumentStore) {
@@ -27,7 +28,7 @@ struct IOSWorldbuildingFeatureView: View {
 struct IOSWorldNoteOutlineView: View {
     let store: IOSDocumentStore
     @Binding var selection: WorldNoteID?
-    let expectedSession: IOSDocumentSessionToken?
+    let expectedSession: WorkspaceSessionToken?
     let usesNavigationLinks: Bool
 
     @State private var deletionRequest: IOSWorldNoteDeletionRequest?
@@ -159,7 +160,7 @@ struct IOSWorldNoteOutlineView: View {
 struct IOSWorldNoteDetailView: View {
     let store: IOSDocumentStore
     let noteID: WorldNoteID?
-    let expectedSession: IOSDocumentSessionToken?
+    let expectedSession: WorkspaceSessionToken?
     var dismissAfterDeletion = false
     var onDeletion: () -> Void = {}
 
@@ -308,7 +309,7 @@ private struct IOSWorldNoteRow: View {
 
 private struct IOSWorldNoteDeletionRequest: Identifiable {
     let id = UUID()
-    let expectedSession: IOSDocumentSessionToken
+    let expectedSession: WorkspaceSessionToken
     let noteIDs: [WorldNoteID]
 
     var message: String {
@@ -318,7 +319,7 @@ private struct IOSWorldNoteDeletionRequest: Identifiable {
 
 private struct IOSSingleWorldNoteDeletionRequest: Identifiable {
     let id = UUID()
-    let expectedSession: IOSDocumentSessionToken
+    let expectedSession: WorkspaceSessionToken
     let noteID: WorldNoteID
     let displayTitle: String
 

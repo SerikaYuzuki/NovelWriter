@@ -44,31 +44,24 @@ enum IOSRuntimeComposition: Sendable {
 typealias IOSAuthUIState = WorkspaceAuthUIState
 
 struct IOSEpisodeEditingToken: Hashable, Sendable {
-    let documentSession: IOSDocumentSessionToken
+    let documentSession: WorkspaceSessionToken
     let chapterID: ChapterID
     let episodeID: EpisodeID
     let editorContentGeneration: UInt64
 }
 
 struct IOSEditorContentKey: Hashable {
-    let documentSession: IOSDocumentSessionToken
+    let documentSession: WorkspaceSessionToken
     let episodeID: EpisodeID
     let editorContentGeneration: UInt64
 }
 
 struct IOSSnapshotSyncV2ConflictSelection: Equatable, Sendable {
     let workID: WorkID
-    let session: IOSDocumentSessionToken
+    let session: WorkspaceSessionToken
     let editGeneration: UInt64
-    let accountScope: IOSSnapshotSyncV2AccountScope
+    let accountScope: WorkspaceAccountScope
     let conflict: SyncV2ConflictProjection
-}
-
-struct IOSSnapshotSyncV2AccountScope: Hashable, Sendable {
-    let accountID: String?
-    let accountFence: String?
-    let serverInstanceID: String?
-    let protocolEpoch: Int64?
 }
 
 private struct IOSDocumentStoreAuthComposition {
@@ -219,7 +212,7 @@ private enum IOSDocumentStoreComposition {
 @MainActor
 @Observable
 final class IOSDocumentStore {
-    let syncSessionController = SyncSessionController<IOSDocumentSessionToken?, IOSSnapshotSyncV2AccountScope, Void>()
+    let syncSessionController = SyncSessionController<Void>()
     static let lastDocumentNameKey = "FUMINIWAIOS.lastDocumentName"
     /// v2 reopens by WorkID.  The legacy package-recent key remains available
     /// for explicit import/export compatibility, but is never the v2 identity.
@@ -280,8 +273,8 @@ final class IOSDocumentStore {
     var libraryFailure: SyncV2Failure?
     var isSnapshotSyncInFlight = false
     var snapshotSyncState: SyncUIState?
-    @ObservationIgnored var presentedSyncFailures: [IOSSnapshotSyncV2AccountScope: [WorkID: SyncV2FatalReason]] = [:]
-    @ObservationIgnored var automaticAdoptionAttempts: [IOSSnapshotSyncV2AccountScope: [WorkID: Set<UUID>]] = [:]
+    @ObservationIgnored var presentedSyncFailures: [WorkspaceAccountScope: [WorkID: SyncV2FatalReason]] = [:]
+    @ObservationIgnored var automaticAdoptionAttempts: [WorkspaceAccountScope: [WorkID: Set<UUID>]] = [:]
     var pendingDeletionWorkIDs: Set<WorkID> = []
     var deletedLibraryWorkIDs: Set<WorkID> = []
     var syncV2LibraryItems: [SyncV2LibraryItem] = []
@@ -323,7 +316,7 @@ final class IOSDocumentStore {
         )
     }
 
-    var snapshotSyncV2AccountScope: IOSSnapshotSyncV2AccountScope {
+    var snapshotSyncV2AccountScope: WorkspaceAccountScope {
         let serverInstanceID: String?
         #if FUMINIWA_TEST_COMPOSITION
         serverInstanceID = testServerInstanceIDOverride
@@ -331,11 +324,12 @@ final class IOSDocumentStore {
         #else
         serverInstanceID = authSession?.serverInstanceID.uuidString.lowercased()
         #endif
-        return IOSSnapshotSyncV2AccountScope(
+        return WorkspaceAccountScope(
             accountID: authSession?.accountID,
             accountFence: authSession?.accountFence,
             serverInstanceID: serverInstanceID,
-            protocolEpoch: authSession.flatMap { Int64(exactly: $0.syncProtocolEpoch) }
+            protocolEpoch: authSession.flatMap { Int64(exactly: $0.syncProtocolEpoch) },
+            generation: syncSessionController.accountGeneration
         )
     }
 

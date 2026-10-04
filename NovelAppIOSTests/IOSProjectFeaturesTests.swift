@@ -1,6 +1,8 @@
 import Foundation
 @testable import FUMINIWAIOS
 import NovelCore
+import NovelSyncV2
+import NovelWorkspace
 import Testing
 
 @MainActor
@@ -127,9 +129,8 @@ struct IOSProjectMetadataFeatureTests {
             libraryRoot: environment.root
         )
         await store.bootstrap()
-        let unavailableSession = IOSDocumentSessionToken(
-            workingCopyID: IOSPrivateDocumentID(packageName: "missing.novelpkg"),
-            generation: 0
+        let unavailableSession = WorkspaceSessionToken(
+            generation: 0, documentID: UUID(), workID: WorkID(UUID())
         )
 
         #expect(store.startupState == .library)
@@ -176,7 +177,7 @@ struct IOSProjectMetadataFeatureTests {
         #expect(duplicatedDocumentID != originalDocumentID)
         #expect(await store.openPrivateDocument(id: originalDocumentID))
         let returnedSession = try #require(store.currentDocumentSessionToken)
-        #expect(returnedSession.workingCopyID == originalDocumentID)
+        #expect(IOSPrivateDocumentID(workID: returnedSession.workID) == originalDocumentID)
         #expect(returnedSession != originalSession)
 
         let snapshot = IOSMetadataSnapshot(document: store.document)
@@ -229,7 +230,7 @@ struct IOSAttachmentFeatureTests {
 
         #expect(await store.makeNewDocument())
         let secondSession = try #require(store.currentDocumentSessionToken)
-        #expect(secondSession.workingCopyID != firstDocumentID)
+        #expect(IOSPrivateDocumentID(workID: secondSession.workID) != firstDocumentID)
         #expect(store.attachments.isEmpty)
         store.operationErrorMessage = nil
         #expect(store.attachmentPreviewURL(for: attachment, expectedSession: firstSession) == nil)
@@ -242,7 +243,7 @@ struct IOSAttachmentFeatureTests {
 
         #expect(await store.openPrivateDocument(id: firstDocumentID))
         let returnedFirstSession = try #require(store.currentDocumentSessionToken)
-        #expect(returnedFirstSession.workingCopyID == firstDocumentID)
+        #expect(IOSPrivateDocumentID(workID: returnedFirstSession.workID) == firstDocumentID)
         #expect(returnedFirstSession != firstSession)
         #expect(store.attachments == [attachment])
         #expect(store.attachmentPreviewURL(for: attachment, expectedSession: firstSession) == nil)
@@ -290,7 +291,7 @@ private struct IOSMetadataSnapshot: Equatable {
 @MainActor
 private func expectStaleMetadataAddsAndUpdatesRejected(
     store: IOSDocumentStore,
-    session: IOSDocumentSessionToken,
+    session: WorkspaceSessionToken,
     snapshot: IOSMetadataSnapshot
 ) throws {
     var character = try #require(snapshot.characters.first)
@@ -315,7 +316,7 @@ private func expectStaleMetadataAddsAndUpdatesRejected(
 @MainActor
 private func expectStaleMetadataMovesAndDeletesRejected(
     store: IOSDocumentStore,
-    session: IOSDocumentSessionToken,
+    session: WorkspaceSessionToken,
     snapshot: IOSMetadataSnapshot
 ) throws {
     let characterID = try #require(snapshot.characters.first?.id)

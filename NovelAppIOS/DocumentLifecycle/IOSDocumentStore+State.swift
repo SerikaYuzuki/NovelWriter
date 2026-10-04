@@ -1,4 +1,5 @@
 import NovelCore
+import NovelWorkspace
 
 extension IOSDocumentStore {
     /// Only the short, document-gate-owned SQLite transition blocks local
@@ -54,9 +55,9 @@ extension IOSDocumentStore {
         return IOSPrivateDocumentID(workID: workID)
     }
 
-    var currentDocumentSessionToken: IOSDocumentSessionToken? {
-        guard let id = currentPrivateDocumentID else { return nil }
-        return IOSDocumentSessionToken(workingCopyID: id, generation: documentSessionGeneration)
+    var currentDocumentSessionToken: WorkspaceSessionToken? {
+        guard currentPrivateDocumentID != nil, let workID = syncV2ActiveWorkID else { return nil }
+        return WorkspaceSessionToken(generation: documentSessionGeneration, documentID: document.id, workID: workID)
     }
 
     var currentEpisodeEditingToken: IOSEpisodeEditingToken? {

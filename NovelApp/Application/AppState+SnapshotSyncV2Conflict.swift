@@ -3,26 +3,17 @@ import NovelCore
 import NovelSyncV2
 import NovelSyncV2Application
 import NovelSyncV2PortableBridge
+import NovelWorkspace
 
 /// Immutable values captured when the conflict sheet is presented.  A choice
 /// must never silently apply to a later WorkID/session/account or a newer CAS
 /// projection after the sheet has been left open.
 struct SnapshotSyncV2ConflictSelection: Hashable, Sendable {
     let workID: WorkID
-    let documentSession: AppDocumentSessionToken
+    let documentSession: WorkspaceSessionToken
     let snapshotSession: NovelSyncV2Application.DocumentSessionToken
-    let accountID: String?
-    let accountFence: String?
-    let accountScopeGeneration: UInt64
+    let accountScope: WorkspaceAccountScope
     let conflict: SyncV2ConflictProjection
-
-    var accountScope: SnapshotSyncV2AccountScopeToken {
-        SnapshotSyncV2AccountScopeToken(
-            accountID: accountID,
-            accountFence: accountFence,
-            generation: accountScopeGeneration
-        )
-    }
 }
 
 /// macOSの競合選択と安全なserver adoption。選択は既存SQLite世代を証明して
@@ -37,19 +28,17 @@ extension AppState {
             workID: workID,
             documentSession: documentSessionToken,
             snapshotSession: snapshotSession,
-            accountID: authSession?.accountID,
-            accountFence: authSession?.accountFence,
-            accountScopeGeneration: snapshotSyncV2AccountScopeGeneration,
+            accountScope: snapshotSyncV2AccountScopeToken,
             conflict: conflict
         )
     }
 
     private func matchesSnapshotSyncV2Identity(
         workID: WorkID,
-        documentSession: AppDocumentSessionToken,
+        documentSession: WorkspaceSessionToken,
         snapshotSession: NovelSyncV2Application.DocumentSessionToken
     ) -> Bool {
-        matchesSyncOperation(SyncOperationContext(
+        matchesSyncOperation(WorkspaceOperationContext(
             workID: workID, session: documentSession,
             account: snapshotSyncV2AccountScopeToken, editGeneration: nil
         )) && snapshotSyncV2Session == snapshotSession
@@ -111,9 +100,7 @@ extension AppState {
             workID: workID,
             documentSession: documentSessionToken,
             snapshotSession: snapshotSession,
-            accountID: authSession?.accountID,
-            accountFence: authSession?.accountFence,
-            accountScopeGeneration: snapshotSyncV2AccountScopeGeneration,
+            accountScope: snapshotSyncV2AccountScopeToken,
             conflict: conflict
         )
         return await resolveSnapshotConflict(using: choice, selection: selection)
@@ -225,7 +212,7 @@ extension AppState {
     /// becomes dirty or the CAS changes, `applySnapshotSyncV2ServerVersion`
     /// returns false and the status control remains the explicit retry path.
     func scheduleAutomaticServerAdoption(
-        expectedAccountScope: SnapshotSyncV2AccountScopeToken? = nil
+        expectedAccountScope: WorkspaceAccountScope? = nil
     ) {
         // Reprojection may be requested by several observers of the same
         // ready Inbox. Keep its owner alive through the safe-adoption awaits;
@@ -283,7 +270,7 @@ extension AppState {
 
     @discardableResult
     private func applySnapshotSyncV2ServerVersion(
-        expectedAccountScope: SnapshotSyncV2AccountScopeToken,
+        expectedAccountScope: WorkspaceAccountScope,
         automatically: Bool = false
     ) async -> Bool {
         guard let workID = currentSnapshotSyncV2WorkID,
@@ -321,9 +308,9 @@ extension AppState {
     /// boundary until this adoption and its attempt cleanup have finished.
     private func adoptSnapshotSyncV2AtPreparedBoundary(
         application: SyncV2Application,
-        expectedDocumentSession: AppDocumentSessionToken,
+        expectedDocumentSession: WorkspaceSessionToken,
         expectedSnapshotSession: NovelSyncV2Application.DocumentSessionToken,
-        expectedAccountScope: SnapshotSyncV2AccountScopeToken,
+        expectedAccountScope: WorkspaceAccountScope,
         automatically: Bool
     ) async -> Bool {
         guard let platformGate = snapshotSyncV2DocumentGate else { return false }
@@ -432,7 +419,7 @@ extension AppState {
     private func pendingSnapshotSyncV2ServerAdoption(
         application: SyncV2Application,
         workID: WorkID,
-        expectedAccountScope: SnapshotSyncV2AccountScopeToken
+        expectedAccountScope: WorkspaceAccountScope
     ) async throws -> SyncV2PendingAdoption? {
         guard matchesSnapshotSyncV2AccountScope(expectedAccountScope),
               saveState == .saved,
@@ -451,9 +438,9 @@ extension AppState {
     private func installSnapshotSyncV2ServerAdoption(
         _ opened: SyncV2OpenedWork,
         application: SyncV2Application,
-        expectedDocumentSession: AppDocumentSessionToken,
+        expectedDocumentSession: WorkspaceSessionToken,
         expectedSnapshotSession: NovelSyncV2Application.DocumentSessionToken,
-        expectedAccountScope: SnapshotSyncV2AccountScopeToken
+        expectedAccountScope: WorkspaceAccountScope
     ) async -> Bool {
         guard let adopted = opened.document else { return false }
         let retainedEpisode = selectedEpisodeID.flatMap { adopted.episode($0) }

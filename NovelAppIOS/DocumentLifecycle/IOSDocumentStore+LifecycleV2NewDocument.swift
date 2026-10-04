@@ -2,14 +2,15 @@ import Foundation
 import NovelCore
 import NovelSyncV2
 import NovelSyncV2Application
+import NovelWorkspace
 
 struct IOSNewDocumentCheckpointContext {
     let candidateWorkID: WorkID
     let candidateCreatedAt: Date
     let application: SyncV2Application
-    let expectedSession: IOSDocumentSessionToken?
+    let expectedSession: WorkspaceSessionToken?
     let expectedWorkID: WorkID?
-    let expectedAccountScope: IOSSnapshotSyncV2AccountScope
+    let expectedAccountScope: WorkspaceAccountScope
 }
 
 extension IOSDocumentStore {

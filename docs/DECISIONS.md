@@ -154,11 +154,13 @@ P2完了：SyncPresentation、HistoryFetchControls／ConnectivityRecovery、Work
 
 P3完了：認証表示とローカル保存状態をNovelWorkspaceの共通値型へ統合（既存名はtypealias、iOSのdirtyはunsavedの互換名）。作品棚の文言とpreview fixtureをNovelWorkspaceUIへ、local projection＋remote catalog＋削除待ち／削除済みIDのmergeをNovelWorkspaceへ移した。D6により、macOSでも通常projectionから外れた削除待ち作品を最後の棚から保持し、「削除待ち・接続時に再試行」を表示して削除を再試行できる。削除済み作品はlocal行も一覧から消え、catalogや古い保持行で再表示しない。別account保留行、競合表示、タイトル自然順とWorkID同名順を維持する。refreshSnapshotLibraryのstartupStateはawait前の値で決めず、書込時の現在値で作品選択の表示を判断する。認証flow、checkpoint、conflict choice、identity tokenは変更しない。
 
+P4完了：app側のdocument sessionを`WorkspaceSessionToken { generation, workID, documentID }`へ統合し、iOSのdocumentIDはinstall済みdocumentから取得する。iOSの棚・ナビゲーション用IDはWorkIDから導出し、packageNameをtoken equalityに含めない。`NovelSyncV2Application.DocumentSessionToken`はgate固有のまま維持する。account scopeを全5fieldの`WorkspaceAccountScope`へ統合し、両OSの無効化ごとにgenerationを増やす（D1解決）。`SyncSessionController`のsession／account genericを除去し、共通`WorkspaceOperationContext`でWorkID／session／account／編集世代を照合する。remote taskの戻り値だけはOSごとのgenericを維持する。MacのAuthOperationGate、認証flow、各OSの取消policy、ローカル保存とdocument gateは変更しない。
+
 片方の意味を暗黙に採用しない。以下は後続phaseの統合方針であり、P1では適用しない。
 
 | 差 | 現状 | 推奨・判断 |
 | --- | --- | --- |
-| D1 | account scopeはMacがaccountID／fence／generation、iOSがaccountID／fence／serverInstanceID／protocolEpoch。iOSのaccountGenerationは増えずWorkSearchの照合が無効 | 全fieldを持つ一つの型へ統合し、両OSで無効化時にgenerationを増やす |
+| D1 | P4で解決。旧iOSはaccountGenerationが増えず、同一bindingでの無効化前completionをaccount scopeだけで拒否できなかった | 全5field（accountID／fence／serverInstanceID／protocolEpoch／generation）を照合し、両OSで無効化ごとにgenerationを増やす |
 | D2 | Macのcheckpointはawait後にwork／accountを再検証せず、iOSは再検証する | iOSを採用 |
 | D3 | 未保存編集がある作品全体復元はMacがgate内で保存後に復元し、iOSは拒否 | Macを採用（2026-10-04オーナー決定）。gate内で保存し、その版を履歴に残してから復元する |
 | D4 | Macのkeep-bothは元作品のwrite freeze（syncV2KeepBothPendingWorkID）がない | iOSを採用 |

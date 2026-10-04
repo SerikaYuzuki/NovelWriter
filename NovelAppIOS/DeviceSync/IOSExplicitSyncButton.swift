@@ -1,5 +1,6 @@
 import NovelSyncV2Application
 import NovelUI
+import NovelWorkspace
 import SwiftUI
 
 struct IOSExplicitSyncButton: View {
@@ -7,8 +8,8 @@ struct IOSExplicitSyncButton: View {
     var status: SyncV2LibraryStatus?
     @State private var delayClock = SyncV2DelayClock()
     @State private var showingSetup = false
-    @State private var session: IOSDocumentSessionToken?
-    @State private var account: IOSSnapshotSyncV2AccountScope?
+    @State private var session: WorkspaceSessionToken?
+    @State private var account: WorkspaceAccountScope?
 
     private var isSignedIn: Bool {
         if case .signedIn = store.authUIState {

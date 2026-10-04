@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import NovelWorkspace
 import Observation
 
 /// File メニューの作品作成・明示的な `.novelpkg` 取り込みを担う薄い層。
@@ -17,7 +18,7 @@ final class DocumentPanelPresenter {
         self.appState = appState
     }
 
-    func presentNewDocument(expectedSession: DocumentSessionToken? = nil) {
+    func presentNewDocument(expectedSession: WorkspaceSessionToken? = nil) {
         guard appState.permitsNewDocument else { return }
         let session = expectedSession ?? appState.documentSessionToken
         Task {
@@ -32,7 +33,7 @@ final class DocumentPanelPresenter {
         }
     }
 
-    func presentOpenPanel(expectedSession: DocumentSessionToken? = nil) {
+    func presentOpenPanel(expectedSession: WorkspaceSessionToken? = nil) {
         guard appState.permitsDocumentImport else { return }
         let session = expectedSession ?? appState.documentSessionToken
         guard session == appState.documentSessionToken else { return }

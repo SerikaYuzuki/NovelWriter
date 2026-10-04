@@ -1,6 +1,8 @@
 import Foundation
 @testable import FUMINIWAIOS
 import NovelCore
+import NovelSyncV2
+import NovelWorkspace
 import SwiftUI
 import Testing
 import UIKit
@@ -26,7 +28,7 @@ struct IOSWorkspaceNavigationTests {
         #expect(navigation.path.isEmpty)
         #expect(store.currentDocumentSessionToken == session)
         #expect(!store.isDocumentTransitionInProgress)
-        #expect(await store.openPrivateDocument(id: session.workingCopyID))
+        #expect(await store.openPrivateDocument(id: IOSPrivateDocumentID(workID: session.workID)))
     }
 
     @Test("一覧の端末保存済み作品はサーバー専用経路を使わず開く", arguments: [false, true])
@@ -51,8 +53,8 @@ struct IOSWorkspaceNavigationTests {
     }
 
     @Test("account scope park removes every stale document route")
-    func accountScopeParkReturnsToLibrary() {
-        let session = makeSession(packageName: "account-work.novelpkg")
+    func accountScopeParkReturnsToLibrary() throws {
+        let session = try makeSession(documentID: #require(UUID(uuidString: "2c20016c-fd1b-5960-babe-9377afd8e281")))
         let navigation = IOSWorkspaceNavigationCoordinator()
         navigation.showProjectHome(for: session)
         navigation.showWriting(for: session)
@@ -64,8 +66,8 @@ struct IOSWorkspaceNavigationTests {
     }
 
     @Test("標準Back相当のpath更新はeditorを破棄する前に同期する")
-    func editorPopSynchronizesBeforePathMutation() {
-        let session = makeSession(packageName: "work.novelpkg")
+    func editorPopSynchronizesBeforePathMutation() throws {
+        let session = try makeSession(documentID: #require(UUID(uuidString: "af39f015-c404-583f-ab4d-63647bf857ec")))
         let chapterID = ChapterID()
         let episodeID = EpisodeID()
         let navigation = IOSWorkspaceNavigationCoordinator()
@@ -103,8 +105,8 @@ struct IOSWorkspaceNavigationTests {
     }
 
     @Test("IME確定に失敗した場合はBack相当のpath更新を中止する")
-    func rejectedEditorDepartureKeepsPath() {
-        let session = makeSession(packageName: "work.novelpkg")
+    func rejectedEditorDepartureKeepsPath() throws {
+        let session = try makeSession(documentID: #require(UUID(uuidString: "af39f015-c404-583f-ab4d-63647bf857ec")))
         let navigation = IOSWorkspaceNavigationCoordinator()
         navigation.showProjectHome(for: session)
         navigation.showWriting(for: session)
@@ -126,8 +128,8 @@ struct IOSWorkspaceNavigationTests {
     }
 
     @Test("iPadの執筆画面離脱は現在選択中のeditor同期を要求する")
-    func writingPopRequestsAdaptiveEditorSynchronization() {
-        let session = makeSession(packageName: "work.novelpkg")
+    func writingPopRequestsAdaptiveEditorSynchronization() throws {
+        let session = try makeSession(documentID: #require(UUID(uuidString: "af39f015-c404-583f-ab4d-63647bf857ec")))
         let navigation = IOSWorkspaceNavigationCoordinator()
         navigation.showProjectHome(for: session)
         navigation.showWriting(for: session)
@@ -293,12 +295,11 @@ struct IOSWorkspaceNavigationTests {
     }
 
     private func makeSession(
-        packageName: String,
+        documentID: UUID,
         generation: UInt64 = 1
-    ) -> IOSDocumentSessionToken {
-        IOSDocumentSessionToken(
-            workingCopyID: IOSPrivateDocumentID(packageName: packageName),
-            generation: generation
+    ) -> WorkspaceSessionToken {
+        WorkspaceSessionToken(
+            generation: generation, documentID: documentID, workID: WorkID(documentID)
         )
     }
 

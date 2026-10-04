@@ -3,6 +3,7 @@ import NovelCore
 import NovelSyncV2
 import NovelSyncV2Application
 import NovelUI
+import NovelWorkspace
 import NovelWorkspaceUI
 import SwiftUI
 
@@ -53,7 +54,7 @@ struct ContentView: View {
                 showingConflict = conflict != nil
             }
             .onReceive(NotificationCenter.default.publisher(for: .presentWorkHistory)) { notification in
-                guard let session = notification.object as? DocumentSessionToken,
+                guard let session = notification.object as? WorkspaceSessionToken,
                       appState.documentSessionToken == session else { return }
                 showingConflictHistory = true
             }

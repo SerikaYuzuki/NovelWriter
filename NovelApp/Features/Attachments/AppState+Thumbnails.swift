@@ -2,6 +2,7 @@ import Foundation
 import NovelCore
 import NovelSyncV2
 import NovelThumbnail
+import NovelWorkspace
 
 extension AppState {
     /// Install the owner edit and its image removal without a suspension or intermediate checkpoint.
@@ -26,8 +27,8 @@ extension AppState {
         attachmentPreviewURLs.removeValue(forKey: owner.fileName)
     }
 
-    func setThumbnail(_ bytes: Data?, owner: ThumbnailOwner, session: DocumentSessionToken,
-                      account: SnapshotSyncV2AccountScopeToken) async -> Bool {
+    func setThumbnail(_ bytes: Data?, owner: ThumbnailOwner, session: WorkspaceSessionToken,
+                      account: WorkspaceAccountScope) async -> Bool {
         guard matchesSnapshotSyncV2AccountScope(account) else { return false }
         return await performSnapshotDataMutation(expectedSession: session) {
             guard self.snapshotSyncV2AccountScopeToken == account, owner.exists(in: self.document) else { return false }

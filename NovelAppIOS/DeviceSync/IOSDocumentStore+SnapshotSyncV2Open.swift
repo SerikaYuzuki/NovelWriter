@@ -5,6 +5,7 @@ import NovelSyncV2
 import NovelSyncV2Application
 import NovelSyncV2PortableBridge
 import NovelSyncV2Runtime
+import NovelWorkspace
 import SwiftUI
 
 extension IOSDocumentStore {
@@ -58,7 +59,7 @@ extension IOSDocumentStore {
     /// have already become the active editor.
     @discardableResult
     func startRemoteOnlySnapshotSyncV2Open(workID: WorkID, shouldOpen: @escaping @MainActor () -> Bool = { true },
-                                           onOpened: @escaping @MainActor (IOSDocumentSessionToken) -> Void = { _ in }) async -> Bool {
+                                           onOpened: @escaping @MainActor (WorkspaceSessionToken) -> Void = { _ in }) async -> Bool {
         guard !isSyncV2RemoteAccountTransitionActive,
               let application = snapshotSyncV2Application,
               syncV2LibraryItems.contains(where: {
@@ -68,8 +69,8 @@ extension IOSDocumentStore {
         let title = syncV2LibraryItems.first(where: { $0.workID == workID })?.title ?? "作品"
         let expectedSession = currentDocumentSessionToken
         let expectedAccountScope = snapshotSyncV2AccountScope
-        let operation = SyncOperationContext(workID: expectedSession?.workID, session: expectedSession,
-                                             account: expectedAccountScope, editGeneration: nil)
+        let operation = WorkspaceOperationContext(workID: expectedSession?.workID, session: expectedSession,
+                                                  account: expectedAccountScope, editGeneration: nil)
         let operationToken = syncSessionController.beginRemoteOnlyOpen(workID: workID)
         snapshotSyncV2RemoteOnlyOpenFailure = nil
         libraryNotice = nil
@@ -160,8 +161,8 @@ extension IOSDocumentStore {
     private func reportRemoteOnlySnapshotSyncV2OpenResult(
         installed: Bool,
         title: String,
-        expectedSession: IOSDocumentSessionToken?,
-        expectedAccountScope: IOSSnapshotSyncV2AccountScope,
+        expectedSession: WorkspaceSessionToken?,
+        expectedAccountScope: WorkspaceAccountScope,
         shouldOpen: @MainActor () -> Bool
     ) async {
         guard !Task.isCancelled, matchesSyncAccount(expectedAccountScope) else { return }

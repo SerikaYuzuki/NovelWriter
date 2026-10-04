@@ -5,10 +5,38 @@ import NovelCore
 import NovelSyncV2
 import NovelSyncV2Application
 import NovelSyncV2Store
+import NovelWorkspace
 import Testing
 
 @MainActor
 struct IOSSnapshotSyncV2P1TransitionTests {
+    @Test("each invalidation retires completions with the same account binding")
+    @MainActor
+    func invalidationAdvancesScopeAndRejectsCompletion() async throws {
+        let defaults = try #require(UserDefaults(suiteName: "FUMINIWA.P4AccountScope.\(UUID().uuidString)"))
+        let configuration = try TestRuntimeConfiguration()
+        let store = IOSDocumentStore(userDefaults: defaults, libraryRoot: configuration.localRoot.url)
+        for _ in 0 ..< 2 {
+            let scope = store.snapshotSyncV2AccountScope
+            let completion = WorkspaceOperationContext(workID: store.syncV2ActiveWorkID,
+                                                       session: store.currentDocumentSessionToken, account: scope, editGeneration: nil)
+            #expect(store.matchesSyncAccount(scope))
+            #expect(store.matchesSyncOperation(completion))
+            await Task.yield()
+            store.invalidateSnapshotSyncV2AccountOperations()
+            let current = store.snapshotSyncV2AccountScope
+            #expect(current.generation == scope.generation + 1)
+            #expect(current.accountID == scope.accountID)
+            #expect(current.accountFence == scope.accountFence)
+            #expect(current.serverInstanceID == scope.serverInstanceID)
+            #expect(current.protocolEpoch == scope.protocolEpoch)
+            #expect(!store.matchesSyncAccount(scope))
+            #expect(!store.matchesRemoteSyncAccount(scope))
+            #expect(!store.matchesLocalSyncAccount(scope))
+            #expect(!store.matchesSyncOperation(completion))
+        }
+    }
+
     @Test("parked local Work wins over a same-ID remote catalog row")
     func parkedCatalogCollisionKeepsLocalOnlyRow() throws {
         let workID = WorkID(UUID())
@@ -316,11 +344,12 @@ struct IOSSnapshotSyncV2P1TransitionTests {
             workID: displayed.workID,
             session: displayed.session,
             editGeneration: displayed.editGeneration,
-            accountScope: IOSSnapshotSyncV2AccountScope(
+            accountScope: WorkspaceAccountScope(
                 accountID: "same-account",
                 accountFence: "same-fence",
                 serverInstanceID: oldServer.uuidString.lowercased(),
-                protocolEpoch: 3
+                protocolEpoch: 3,
+                generation: displayed.accountScope.generation
             ),
             conflict: displayed.conflict
         )

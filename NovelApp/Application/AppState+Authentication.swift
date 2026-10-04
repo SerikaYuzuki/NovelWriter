@@ -2,6 +2,7 @@ import Foundation
 import NovelAuth
 import NovelAuthApple
 import NovelSyncV2Application
+import NovelWorkspace
 
 extension AppState {
     @discardableResult
@@ -65,16 +66,18 @@ extension AppState {
         return false
     }
 
-    var snapshotSyncV2AccountScopeToken: SnapshotSyncV2AccountScopeToken {
-        SnapshotSyncV2AccountScopeToken(
+    var snapshotSyncV2AccountScopeToken: WorkspaceAccountScope {
+        WorkspaceAccountScope(
             accountID: authSession?.accountID,
             accountFence: authSession?.accountFence,
+            serverInstanceID: authSession?.serverInstanceID.uuidString.lowercased(),
+            protocolEpoch: authSession.flatMap { Int64(exactly: $0.syncProtocolEpoch) },
             generation: snapshotSyncV2AccountScopeGeneration
         )
     }
 
     func matchesSnapshotSyncV2AccountScope(
-        _ expected: SnapshotSyncV2AccountScopeToken
+        _ expected: WorkspaceAccountScope
     ) -> Bool {
         syncSessionController.matchesAccount(expected, current: snapshotSyncV2AccountScopeToken)
     }
@@ -191,7 +194,7 @@ extension AppState {
             }
             guard ownsAuthOperation(operationOwner) else { return false }
             clearAccountScopedSnapshotUI()
-            documentSessionToken = AppDocumentSessionToken(
+            documentSessionToken = WorkspaceSessionToken(
                 generation: documentSessionToken.generation &+ 1,
                 documentID: document.id,
                 workID: currentSnapshotSyncV2WorkID ?? documentSessionToken.workID

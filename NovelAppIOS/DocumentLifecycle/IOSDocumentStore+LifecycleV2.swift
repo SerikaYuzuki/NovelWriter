@@ -3,6 +3,7 @@ import NovelCore
 import NovelSyncV2
 import NovelSyncV2Application
 import NovelSyncV2PortableBridge
+import NovelWorkspace
 import NovelWorkspaceUI
 
 extension IOSDocumentStore {
@@ -330,9 +331,9 @@ extension IOSDocumentStore {
     }
 
     private func matchesSnapshotSyncV2OperationSource(
-        session: IOSDocumentSessionToken?,
+        session: WorkspaceSessionToken?,
         workID: WorkID?,
-        accountScope: IOSSnapshotSyncV2AccountScope
+        accountScope: WorkspaceAccountScope
     ) -> Bool {
         !isSyncV2AccountTransitionActive
             && currentDocumentSessionToken == session

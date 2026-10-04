@@ -1,12 +1,13 @@
 import Foundation
 import NovelCore
 import NovelUI
+import NovelWorkspace
 import SwiftUI
 
 struct EpisodeDeletionRequest: Identifiable {
     let episode: Episode
     let chapterID: ChapterID
-    let session: DocumentSessionToken
+    let session: WorkspaceSessionToken
 
     var id: EpisodeID {
         episode.id

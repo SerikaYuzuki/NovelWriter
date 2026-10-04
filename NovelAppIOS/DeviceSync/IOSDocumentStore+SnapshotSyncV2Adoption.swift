@@ -5,17 +5,18 @@ import NovelSyncV2
 import NovelSyncV2Application
 import NovelSyncV2PortableBridge
 import NovelSyncV2Runtime
+import NovelWorkspace
 
-typealias AutoAdoptionExpectation = IOSDocumentStore.SyncOperationContext
+typealias AutoAdoptionExpectation = WorkspaceOperationContext
 
 extension IOSDocumentStore {
     /// Adopt a verified remote resolution only after the iOS document gate,
     /// IME boundary, editor generation, and local pending intent are safe.
     @discardableResult
     func adoptPendingSnapshotSyncV2(
-        expectedSession: IOSDocumentSessionToken? = nil,
+        expectedSession: WorkspaceSessionToken? = nil,
         expectedEditGeneration: UInt64? = nil,
-        expectedAccountScope: IOSSnapshotSyncV2AccountScope? = nil,
+        expectedAccountScope: WorkspaceAccountScope? = nil,
         automatically: Bool = false
     ) async -> Bool {
         guard !isSyncV2RemoteAccountTransitionActive,
@@ -29,8 +30,8 @@ extension IOSDocumentStore {
         }
         let expectedEditGeneration = expectedEditGeneration ?? localEditGeneration
         let expectedAccountScope = expectedAccountScope ?? snapshotSyncV2AccountScope
-        let operation = SyncOperationContext(workID: expectedSession.workID, session: expectedSession,
-                                             account: expectedAccountScope, editGeneration: expectedEditGeneration)
+        let operation = WorkspaceOperationContext(workID: expectedSession.workID, session: expectedSession,
+                                                  account: expectedAccountScope, editGeneration: expectedEditGeneration)
         return await documentOperationGate.perform { [weak self] in
             guard let self else { return false }
             guard matchesRemoteSyncAccount(expectedAccountScope) else { return false }
@@ -133,7 +134,7 @@ extension IOSDocumentStore {
         }
     }
 
-    func claimAutomaticAdoption(_ pending: SyncV2PendingAdoption, account: IOSSnapshotSyncV2AccountScope) -> Bool {
+    func claimAutomaticAdoption(_ pending: SyncV2PendingAdoption, account: WorkspaceAccountScope) -> Bool {
         guard !pending.requiresExplicitConfirmation,
               automaticAdoptionAttempts[account]?[pending.workID]?.contains(pending.inboxID) != true else { return false }
         automaticAdoptionAttempts[account, default: [:]][pending.workID, default: []].insert(pending.inboxID)

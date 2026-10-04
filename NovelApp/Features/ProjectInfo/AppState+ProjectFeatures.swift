@@ -3,6 +3,7 @@ import EditorKit
 import Foundation
 import NovelCore
 import NovelThumbnail
+import NovelWorkspace
 
 extension AppState {
     // MARK: - 登場人物
@@ -211,7 +212,7 @@ extension AppState {
 
     /// 登場人物を削除する。
     @discardableResult
-    func deleteCharacter(id: CharacterID, expectedSession: DocumentSessionToken? = nil) -> Bool {
+    func deleteCharacter(id: CharacterID, expectedSession: WorkspaceSessionToken? = nil) -> Bool {
         guard permitsMutation(expectedSession: expectedSession) else { return false }
         guard let originalIndex = document.characters.firstIndex(where: { $0.id == id }) else { return false }
         var replacement = document
@@ -297,7 +298,7 @@ extension AppState {
 
     /// プロットカードを削除する。
     @discardableResult
-    func deletePlotCard(id: PlotCardID, expectedSession: DocumentSessionToken? = nil) -> Bool {
+    func deletePlotCard(id: PlotCardID, expectedSession: WorkspaceSessionToken? = nil) -> Bool {
         guard permitsMutation(expectedSession: expectedSession) else { return false }
         guard let originalIndex = document.plotCards.firstIndex(where: { $0.id == id }) else { return false }
         guard document.removePlotCard(id: id) != nil else { return false }
@@ -464,7 +465,7 @@ extension AppState {
 
     /// 伏線を削除する。
     @discardableResult
-    func deleteFlag(id: FlagID, expectedSession: DocumentSessionToken? = nil) -> Bool {
+    func deleteFlag(id: FlagID, expectedSession: WorkspaceSessionToken? = nil) -> Bool {
         guard permitsMutation(expectedSession: expectedSession) else { return false }
         guard let originalIndex = document.flags.firstIndex(where: { $0.id == id }) else { return false }
         guard document.removeFlag(id: id) != nil else { return false }

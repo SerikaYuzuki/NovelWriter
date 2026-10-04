@@ -7,27 +7,8 @@ import Observation
 /// host still commits IME, saves locally and installs while holding its gate.
 @MainActor
 @Observable
-public final class SyncSessionController<Session: Equatable & Sendable, Account: Equatable & Sendable, OpenResult: Sendable> {
+public final class SyncSessionController<OpenResult: Sendable> {
     public init() {}
-
-    public struct OperationContext: Sendable {
-        public let workID: WorkID?
-        public let session: Session
-        public let account: Account
-        public let editGeneration: UInt64?
-
-        public init(workID: WorkID?, session: Session, account: Account, editGeneration: UInt64?) {
-            self.workID = workID
-            self.session = session
-            self.account = account
-            self.editGeneration = editGeneration
-        }
-
-        public func isCurrent(_ current: Self) -> Bool {
-            workID == current.workID && session == current.session
-                && account == current.account && editGeneration == current.editGeneration
-        }
-    }
 
     public var remoteOnlyTask: Task<OpenResult, Never>?
     public var remoteOnlyOwner: UUID?
@@ -118,7 +99,7 @@ public final class SyncSessionController<Session: Equatable & Sendable, Account:
         }
     }
 
-    public func matchesAccount(_ expected: Account, current: Account, transitionActive: Bool = false) -> Bool {
+    public func matchesAccount(_ expected: WorkspaceAccountScope, current: WorkspaceAccountScope, transitionActive: Bool = false) -> Bool {
         !transitionActive && current == expected
     }
 

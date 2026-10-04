@@ -2,6 +2,7 @@ import AppKit
 import EditorKit
 import NovelCore
 import NovelUI
+import NovelWorkspace
 import SwiftUI
 
 struct EditorPaneView: View {
@@ -96,7 +97,7 @@ struct EditorPaneView: View {
     private func selectionCopyCommands(
         episodeID: EpisodeID,
         chapterID: ChapterID,
-        session: DocumentSessionToken
+        session: WorkspaceSessionToken
     ) -> [EditorSelectionContextMenuCommand] {
         [
             EditorSelectionContextMenuCommand(

@@ -1,3 +1,4 @@
+import NovelWorkspace
 #if os(macOS)
 import Foundation
 import NovelCore
@@ -15,8 +16,8 @@ extension AppState {
         return attachments.filter { !feedbackNames.contains($0.fileName) && !(ThumbnailOwner(fileName: $0.fileName)?.exists(in: document) ?? false) }
     }
 
-    func saveAssistantFeedback(_ feedback: AssistantFeedback, session: DocumentSessionToken,
-                               account: SnapshotSyncV2AccountScopeToken) async -> Bool {
+    func saveAssistantFeedback(_ feedback: AssistantFeedback, session: WorkspaceSessionToken,
+                               account: WorkspaceAccountScope) async -> Bool {
         guard feedback.purpose == .impressions else { return false }
         return await mutateAssistantFeedback(session: session, account: account) {
             if let existing = self.assistantFeedback.first(where: { $0.id == feedback.id }) {
@@ -28,8 +29,8 @@ extension AppState {
         }
     }
 
-    func deleteAssistantFeedback(_ feedback: AssistantFeedback, session: DocumentSessionToken,
-                                 account: SnapshotSyncV2AccountScopeToken) async -> Bool {
+    func deleteAssistantFeedback(_ feedback: AssistantFeedback, session: WorkspaceSessionToken,
+                                 account: WorkspaceAccountScope) async -> Bool {
         await mutateAssistantFeedback(session: session, account: account) {
             guard self.assistantFeedback.contains(feedback),
                   let attachment = self.attachments.first(where: { $0.fileName == feedback.fileName }) else { return false }
@@ -37,7 +38,7 @@ extension AppState {
         }
     }
 
-    private func mutateAssistantFeedback(session: DocumentSessionToken, account: SnapshotSyncV2AccountScopeToken,
+    private func mutateAssistantFeedback(session: WorkspaceSessionToken, account: WorkspaceAccountScope,
                                          operation: () async -> Bool) async -> Bool {
         await documentOperationGate.perform {
             guard self.documentSessionToken == session, self.snapshotSyncV2AccountScopeToken == account,

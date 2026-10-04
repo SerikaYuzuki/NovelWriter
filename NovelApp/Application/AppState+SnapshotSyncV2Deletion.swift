@@ -2,17 +2,18 @@ import Foundation
 import NovelCore
 import NovelSyncV2
 import NovelSyncV2Application
+import NovelWorkspace
 
 extension AppState {
     /// The document gate covers the local intent and editor retirement only.
     /// Network deletion runs after it releases so other works remain usable.
-    func deleteLibraryWork(_ work: StartupLibraryWork, accountScope: SnapshotSyncV2AccountScopeToken) async -> Bool {
+    func deleteLibraryWork(_ work: StartupLibraryWork, accountScope: WorkspaceAccountScope) async -> Bool {
         guard let application = snapshotSyncV2Application,
               matchesSnapshotSyncV2AccountScope(accountScope),
               !isDocumentTransitionInProgress, !isTerminationPending,
               interactiveAuthOperationCount == 0 else { return false }
-        let context = SyncOperationContext(workID: currentSnapshotSyncV2WorkID, session: documentSessionToken,
-                                           account: accountScope, editGeneration: nil)
+        let context = WorkspaceOperationContext(workID: currentSnapshotSyncV2WorkID, session: documentSessionToken,
+                                                account: accountScope, editGeneration: nil)
         cancelSnapshotSyncV2BackgroundOperations()
         let prepared = await documentOperationGate.perform { [weak self] in
             guard let self, matchesSyncOperation(context),
@@ -43,7 +44,7 @@ extension AppState {
                             selectedFlagID = nil
                             selectedWorldNoteID = nil
                             editorContentGeneration &+= 1
-                            documentSessionToken = AppDocumentSessionToken(
+                            documentSessionToken = WorkspaceSessionToken(
                                 generation: editorContentGeneration,
                                 documentID: document.id,
                                 workID: WorkID(UUID())

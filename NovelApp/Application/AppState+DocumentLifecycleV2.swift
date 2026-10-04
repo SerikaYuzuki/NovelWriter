@@ -1,5 +1,6 @@
 import Foundation
 import NovelCore
+import NovelWorkspace
 import NovelWorkspaceUI
 
 extension Notification.Name {
@@ -27,11 +28,11 @@ extension AppState {
         }
     }
 
-    func permitsEditorSynchronization(expectedSession: DocumentSessionToken?) -> Bool {
+    func permitsEditorSynchronization(expectedSession: WorkspaceSessionToken?) -> Bool {
         permitsDocumentInteraction && (expectedSession == nil || expectedSession == documentSessionToken)
     }
 
-    func permitsMutation(expectedSession: DocumentSessionToken?) -> Bool {
+    func permitsMutation(expectedSession: WorkspaceSessionToken?) -> Bool {
         permitsEditorSynchronization(expectedSession: expectedSession)
     }
 
@@ -153,7 +154,7 @@ extension AppState {
 
     func deleteChapterAfterTransition(
         id: ChapterID,
-        expectedSession: DocumentSessionToken
+        expectedSession: WorkspaceSessionToken
     ) async -> Bool {
         guard documentSessionToken == expectedSession else { return false }
         return await documentOperationGate.perform { [weak self] in
@@ -183,7 +184,7 @@ extension AppState {
     func deleteEpisodeAfterTransition(
         id: EpisodeID,
         from chapterID: ChapterID,
-        expectedSession: DocumentSessionToken
+        expectedSession: WorkspaceSessionToken
     ) async -> Bool {
         guard documentSessionToken == expectedSession else { return false }
         return await documentOperationGate.perform { [weak self] in
@@ -265,7 +266,7 @@ extension AppState {
         }
     }
 
-    func createNewDocument(expectedSession: DocumentSessionToken? = nil) async -> Bool {
+    func createNewDocument(expectedSession: WorkspaceSessionToken? = nil) async -> Bool {
         guard permitsNewDocument,
               expectedSession == nil || expectedSession == documentSessionToken else { return false }
         return await createNewV2Document()
@@ -277,19 +278,19 @@ extension AppState {
         permitsNewDocument
     }
 
-    func openDocument(at url: URL, expectedSession: DocumentSessionToken? = nil) async -> Bool {
+    func openDocument(at url: URL, expectedSession: WorkspaceSessionToken? = nil) async -> Bool {
         guard permitsDocumentImport,
               expectedSession == nil || expectedSession == documentSessionToken else { return false }
         return await openExternalDocument(at: url)
     }
 
-    func importExternalDocument(at url: URL, expectedSession: DocumentSessionToken? = nil) async -> Bool {
+    func importExternalDocument(at url: URL, expectedSession: WorkspaceSessionToken? = nil) async -> Bool {
         await openDocument(at: url, expectedSession: expectedSession)
     }
 
     func exportDocumentPackage(
         to destination: URL,
-        expectedSession: DocumentSessionToken? = nil,
+        expectedSession: WorkspaceSessionToken? = nil,
         readable: Bool = false
     ) async throws {
         let result: Result<Void, Error> = await documentOperationGate.perform { [weak self] in

@@ -64,27 +64,25 @@ extension IOSDocumentStore {
         set { syncSessionController.remoteSuspension = newValue }
     }
 
-    func matchesSyncAccount(_ expected: IOSSnapshotSyncV2AccountScope?) -> Bool {
+    func matchesSyncAccount(_ expected: WorkspaceAccountScope?) -> Bool {
         guard let expected else { return false }
         return syncSessionController.matchesAccount(expected, current: snapshotSyncV2AccountScope)
     }
 
-    func matchesRemoteSyncAccount(_ expected: IOSSnapshotSyncV2AccountScope) -> Bool {
+    func matchesRemoteSyncAccount(_ expected: WorkspaceAccountScope) -> Bool {
         syncSessionController.matchesAccount(expected, current: snapshotSyncV2AccountScope,
                                              transitionActive: isSyncV2RemoteAccountTransitionActive)
     }
 
-    func matchesLocalSyncAccount(_ expected: IOSSnapshotSyncV2AccountScope) -> Bool {
+    func matchesLocalSyncAccount(_ expected: WorkspaceAccountScope) -> Bool {
         syncSessionController.matchesAccount(expected, current: snapshotSyncV2AccountScope,
                                              transitionActive: isSyncV2AccountTransitionActive)
     }
 }
 
 extension IOSDocumentStore {
-    typealias SyncOperationContext = SyncSessionController<IOSDocumentSessionToken?, IOSSnapshotSyncV2AccountScope, Void>.OperationContext
-
-    func matchesSyncOperation(_ expected: SyncOperationContext) -> Bool {
-        expected.isCurrent(SyncOperationContext(
+    func matchesSyncOperation(_ expected: WorkspaceOperationContext) -> Bool {
+        expected.isCurrent(WorkspaceOperationContext(
             workID: currentDocumentSessionToken?.workID, session: currentDocumentSessionToken,
             account: snapshotSyncV2AccountScope,
             editGeneration: expected.editGeneration == nil ? nil : localEditGeneration

@@ -86,7 +86,7 @@ manifestが参照する本文・世界観payloadは必須valid UTF-8。メモは
 
 Applicationは`SyncV2RemoteReads`を通してremoteのcatalog/head/history/conflict/downloadを読み、local kernelを中継しない。`SyncV2LibraryProvider`はローカル棚の投影だけを担当する。RuntimeのHTTP clientには読取専用`SnapshotCache`を注入し、backfillの書込能力は別の`HistoryBackfillPersistence`へ分ける。pageとresume cursorの単一transaction確定はStoreが引き続き所有する。
 
-Mac/iOSで共有する`NovelApp/DocumentLifecycle/SyncSessionController.swift`は、WorkID/session/account/editGenerationを持つ`OperationContext`の照合、remote-only open・prefetch・reprojectionのtask所有権、認証のremote suspension leaseを担当する。platform側はIME確定→ローカル保存→installとdocument operation gateを維持する。Macの即時取消とiOSの終了待ち取消は明示policyで区別する。両safe-adoption gateはarm解除・token消費の意味が異なるため別実装を維持する（[R-05](SYNC_REVIEW.md)）。
+Mac/iOSで共有する`NovelKit/Sources/NovelWorkspace/DocumentLifecycle/SyncSessionController.swift`は、WorkID/session/account/editGenerationを持つ`WorkspaceOperationContext`の照合、remote-only open・prefetch・reprojectionのtask所有権、認証のremote suspension leaseを担当する。platform側はIME確定→ローカル保存→installとdocument operation gateを維持する。Macの即時取消とiOSの終了待ち取消は明示policyで区別する。両safe-adoption gateはarm解除・token消費の意味が異なるため別実装を維持する（[R-05](SYNC_REVIEW.md)）。
 
 ApplicationはWorkID付きUI stateとadoption可能イベントを通知する。作品別streamは最新state/adoption通知をcoalesceし、他作品の通知でその作品のwakeを失わない。両アプリのadoption待ちは30秒の明示deadlineで終了し、通知を受けてもsession/account・編集世代とIMEの確認を省略しない。iOS rootとmacOS Workbenchが継続購読を所有する。
 
@@ -157,6 +157,8 @@ macOSの[AppDependencies](../NovelApp/Application/AppDependencies.swift)と各Ap
 macOSは`NovelApp/AppState.swift`、iOSは`NovelAppIOS/DocumentLifecycle/IOSDocumentStore.swift`が画面の状態を持つ。機能処理は既存の責務別extensionに置く。作品操作と非同期確認は呼出時のsession / WorkID / account scopeを保持し、完了時に検査する。
 
 共通App層は[D-111](DECISIONS.md#d-111-共通app層の段階移設2026-10-04)に従い、非UIのNovelWorkspaceと共有SwiftUIのNovelWorkspaceUIへ段階移設する。AppState／IOSDocumentStoreは後続のWorkspaceHost portを介する薄いadapterへ整理し、OS固有のcomposition／gateはAppに残す。既知の意味差はD-111で個別に判断し、移設だけで統合しない。
+
+app側identityは`WorkspaceSessionToken`（generation／workID／install済みdocumentID）と`WorkspaceAccountScope`（accountID／fence／serverInstanceID／protocolEpoch／generation）を両OSで共有する。account無効化ごとにgenerationを進め、全fieldで古いcompletionを拒否する。gate固有の`NovelSyncV2Application.DocumentSessionToken`は別型として維持する。
 
 ### 5.3 ContentView
 

@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import NovelSyncV2Application
+import NovelWorkspace
 
 /// macOSの明示Import/Exportパネルとv2履歴表示の薄いUI境界。
 extension AppState {
@@ -90,7 +91,7 @@ extension AppState {
 }
 
 extension AppState {
-    func claimAutomaticAdoption(_ pending: SyncV2PendingAdoption, account: SnapshotSyncV2AccountScopeToken) -> Bool {
+    func claimAutomaticAdoption(_ pending: SyncV2PendingAdoption, account: WorkspaceAccountScope) -> Bool {
         guard !pending.requiresExplicitConfirmation,
               automaticAdoptionAttempts[account]?[pending.workID]?.contains(pending.inboxID) != true else { return false }
         automaticAdoptionAttempts[account, default: [:]][pending.workID, default: []].insert(pending.inboxID)

@@ -21,7 +21,7 @@ struct IOSAssistantProofreadingTests {
             }, clear: {})
             let manuscript = AssistantManuscript(title: "第一話", content: "本文")
             #expect(store.applyAssistantProofreading(manuscript, replacement: "校正本文", editingToken: editing, account: account))
-            let otherAccount = IOSSnapshotSyncV2AccountScope(accountID: "other", accountFence: nil, serverInstanceID: nil, protocolEpoch: nil)
+            let otherAccount = WorkspaceAccountScope(accountID: "other", accountFence: nil, serverInstanceID: nil, protocolEpoch: nil, generation: 0)
             #expect(!store.applyAssistantProofreading(manuscript, replacement: "別account", editingToken: editing, account: otherAccount))
             store.editorContentGeneration &+= 1
             #expect(!store.applyAssistantProofreading(manuscript, replacement: "旧世代", editingToken: editing, account: account))

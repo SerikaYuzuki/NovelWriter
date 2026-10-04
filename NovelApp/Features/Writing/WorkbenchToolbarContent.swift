@@ -397,7 +397,7 @@ struct ChapterContextMenuContent: View {
 /// File メニューからスナップショット一覧・復元へ到達するための薄い状態。
 struct SnapshotRestoreRequest: Identifiable, Equatable {
     var entry: SyncV2HistoryItem
-    var session: DocumentSessionToken
+    var session: WorkspaceSessionToken
 
     var id: UUID {
         entry.occurrenceID

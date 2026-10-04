@@ -7,10 +7,35 @@ import NovelStorage
 import NovelSyncV2
 import NovelSyncV2Application
 import NovelSyncV2Runtime
+import NovelWorkspace
 import Testing
 
 @Suite("macOS Snapshot Sync v2 account scope races")
 struct SnapshotSyncV2MacAccountScopeTests {
+    @Test("each invalidation retires completions with the same account binding")
+    @MainActor
+    func invalidationAdvancesScopeAndRejectsCompletion() async throws {
+        let state = try AppState(dependencies: makeAccountScopeDependencies())
+        state.authSession = makeMacV2Session(accountID: "account-a", fence: "fence-a")
+        for _ in 0 ..< 2 {
+            let scope = state.snapshotSyncV2AccountScopeToken
+            let completion = WorkspaceOperationContext(workID: state.currentSnapshotSyncV2WorkID,
+                                                       session: state.documentSessionToken, account: scope, editGeneration: nil)
+            #expect(state.matchesSnapshotSyncV2AccountScope(scope))
+            #expect(state.matchesSyncOperation(completion))
+            await Task.yield()
+            state.invalidateSnapshotSyncV2AccountOperations()
+            let current = state.snapshotSyncV2AccountScopeToken
+            #expect(current.generation == scope.generation + 1)
+            #expect(current.accountID == scope.accountID)
+            #expect(current.accountFence == scope.accountFence)
+            #expect(current.serverInstanceID == scope.serverInstanceID)
+            #expect(current.protocolEpoch == scope.protocolEpoch)
+            #expect(!state.matchesSnapshotSyncV2AccountScope(scope))
+            #expect(!state.matchesSyncOperation(completion))
+        }
+    }
+
     @Test("signout/account/fence transition parks the active Work but keeps local checkpointing")
     @MainActor
     func accountBoundaryPreservesParkedWorkLocally() async throws {

@@ -5,6 +5,7 @@ import NovelSyncV2
 import NovelSyncV2Application
 import NovelSyncV2PortableBridge
 import NovelSyncV2Runtime
+import NovelWorkspace
 
 extension IOSDocumentStore {
     @discardableResult
@@ -185,7 +186,7 @@ extension IOSDocumentStore {
     private func makeSnapshotSyncV2ConflictAction(
         using choice: SyncV2ConflictChoice,
         workID: WorkID,
-        expectedSession: IOSDocumentSessionToken,
+        expectedSession: WorkspaceSessionToken,
         expectedEditGeneration: UInt64
     ) -> SyncV2ConflictAction? {
         // Conflict selection is a local prepare only.  Do not checkpoint

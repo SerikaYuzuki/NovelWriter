@@ -1,6 +1,8 @@
 import Foundation
 @testable import FUMINIWAIOS
 import NovelCore
+import NovelSyncV2
+import NovelWorkspace
 import SwiftUI
 import Testing
 import UIKit
@@ -9,9 +11,9 @@ import UIKit
 @Suite("iOS workspace session safety", .serialized)
 struct IOSWorkspaceSessionSafetyTests {
     @Test("作品切替は古いeditor経路を新しい作品ホームへ収束させる")
-    func documentChangeReplacesStaleEditorPath() {
-        let firstSession = makeSession(packageName: "first.novelpkg", generation: 1)
-        let secondSession = makeSession(packageName: "second.novelpkg", generation: 2)
+    func documentChangeReplacesStaleEditorPath() throws {
+        let firstSession = try makeSession(documentID: #require(UUID(uuidString: "1493368e-7871-5901-9a8b-2a795fed88ec")), generation: 1)
+        let secondSession = try makeSession(documentID: #require(UUID(uuidString: "c96d738c-735c-5a73-a95b-3fc0af6efa33")), generation: 2)
         let navigation = IOSWorkspaceNavigationCoordinator()
         navigation.showProjectHome(for: firstSession)
         navigation.showWriting(for: firstSession)
@@ -28,9 +30,9 @@ struct IOSWorkspaceSessionSafetyTests {
     }
 
     @Test("同じworking copyを開き直した場合も古いnavigation sessionを置き換える")
-    func reinstalledWorkingCopyReplacesOldGenerationPath() {
-        let oldSession = makeSession(packageName: "work.novelpkg", generation: 1)
-        let newSession = makeSession(packageName: "work.novelpkg", generation: 3)
+    func reinstalledWorkingCopyReplacesOldGenerationPath() throws {
+        let oldSession = try makeSession(documentID: #require(UUID(uuidString: "af39f015-c404-583f-ab4d-63647bf857ec")), generation: 1)
+        let newSession = try makeSession(documentID: #require(UUID(uuidString: "af39f015-c404-583f-ab4d-63647bf857ec")), generation: 3)
         let navigation = IOSWorkspaceNavigationCoordinator()
         navigation.showProjectHome(for: oldSession)
         navigation.showWriting(for: oldSession)
@@ -57,9 +59,9 @@ struct IOSWorkspaceSessionSafetyTests {
         #expect(await store.saveNow())
 
         #expect(await store.makeNewDocument())
-        #expect(await store.openPrivateDocument(id: oldSession.workingCopyID))
+        #expect(await store.openPrivateDocument(id: IOSPrivateDocumentID(workID: oldSession.workID)))
         let newSession = try #require(store.currentDocumentSessionToken)
-        #expect(newSession.workingCopyID == oldSession.workingCopyID)
+        #expect(IOSPrivateDocumentID(workID: newSession.workID) == IOSPrivateDocumentID(workID: oldSession.workID))
         #expect(newSession != oldSession)
 
         let harness = try await makeEditorHarness(store: store)
@@ -134,7 +136,7 @@ struct IOSWorkspaceSessionSafetyTests {
         store.testServerInstanceIDOverride = nil
         #expect(await store.saveNow())
         #expect(await store.makeNewDocument())
-        #expect(await store.openPrivateDocument(id: session.workingCopyID))
+        #expect(await store.openPrivateDocument(id: IOSPrivateDocumentID(workID: session.workID)))
         #expect(store.selectedEpisode?.title == "新しい話名")
         store.updateEpisodeTitle("古いダイアログ", chapterID: chapterID, episodeID: episodeID,
                                  expectedSession: session, expectedAccountScope: scope)
@@ -209,12 +211,11 @@ struct IOSWorkspaceSessionSafetyTests {
     }
 
     private func makeSession(
-        packageName: String,
+        documentID: UUID,
         generation: UInt64
-    ) -> IOSDocumentSessionToken {
-        IOSDocumentSessionToken(
-            workingCopyID: IOSPrivateDocumentID(packageName: packageName),
-            generation: generation
+    ) -> WorkspaceSessionToken {
+        WorkspaceSessionToken(
+            generation: generation, documentID: documentID, workID: WorkID(documentID)
         )
     }
 }

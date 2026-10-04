@@ -2,6 +2,7 @@ import NovelCore
 import NovelSyncV2
 import NovelSyncV2Application
 import NovelUI
+import NovelWorkspace
 import NovelWorkspaceUI
 import SwiftUI
 
@@ -16,13 +17,13 @@ struct LibraryPane: View {
     }
 
     @State private var pendingRename: StartupLibraryWork?
-    @State private var renameSession: DocumentSessionToken?
-    @State private var renameAccountScope: SnapshotSyncV2AccountScopeToken?
+    @State private var renameSession: WorkspaceSessionToken?
+    @State private var renameAccountScope: WorkspaceAccountScope?
     @State private var renameTitle = ""
     @State private var renamingIDs: Set<UUID> = []
     @State private var renameFailed = false
     @State private var pendingDeletion: StartupLibraryWork?
-    @State private var deletionAccountScope: SnapshotSyncV2AccountScopeToken?
+    @State private var deletionAccountScope: WorkspaceAccountScope?
     @State private var deletingIDs: Set<UUID> = []
     @State private var showingProtection = false
     @FocusState private var focusedWorkID: UUID?

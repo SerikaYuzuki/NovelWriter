@@ -32,33 +32,10 @@ final class NotificationObserverToken {
     }
 }
 
-/// The app-level identity used by editor operations. A WorkID may point at a
-/// different document payload after remote-only install, keep-both, or an
-/// explicit account clone, so it must travel with the session token.
-struct AppDocumentSessionToken: Hashable, Sendable {
-    var generation: UInt64
-    var documentID: UUID
-    var workID: WorkID
-}
-
-/// Captures the authenticated tenant boundary for asynchronous UI work. Token
-/// refreshes keep this scope valid; sign-out, AccountID changes, and fence
-/// rotations advance `generation` and make every older completion stale.
-struct SnapshotSyncV2AccountScopeToken: Hashable, Sendable {
-    let accountID: String?
-    let accountFence: String?
-    let generation: UInt64
-}
-
-/// Existing editor/outline views use this neutral name for a session-bound
-/// value.  It is intentionally the WorkID-backed v2 token; it contains no
-/// package URL or other import/export identity.
-typealias DocumentSessionToken = AppDocumentSessionToken
-
 @MainActor
 @Observable
 final class AppState {
-    let syncSessionController = SyncSessionController<AppDocumentSessionToken, SnapshotSyncV2AccountScopeToken, Bool>()
+    let syncSessionController = SyncSessionController<Bool>()
     let timing: FuminiwaTiming
     let assistantRequestCenter = AssistantRequestCenter()
     let writingSyncScheduler: WritingSyncScheduler
@@ -83,8 +60,8 @@ final class AppState {
     var authUIState: AuthUIState
     var snapshotSyncPendingDeletionWorkIDs: Set<WorkID> = []
     var snapshotSyncV2UIState: SyncUIState?
-    @ObservationIgnored var presentedSyncFailures: [SnapshotSyncV2AccountScopeToken: [WorkID: SyncV2FatalReason]] = [:]
-    @ObservationIgnored var automaticAdoptionAttempts: [SnapshotSyncV2AccountScopeToken: [WorkID: Set<UUID>]] = [:]
+    @ObservationIgnored var presentedSyncFailures: [WorkspaceAccountScope: [WorkID: SyncV2FatalReason]] = [:]
+    @ObservationIgnored var automaticAdoptionAttempts: [WorkspaceAccountScope: [WorkID: Set<UUID>]] = [:]
     var snapshotSyncConflict: SyncV2ConflictProjection?
     var snapshotSyncHistory: [SyncV2HistoryItem] = []
     var snapshotSyncHistoryLoading = false
@@ -115,7 +92,7 @@ final class AppState {
     @ObservationIgnored var snapshotSyncV2Attachments: [SyncAttachment]
     @ObservationIgnored var attachmentPreviewURLs: [String: URL]
 
-    var documentSessionToken: AppDocumentSessionToken
+    var documentSessionToken: WorkspaceSessionToken
     var editorContentGeneration: UInt64
 
     let portableBridge: SyncV2PortableBridge
@@ -278,7 +255,7 @@ final class AppState {
         snapshotSyncRemoteCatalogItems = []
         snapshotSyncCurrentWorkAccountState = nil
         manuscriptCopyNotice = nil
-        documentSessionToken = AppDocumentSessionToken(
+        documentSessionToken = WorkspaceSessionToken(
             generation: 0,
             documentID: placeholder.id,
             workID: WorkID(UUID())

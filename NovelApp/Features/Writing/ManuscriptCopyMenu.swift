@@ -1,4 +1,5 @@
 import NovelCore
+import NovelWorkspace
 import SwiftUI
 
 /// Outlineから原稿を明示的にコピーする入口。
@@ -6,8 +7,8 @@ import SwiftUI
 /// ここでは章／話のIDと表示時のdocument sessionだけを保持する。本文snapshotは
 /// 保持せず、利用者が項目を実行した時点で`AppState`が現在の作品から再解決する。
 enum ManuscriptCopyMenuTarget: Equatable {
-    case episode(episodeID: EpisodeID, chapterID: ChapterID, session: DocumentSessionToken)
-    case chapter(chapterID: ChapterID, session: DocumentSessionToken)
+    case episode(episodeID: EpisodeID, chapterID: ChapterID, session: WorkspaceSessionToken)
+    case chapter(chapterID: ChapterID, session: WorkspaceSessionToken)
 
     var scopeDisplayName: String {
         switch self {

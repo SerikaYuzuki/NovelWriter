@@ -1,5 +1,6 @@
 import Foundation
 import NovelSyncV2Application
+import NovelWorkspace
 
 extension IOSDocumentStore {
     /// The root view owns this subscription, just as the macOS Workbench does.
@@ -7,9 +8,9 @@ extension IOSDocumentStore {
     func observeSnapshotSyncV2Status() async {
         guard let application = snapshotSyncV2Application,
               let workID = syncV2ActiveWorkID else { return }
-        let operation = SyncOperationContext(workID: currentDocumentSessionToken?.workID,
-                                             session: currentDocumentSessionToken,
-                                             account: snapshotSyncV2AccountScope, editGeneration: nil)
+        let operation = WorkspaceOperationContext(workID: currentDocumentSessionToken?.workID,
+                                                  session: currentDocumentSessionToken,
+                                                  account: snapshotSyncV2AccountScope, editGeneration: nil)
         for await event in await application.stateChanges(for: workID) {
             guard !Task.isCancelled, matchesSyncOperation(operation),
                   snapshotSyncV2Application === application else { return }
