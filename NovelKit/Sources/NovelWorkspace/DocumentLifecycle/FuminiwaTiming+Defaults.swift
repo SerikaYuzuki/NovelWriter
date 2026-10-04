@@ -4,7 +4,7 @@ import NovelTiming
 
 /// Read once in the application composition; NovelKit receives only values.
 extension FuminiwaTiming {
-    init(defaults: UserDefaults) {
+    public init(defaults: UserDefaults) {
         let standard = FuminiwaTiming()
         self.init(
             autosaveDebounceSeconds: Self.read(defaults, Key.autosaveDebounce, fallback: standard.autosaveDebounceSeconds),

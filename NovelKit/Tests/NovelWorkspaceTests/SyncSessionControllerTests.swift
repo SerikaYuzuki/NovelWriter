@@ -1,10 +1,6 @@
 import Foundation
-#if os(macOS)
-@testable import FUMINIWA
-#else
-@testable import FUMINIWAIOS
-#endif
 import NovelSyncV2
+@testable import NovelWorkspace
 import Testing
 
 @Suite("Shared sync session ownership")

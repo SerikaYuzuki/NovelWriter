@@ -2,6 +2,7 @@ import Foundation
 @testable import FUMINIWAIOS
 import NovelCore
 import NovelTextAnalysis
+import NovelWorkspace
 import Observation
 import SwiftUI
 import Testing

@@ -4,15 +4,17 @@
 /// token が担う。ここは AppKit/EditorKit の IME・遷移境界を一度に通す
 /// FIFO gate だけを提供し、package URL を保存 identity にしない。
 @MainActor
-final class DocumentOperationGate {
-    #if FUMINIWA_TEST_COMPOSITION
+public final class DocumentOperationGate {
     /// Signals an enqueued operation after the current owner has acquired the gate.
-    var didEnqueueOperation: (@MainActor () -> Void)?
-    #endif
+    private let didEnqueueOperation: (@MainActor () -> Void)?
     private var isRunning = false
     private var waiters: [CheckedContinuation<Void, Never>] = []
 
-    func perform<T>(_ operation: @MainActor () async -> T) async -> T {
+    public init(didEnqueueOperation: (@MainActor () -> Void)? = nil) {
+        self.didEnqueueOperation = didEnqueueOperation
+    }
+
+    public func perform<T>(_ operation: @MainActor () async -> T) async -> T {
         await acquire()
         defer { release() }
         return await operation()
@@ -26,9 +28,7 @@ final class DocumentOperationGate {
 
         await withCheckedContinuation { continuation in
             waiters.append(continuation)
-            #if FUMINIWA_TEST_COMPOSITION
             didEnqueueOperation?()
-            #endif
         }
     }
 
@@ -47,11 +47,13 @@ final class DocumentOperationGate {
 /// calls. A sign-out or later sign-in therefore cannot interleave with an
 /// earlier Apple exchange while its response is being committed.
 @MainActor
-final class AuthOperationGate {
+public final class AuthOperationGate {
+    public init() {}
+
     private var isRunning = false
     private var waiters: [CheckedContinuation<Void, Never>] = []
 
-    func perform<T>(_ operation: @MainActor () async throws -> T) async rethrows -> T {
+    public func perform<T>(_ operation: @MainActor () async throws -> T) async rethrows -> T {
         await acquire()
         defer { release() }
         return try await operation()

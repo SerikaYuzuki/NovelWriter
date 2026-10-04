@@ -1,26 +1,8 @@
-#if os(macOS)
-@testable import FUMINIWA
-#else
-@testable import FUMINIWAIOS
-#endif
-import CSQLite
 import Foundation
 import NovelCore
 import NovelTextAnalysis
+@testable import NovelWorkspace
 import Testing
-
-/// Timeout bounds a broken test; successful assertions wait for state, never a fixed delay.
-@MainActor
-func waitForWorkSearchState(_ predicate: @MainActor () -> Bool) async throws {
-    let deadline = ContinuousClock.now.advanced(by: .seconds(30))
-    while !predicate() {
-        try Task.checkCancellation()
-        guard ContinuousClock.now < deadline else { throw WorkSearchStateTimeout.notCompleted }
-        await Task.yield()
-    }
-}
-
-private enum WorkSearchStateTimeout: Error { case notCompleted }
 
 @MainActor
 private final class WorkSearchTestClock {
@@ -267,30 +249,6 @@ private final class ReplacementFixture {
         #expect(search.total == 3)
         return search
     }
-}
-
-/// 合成作品の隔離SQLiteをread-onlyで確認する。AIのEdit journalを作らないことを検証。
-func workSearchJournalCount(root: URL) throws -> Int {
-    var database: OpaquePointer?
-    let status = sqlite3_open_v2(
-        root.appendingPathComponent("writing-assistant.sqlite").path,
-        &database,
-        SQLITE_OPEN_READONLY,
-        nil
-    )
-    defer {
-        if let database {
-            sqlite3_close(database)
-        }
-    }
-    #expect(status == SQLITE_OK)
-    let opened = try #require(database)
-    var statement: OpaquePointer?
-    #expect(sqlite3_prepare_v2(opened, "SELECT COUNT(*) FROM edits", -1, &statement, nil) == SQLITE_OK)
-    let query = try #require(statement)
-    defer { sqlite3_finalize(query) }
-    #expect(sqlite3_step(query) == SQLITE_ROW)
-    return Int(sqlite3_column_int(query, 0))
 }
 
 private final class SearchComputationCounter: @unchecked Sendable {

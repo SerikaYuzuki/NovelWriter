@@ -1,4 +1,5 @@
 import NovelTextAnalysis
+import NovelWorkspace
 import SwiftUI
 
 struct TextCheckControls: View {

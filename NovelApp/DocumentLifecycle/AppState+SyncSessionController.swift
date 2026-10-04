@@ -1,6 +1,7 @@
 import Foundation
 import NovelSyncV2
 import NovelSyncV2Application
+import NovelWorkspace
 
 extension AppState {
     var snapshotSyncV2RemoteOnlyOpenTask: Task<Bool, Never>? {

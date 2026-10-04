@@ -5,28 +5,41 @@ import Observation
 
 /// 一時状態だけを保持する。本文変更と保存は各OSの既存gateに委ねる。
 @MainActor
-struct WorkReplacementHost {
-    let scope: String
-    let validate: () -> Bool
-    let document: () -> NovelDocument
-    let boundary: @MainActor (_ operation: @MainActor () async -> Bool) async -> Bool
-    let snapshot: @MainActor () async -> Bool
-    let apply: ([EpisodeTextChange]) -> Bool
+public struct WorkReplacementHost {
+    public let scope: String
+    public let validate: () -> Bool
+    public let document: () -> NovelDocument
+    public let boundary: @MainActor (_ operation: @MainActor () async -> Bool) async -> Bool
+    public let snapshot: @MainActor () async -> Bool
+    public let apply: ([EpisodeTextChange]) -> Bool
+
+    public init(
+        scope: String, validate: @escaping () -> Bool, document: @escaping () -> NovelDocument,
+        boundary: @escaping @MainActor (_ operation: @MainActor () async -> Bool) async -> Bool,
+        snapshot: @escaping @MainActor () async -> Bool, apply: @escaping ([EpisodeTextChange]) -> Bool
+    ) {
+        self.scope = scope
+        self.validate = validate
+        self.document = document
+        self.boundary = boundary
+        self.snapshot = snapshot
+        self.apply = apply
+    }
 }
 
 @MainActor
 @Observable
-final class WorkSearchSession {
-    var isPresented = false
-    var query = ""
-    var replacement = ""
-    var excluded: [EpisodeID: Set<Int>] = [:]
-    private(set) var results: [EpisodeTextMatches] = []
-    private(set) var isSearching = false
-    private(set) var isReplacing = false
-    var message: String?
-    private(set) var scope = ""
-    private(set) var isStale = true
+public final class WorkSearchSession {
+    public var isPresented = false
+    public var query = ""
+    public var replacement = ""
+    public var excluded: [EpisodeID: Set<Int>] = [:]
+    public private(set) var results: [EpisodeTextMatches] = []
+    public private(set) var isSearching = false
+    public private(set) var isReplacing = false
+    public var message: String?
+    public private(set) var scope = ""
+    public private(set) var isStale = true
     @ObservationIgnored private var isVisible = true
     @ObservationIgnored private let search: @Sendable (String, NovelDocument) -> [EpisodeTextMatches]
     @ObservationIgnored private let sleep: @MainActor (Duration) async throws -> Void
@@ -35,14 +48,14 @@ final class WorkSearchSession {
     private var undoChanges: [EpisodeTextChange] = []
     private var undoScope = ""
 
-    init(search: @escaping @Sendable (String, NovelDocument) -> [EpisodeTextMatches] = {
+    public init(search: @escaping @Sendable (String, NovelDocument) -> [EpisodeTextMatches] = {
         WorkTextSearch.search(query: $0, in: $1)
     }, sleep: @escaping @MainActor (Duration) async throws -> Void = { try await Task.sleep(for: $0) }) {
         self.search = search
         self.sleep = sleep
     }
 
-    func setVisible(_ visible: Bool, document: NovelDocument, scope: String) {
+    public func setVisible(_ visible: Bool, document: NovelDocument, scope: String) {
         isVisible = visible
         if visible {
             if isStale || self.scope != scope {
@@ -54,7 +67,7 @@ final class WorkSearchSession {
     }
 
     /// Retain the last results. Changes during typing never start a whole-work search.
-    func markStale() {
+    public func markStale() {
         guard !isStale || isSearching || searchTask != nil else { return }
         searchTask?.cancel(); searchTask = nil; revision = UUID()
         if !isStale {
@@ -65,19 +78,19 @@ final class WorkSearchSession {
         }
     }
 
-    var total: Int {
+    public var total: Int {
         results.reduce(0) { $0 + $1.matches.count }
     }
 
-    var includedCount: Int {
+    public var includedCount: Int {
         total - excluded.values.reduce(0) { $0 + $1.count }
     }
 
-    var canUndo: Bool {
+    public var canUndo: Bool {
         !undoChanges.isEmpty && undoScope == scope
     }
 
-    func invalidate() {
+    public func invalidate() {
         searchTask?.cancel(); searchTask = nil
         revision = UUID()
         results = []; excluded = [:]; undoChanges = []
@@ -86,7 +99,7 @@ final class WorkSearchSession {
         message = "作品またはアカウントが変わりました。検索画面を開き直してください。"
     }
 
-    func refresh(document: NovelDocument, scope: String) {
+    public func refresh(document: NovelDocument, scope: String) {
         guard isVisible else { markStale(); return }
         searchTask?.cancel()
         revision = UUID()
@@ -114,11 +127,11 @@ final class WorkSearchSession {
         }
     }
 
-    func included(_ match: WorkTextMatch, in result: EpisodeTextMatches) -> Bool {
+    public func included(_ match: WorkTextMatch, in result: EpisodeTextMatches) -> Bool {
         !(excluded[result.id] ?? []).contains(match.id)
     }
 
-    func setIncluded(_ included: Bool, match: WorkTextMatch, in result: EpisodeTextMatches) {
+    public func setIncluded(_ included: Bool, match: WorkTextMatch, in result: EpisodeTextMatches) {
         if included {
             excluded[result.id, default: []].remove(match.id)
         } else {
@@ -128,7 +141,7 @@ final class WorkSearchSession {
 
     /// 検索結果は確認時点の値。検索後に一話でも変わっていたら全体を中止。
     @discardableResult
-    func replace(using host: WorkReplacementHost) async -> Bool {
+    public func replace(using host: WorkReplacementHost) async -> Bool {
         guard !isReplacing, !isSearching, !isStale, host.scope == scope, host.validate() else { return false }
         message = nil
         let results = results, replacement = replacement, excluded = excluded
@@ -166,7 +179,7 @@ final class WorkSearchSession {
     }
 
     @discardableResult
-    func undo(using host: WorkReplacementHost) async -> Bool {
+    public func undo(using host: WorkReplacementHost) async -> Bool {
         guard !isReplacing, canUndo, host.scope == undoScope, host.validate() else { return false }
         let inverse = undoChanges.map(\.inverse)
         isReplacing = true

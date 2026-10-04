@@ -8,6 +8,7 @@ let package = Package(
         .iOS(.v17)
     ],
     products: [
+        .library(name: "NovelWorkspace", targets: ["NovelWorkspace"]),
         .library(name: "NovelTiming", targets: ["NovelTiming"]),
         .library(name: "NovelTextAnalysis", targets: ["NovelTextAnalysis"]),
         .library(name: "NovelWritingProgress", targets: ["NovelWritingProgress"]),
@@ -29,6 +30,14 @@ let package = Package(
         .library(name: "PreviewSupport", targets: ["PreviewSupport"])
     ],
     targets: [
+        .target(
+            name: "NovelWorkspace",
+            dependencies: ["NovelCore", "NovelTextAnalysis", "NovelSyncV2", "NovelSyncV2Application", "NovelTiming"]
+        ),
+        .testTarget(
+            name: "NovelWorkspaceTests",
+            dependencies: ["NovelWorkspace", "NovelCore", "NovelTextAnalysis", "NovelSyncV2", "NovelTiming"]
+        ),
         .target(name: "NovelTiming"),
         .testTarget(name: "NovelTimingTests", dependencies: ["NovelTiming"]),
         .target(name: "NovelTextAnalysis", dependencies: ["NovelCore"]),

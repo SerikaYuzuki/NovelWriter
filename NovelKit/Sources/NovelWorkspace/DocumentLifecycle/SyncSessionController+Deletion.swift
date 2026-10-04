@@ -1,7 +1,7 @@
 import NovelSyncV2
 import NovelSyncV2Application
 
-extension SyncSessionController {
+public extension SyncSessionController {
     /// Both hosts call this inside their document gate and exclusive save lane,
     /// after committing IME and flushing. No HTTP is performed in this boundary.
     func prepareWorkDeletion(

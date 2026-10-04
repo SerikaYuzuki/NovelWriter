@@ -6,6 +6,7 @@ import NovelAuthApple
 import NovelSyncV2Application
 import NovelSyncV2Runtime
 import NovelTiming
+import NovelWorkspace
 import SwiftUI
 
 @main

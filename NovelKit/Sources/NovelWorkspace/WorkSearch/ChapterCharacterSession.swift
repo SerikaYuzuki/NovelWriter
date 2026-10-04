@@ -6,13 +6,15 @@ import Observation
 /// 既存の章context menuも本文検出をメインスレッドで行わない。
 @MainActor
 @Observable
-final class ChapterCharacterSession {
-    private(set) var characterIDs: Set<CharacterID> = []
-    private(set) var isLoading = false
+public final class ChapterCharacterSession {
+    public init() {}
+
+    public private(set) var characterIDs: Set<CharacterID> = []
+    public private(set) var isLoading = false
     private var revision = UUID()
     @ObservationIgnored private var task: Task<Void, Never>?
 
-    func refresh(chapter: Chapter?, characters: [NovelCore.Character]) {
+    public func refresh(chapter: Chapter?, characters: [NovelCore.Character]) {
         task?.cancel(); revision = UUID(); characterIDs = []
         guard let chapter else { isLoading = false; return }
         isLoading = true
@@ -33,7 +35,7 @@ final class ChapterCharacterSession {
         }
     }
 
-    func cancel() {
+    public func cancel() {
         task?.cancel(); revision = UUID()
     }
 }

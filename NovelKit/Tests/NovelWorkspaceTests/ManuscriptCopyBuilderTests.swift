@@ -1,5 +1,5 @@
 import Foundation
-@testable import FUMINIWA
+@testable import NovelWorkspace
 import Testing
 
 struct ManuscriptCopyBuilderTests {

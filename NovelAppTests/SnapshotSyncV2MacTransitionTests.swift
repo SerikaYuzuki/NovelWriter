@@ -359,9 +359,9 @@ struct SnapshotSyncV2MacTransitionTests {
         await checkpointGate.waitForArrival()
         #expect(fixture.state.isDocumentTransitionInProgress)
         let (queued, continuation) = AsyncStream<Void>.makeStream()
-        fixture.state.documentOperationGate.didEnqueueOperation = { continuation.yield(()) }
+        fixture.state.documentOperationDidEnqueue = { continuation.yield(()) }
         defer {
-            fixture.state.documentOperationGate.didEnqueueOperation = nil
+            fixture.state.documentOperationDidEnqueue = nil
             continuation.finish()
         }
         let accountSwitch = Task { @MainActor in

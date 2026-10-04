@@ -3,6 +3,7 @@ import EditorKit
 import Foundation
 import NovelCore
 import NovelThumbnail
+import NovelWorkspace
 
 extension AppState {
     // MARK: - 選択中章
