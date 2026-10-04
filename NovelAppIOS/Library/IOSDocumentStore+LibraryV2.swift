@@ -2,6 +2,7 @@ import Foundation
 import NovelCore
 import NovelSyncV2
 import NovelSyncV2Application
+import NovelWorkspace
 
 struct IOSPrivateDocumentID: Hashable, Sendable {
     let packageName: String
@@ -357,43 +358,10 @@ extension IOSDocumentStore {
         into localItems: [SyncV2LibraryItem],
         catalog: [SyncV2RemoteCatalogEntry]
     ) -> [SyncV2LibraryItem] {
-        var rows = Dictionary(uniqueKeysWithValues: localItems.filter { !deletedLibraryWorkIDs.contains($0.workID) }.map { ($0.workID, $0) })
-        // Pending local intents may be absent from the ordinary projection.
-        // Retain their shelf title for status and explicit retry, including remote-only works.
-        for item in syncV2LibraryItems where pendingDeletionWorkIDs.contains(item.workID) {
-            rows[item.workID] = item
-        }
-        for remote in catalog where !deletedLibraryWorkIDs.contains(remote.workID) {
-            if let local = rows[remote.workID] {
-                // A parked local copy is an explicit account boundary.  A
-                // catalog row with the same WorkID must never turn it into a
-                // cached/remote row or overwrite its local-only status.
-                if local.accountState == .parkedDifferentAccount {
-                    continue
-                }
-                rows[remote.workID] = SyncV2LibraryItem(
-                    workID: local.workID,
-                    title: local.availability == .remoteOnly || local.title.isEmpty ? remote.title : local.title,
-                    availability: local.availability == .remoteOnly ? .remoteOnly : .cached,
-                    accountState: local.accountState,
-                    localGeneration: local.localGeneration,
-                    remoteHead: local.remoteHead ?? remote.head,
-                    remoteHeadConfirmed: local.remoteHeadConfirmed,
-                    conflict: local.conflict,
-                    remoteProgress: local.remoteProgress,
-                    oldestUnreceivedAt: local.oldestUnreceivedAt, historyBackfillNote: local.historyBackfillNote
-                )
-            } else {
-                rows[remote.workID] = SyncV2LibraryItem(
-                    workID: remote.workID,
-                    title: remote.title,
-                    availability: .remoteOnly,
-                    accountState: .active,
-                    remoteHead: remote.head
-                )
-            }
-        }
-        return rows.values.sorted { SyncV2LibraryPresentation.precedes(title: $0.title, workID: $0.workID, otherTitle: $1.title, otherWorkID: $1.workID) }
+        LibraryShelf.merge(
+            localItems: localItems, catalog: catalog, previousItems: syncV2LibraryItems,
+            pendingDeletionIDs: pendingDeletionWorkIDs, deletedIDs: deletedLibraryWorkIDs
+        )
     }
 
     @discardableResult

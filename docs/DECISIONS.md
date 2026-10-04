@@ -151,6 +151,8 @@ macOS toolbarの同期状態は形と色で示し、状態名はhelpとaccessibi
 
 P2完了：SyncPresentation、HistoryFetchControls／ConnectivityRecovery、WorkSearch／TextCheckの共有View、AssistantFeedbackDetail、AssistantScopeSelector／MarkdownViewとapp非依存のAI値・request／decode処理をNovelWorkspaceUIへ移設し、純粋テストをpackageへ移した。
 
+P3完了：認証表示とローカル保存状態をNovelWorkspaceの共通値型へ統合（既存名はtypealias、iOSのdirtyはunsavedの互換名）。作品棚の文言とpreview fixtureをNovelWorkspaceUIへ、local projection＋remote catalog＋削除待ち／削除済みIDのmergeをNovelWorkspaceへ移した。D6により、macOSでも通常projectionから外れた削除待ち作品を最後の棚から保持し、「削除待ち・接続時に再試行」を表示して削除を再試行できる。削除済み作品はlocal行も一覧から消え、catalogや古い保持行で再表示しない。別account保留行、競合表示、タイトル自然順とWorkID同名順を維持する。refreshSnapshotLibraryのstartupStateはawait前の値で決めず、書込時の現在値で作品選択の表示を判断する。認証flow、checkpoint、conflict choice、identity tokenは変更しない。
+
 片方の意味を暗黙に採用しない。以下は後続phaseの統合方針であり、P1では適用しない。
 
 | 差 | 現状 | 推奨・判断 |
@@ -160,7 +162,7 @@ P2完了：SyncPresentation、HistoryFetchControls／ConnectivityRecovery、Work
 | D3 | 未保存編集がある作品全体復元はMacがgate内で保存後に復元し、iOSは拒否 | Macを採用（2026-10-04オーナー決定）。gate内で保存し、その版を履歴に残してから復元する |
 | D4 | Macのkeep-bothは元作品のwrite freeze（syncV2KeepBothPendingWorkID）がない | iOSを採用 |
 | D5 | conflict choiceはMacがgate内でuiStateを再読取し、iOSは表示時projection＋editing generationを使う | 厳しいiOSを採用 |
-| D6 | 棚mergeでpending-deletion行を保持し、削除済みlocal行を落とすのはiOSだけ | pure functionへ統合し、merge時に方針を決める |
+| D6 | 棚mergeでpending-deletion行を保持し、削除済みlocal行を落とすのはiOSだけ | iOSを採用（2026-10-04オーナー決定、P3）。NovelWorkspaceのpure functionへ統合し、削除待ち行を保持、削除済みIDはlocal／remote／保持行から除外する |
 | D7 | safe-adoption gateが異なる | 統合せず注入 |
 | D8 | MacはauthOperationGate＋owner＋count、iOSはrequest window＋lease＋abandon recovery＋revoke retry＋old-epoch fail-closed | iOSモデルをcoreにする |
 | D9 | project feature編集後、Macは即flush、iOSはdebounce | policy parameterにする |
