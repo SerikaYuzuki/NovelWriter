@@ -36,6 +36,11 @@ typealias SnapshotSyncV2OpenLocalOverride = @MainActor @Sendable (
     WorkID
 ) async throws -> SyncV2OpenedWork
 
+/// Test-only suspension point for a library read racing with document installation.
+typealias SnapshotSyncV2LibraryOverride = @MainActor @Sendable (
+    SyncV2Application
+) async throws -> SyncV2LibraryProjection
+
 /// Test-only suspension point for verifying that a catalog response cannot
 /// cross an AccountID/fence generation change.
 typealias SnapshotSyncV2CatalogOverride = @MainActor @Sendable (
@@ -95,6 +100,7 @@ struct AppDependencies {
     var snapshotSyncV2CheckpointOverride: SnapshotSyncV2CheckpointOverride?
     var snapshotSyncV2OpenOverride: SnapshotSyncV2OpenOverride?
     var snapshotSyncV2OpenLocalOverride: SnapshotSyncV2OpenLocalOverride?
+    var snapshotSyncV2LibraryOverride: SnapshotSyncV2LibraryOverride?
     var snapshotSyncV2CatalogOverride: SnapshotSyncV2CatalogOverride?
     var snapshotSyncV2AfterStagedRemoteOverride: SnapshotSyncV2AfterStagedRemoteOverride?
     #endif
@@ -137,6 +143,7 @@ struct AppDependencies {
         snapshotSyncV2CheckpointOverride = nil
         snapshotSyncV2OpenOverride = nil
         snapshotSyncV2OpenLocalOverride = nil
+        snapshotSyncV2LibraryOverride = nil
         snapshotSyncV2CatalogOverride = nil
         snapshotSyncV2AfterStagedRemoteOverride = nil
         #endif
