@@ -4,6 +4,7 @@ import SwiftUI
 struct WritingEditHistoryView: View {
     let host: WritingAssistantHost
     @State private var records: [WritingEnvelope] = []
+    @State private var entries: [WritingEnvelope] = []
     @State private var states: [UUID: String] = [:]
     @State private var notice: String?
     private let names = ["title": "タイトル", "synopsis": "あらすじ", "chapters": "章", "episodes": "話", "content": "本文",
@@ -17,7 +18,7 @@ struct WritingEditHistoryView: View {
                 Text(notice).font(.caption)
             }
             ForEach(records) { item in
-                if let edit = try? item.record.decoded(WritingEdit.self) {
+                if let edit = try? host.decodedEdit(item.record, entries: entries) {
                     DisclosureGroup {
                         ForEach(Array(edit.changes.enumerated()), id: \.offset) { _, change in
                             VStack(alignment: .leading, spacing: 5) {
@@ -58,9 +59,17 @@ struct WritingEditHistoryView: View {
 
     private func load() async {
         do {
-            records = try await Array(host.records(false).filter { $0.record.kind == "edit" }.suffix(100).reversed())
+            entries = try await host.records(false)
+            for id in host.proofreadingEditIDs(defaults: host.defaults) {
+                if let edit = try await host.localEdit(id), !entries.contains(where: { $0.record.kind == "edit" && $0.record.key == id.uuidString.lowercased() }) {
+                    // The full edit comes from the local Undo journal, never from synced records.
+                    try entries.append(WritingEnvelope(record: WritingRecord(id: id, workId: host.workID, kind: "edit",
+                                                                             key: id.uuidString.lowercased(), payload: WritingRecord.payload(edit))))
+                }
+            }
+            records = Array(entries.filter { $0.record.kind == "edit" }.suffix(100).reversed())
             for item in records {
-                if let edit = try? item.record.decoded(WritingEdit.self), let state = try await host.editState(edit.id) {
+                if let edit = try? host.decodedEdit(item.record, entries: entries), let state = try await host.editState(edit.id) {
                     states[edit.id] = state
                 }
             }

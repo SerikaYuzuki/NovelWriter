@@ -52,6 +52,9 @@ extension IOSDocumentStore {
         _ = await refreshLibrary()
         guard matchesSyncAccount(accountScope), !isSyncV2RemoteAccountTransitionActive else { return false }
         do {
+            if let id = UUID(uuidString: item.workID.description) {
+                assistantRequestCenter.cancel(work: id)
+            }
             try await application.deleteWork(workID: item.workID)
             guard matchesSyncAccount(accountScope) else { return false }
             syncV2RemoteCatalogItems.removeAll { $0.workID == item.workID }

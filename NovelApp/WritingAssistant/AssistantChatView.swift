@@ -5,34 +5,6 @@ import NovelWorkspaceUI
 import NovelWritingSupport
 import SwiftUI
 
-private struct WritingTurnState: Codable {
-    let state: String
-    let effectivePrompt: String
-    let conversationId: UUID
-    let detail: String
-}
-
-private enum ChatEditScope: String, CaseIterable, Identifiable {
-    case advice = "相談だけ", continuation = "選択中の話に追記", episode = "選択中の話を編集"
-    case plots = "プロット", characters = "登場人物", materials = "設定・資料", whole = "作品全体"
-    var id: String {
-        rawValue
-    }
-
-    func grant(_ capture: WritingCapture) throws -> WritingGrant {
-        switch self {
-        case .advice: return .readOnly
-        case .continuation, .episode:
-            guard let path = capture.episodePath else { throw AssistantError.emptyContent }
-            return WritingGrant(paths: [path + ["content"]], appendOnly: self == .continuation)
-        case .plots: return WritingGrant(paths: [["plotCards"]])
-        case .characters: return WritingGrant(paths: [["characters"]])
-        case .materials: return WritingGrant(paths: [["characters"], ["plotCards"], ["flags"], ["worldNotes"]])
-        case .whole: return .wholeWork
-        }
-    }
-}
-
 struct AssistantChatView: View {
     let host: WritingAssistantHost
     let defaults: UserDefaults
@@ -45,38 +17,72 @@ struct AssistantChatView: View {
     @State private var scope = ChatEditScope.advice
     @State private var notice: String?
     @State private var syncNotice: String?
-    @State private var requestTask: Task<Void, Never>?
-    @State private var requestId: UUID?
+    @State private var showingScope = false
+    @State private var renameTitle = ""
+    @State private var showingRename = false
+    @State private var showingDelete = false
+    @State private var localRevision = 0
     @State private var showingPrompts = false
     @State private var showingEdits = false
 
     private var conversations: [WritingEnvelope] {
-        entries.filter { $0.record.kind == "conversation" }
+        _ = localRevision
+        let hidden = defaults.stringArray(forKey: "assistant.hiddenConversations.\(host.workID)") ?? []
+        return WritingConversation.displayed(entries).filter { !hidden.contains($0.id.uuidString) }
+    }
+
+    private var requestKey: AssistantRequestKey {
+        host.requestKey(purpose: .advice, conversation: conversationId)
+    }
+
+    private var inFlight: Bool {
+        host.requestCenter.statuses[requestKey]?.inFlight == true
+    }
+
+    private var latestRequest: WritingEnvelope? {
+        AssistantRequestRecord.latest(entries).filter {
+            (try? $0.record.decoded(AssistantRequestRecord.self).conversationId) == conversationId
+        }.max { $0.record.createdAt < $1.record.createdAt }
+    }
+
+    private func title(_ item: WritingEnvelope) -> String {
+        (try? item.record.decoded(WritingConversation.self).title) ?? "会話の記録"
     }
 
     private var messages: [WritingMessage] {
-        entries.filter { $0.record.kind == "message" && $0.record.key == conversationId?.uuidString.lowercased() }
-            .compactMap { try? $0.record.decoded(WritingMessage.self) }
+        conversationId.map { WritingConversation.messages(entries, conversation: $0) } ?? []
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 if !conversations.isEmpty {
-                    Picker("会話", selection: $conversationId) {
+                    Picker("会話", selection: Binding(get: { conversationId }, set: selectConversation)) {
                         Text("新しい会話").tag(UUID?.none)
-                        ForEach(conversations) { item in
-                            Text((try? item.record.decoded(WritingConversation.self).title) ?? "会話の記録").tag(Optional(item.id))
+                        if let conversationId, !conversations.contains(where: { $0.id == conversationId }) {
+                            Text("新しい会話").tag(Optional(conversationId))
                         }
-                    }.labelsHidden().disabled(requestTask != nil)
+                        ForEach(conversations) { item in
+                            Text(title(item)).tag(Optional(item.id))
+                        }
+                    }.labelsHidden()
                 }
-                Button("新しい会話", systemImage: "square.and.pencil") { conversationId = nil }
-                    .labelStyle(.iconOnly).help("新しい会話").disabled(requestTask != nil)
+                Button("新しい会話", systemImage: "square.and.pencil") { selectConversation(nil) }
+                    .labelStyle(.iconOnly).help("新しい会話")
                 Button("変更履歴", systemImage: "clock.arrow.circlepath") { showingEdits = true }.labelStyle(.iconOnly)
                 Button("指示", systemImage: "slider.horizontal.3") { showingPrompts = true }.labelStyle(.iconOnly)
             }
-            AssistantScopeSelector(chapters: chapters, currentID: currentEpisodeID, scope: $referenceScope)
-                .disabled(requestTask != nil)
+            if let conversationId {
+                Menu("会話の操作", systemImage: "ellipsis") {
+                    Button("名前を変更…") {
+                        renameTitle = conversations.first(where: { $0.id == conversationId }).map(title) ?? ""; showingRename = true
+                    }
+                    Button("削除…", role: .destructive) { showingDelete = true }
+                }
+            }
+            DisclosureGroup("送る範囲：\(referenceScope.summary(chapters: chapters, currentID: currentEpisodeID))", isExpanded: $showingScope) {
+                AssistantScopeSelector(chapters: chapters, currentID: currentEpisodeID, scope: $referenceScope)
+            }.disabled(inFlight)
             Text("人物・プロット・設定と、この会話の履歴も参照します。")
                 .font(.caption2).foregroundStyle(.secondary)
             ScrollViewReader { proxy in
@@ -85,6 +91,11 @@ struct AssistantChatView: View {
                         ForEach(Array(messages.enumerated()), id: \.offset) { index, message in
                             VStack(alignment: .leading, spacing: 5) {
                                 Text(message.role == "user" ? "あなた" : "AI").font(.caption).foregroundStyle(.secondary)
+                                if message.role == "user", let id = message.requestId,
+                                   let record = entries.first(where: { $0.record.kind == "request" && $0.record.key == id.uuidString.lowercased() }),
+                                   let metadata = try? record.record.decoded(AssistantRequestRecord.self) {
+                                    Text(metadata.caption).font(.caption2).foregroundStyle(.secondary)
+                                }
                                 AssistantMarkdownView(source: message.text).textSelection(.enabled)
                                 if message.role == "assistant", let id = message.requestId,
                                    entries.contains(where: { $0.record.kind == "edit" && $0.record.key == id.uuidString.lowercased() }) {
@@ -112,24 +123,54 @@ struct AssistantChatView: View {
             if let syncNotice {
                 Text(syncNotice).font(.caption2).foregroundStyle(.secondary)
             }
-            if requestTask == nil, hasUnfinishedRequest {
-                Text("未完了の依頼があります。中断・別端末の処理中の可能性があります。自動再送はしません。")
+            AssistantRequestStatusView(host: host, key: requestKey, defaults: defaults, rebuild: rebuildChat)
+            if !inFlight, let latestRequest, let state = try? latestRequest.record.decoded(AssistantRequestRecord.self),
+               ["interrupted", "failed", "cancelled"].contains(state.state) || (state.state == "sent" && host.interrupted(latestRequest.record, defaults: defaults)) {
+                Label("中断した依頼があります", systemImage: "exclamationmark.triangle").font(.caption)
+                Button("再送", action: retry)
+            }
+            if let latestRequest, let state = try? latestRequest.record.decoded(AssistantRequestRecord.self), state.state == "pending" {
+                Text(state.detail ?? "未反映の変更案があります。変更履歴から確認できます。")
                     .font(.caption).foregroundStyle(.secondary)
             }
-            Picker("今回の編集許可", selection: $scope) {
-                ForEach(ChatEditScope.allCases) { Text($0.rawValue).tag($0) }
-            }.disabled(requestTask != nil)
             TextField("相談・生成・修正を依頼", text: $input, axis: .vertical)
-                .lineLimit(2 ... 10).textFieldStyle(.roundedBorder)
+                .lineLimit(2 ... 10).textFieldStyle(.roundedBorder).onSubmit(send)
             HStack {
-                Text("編集許可はこの依頼だけに使います。").font(.caption2).foregroundStyle(.secondary)
+                Menu {
+                    Picker("編集許可", selection: $scope) {
+                        ForEach(ChatEditScope.allCases) { Text($0.rawValue).tag($0) }
+                    }
+                } label: { Label(scope.rawValue, systemImage: "pencil.tip.crop.circle") }.disabled(inFlight)
                 Spacer()
-                if requestTask != nil {
-                    ProgressView().controlSize(.small)
-                    Button("中止") { requestTask?.cancel() }
-                } else {
-                    Button("送信", action: send).buttonStyle(.borderedProminent)
-                        .disabled(input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                Button("送信", action: send).buttonStyle(.borderedProminent)
+                    .disabled(inFlight || input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .alert("会話の名前", isPresented: $showingRename) {
+            TextField("会話の名前", text: $renameTitle)
+            Button("保存") {
+                if let conversationId {
+                    Task { @MainActor in
+                        do {
+                            guard let root = conversations.first(where: { $0.id == conversationId }) else { return }
+                            let old = try root.record.decoded(WritingConversation.self)
+                            let key = conversationId.uuidString.lowercased()
+                            let parent = entries.last(where: { $0.record.kind == "conversation" && $0.record.key == key })?.id ?? conversationId
+                            try await host.append(WritingRecord(workId: host.workID, kind: "conversation", key: key, parentId: parent,
+                                                                payload: WritingRecord.payload(WritingConversation(title: renameTitle, documentId: old.documentId, readConsent: old.readConsent))))
+                            host.requestCenter.changed(); await reload()
+                        } catch { notice = error.localizedDescription }
+                    }
+                }
+            }
+            Button("キャンセル", role: .cancel) {}
+        }
+        .confirmationDialog("この会話をこの端末で非表示にしますか？", isPresented: $showingDelete) {
+            Button("削除", role: .destructive) {
+                if let conversationId {
+                    let key = "assistant.hiddenConversations.\(host.workID)"
+                    var hidden = defaults.stringArray(forKey: key) ?? []; hidden.append(conversationId.uuidString)
+                    defaults.set(hidden, forKey: key); selectConversation(nil); localRevision += 1
                 }
             }
         }
@@ -148,8 +189,19 @@ struct AssistantChatView: View {
         .modifier(WritingSyncVisibility(host: host))
         .task(id: host.contextID) {
             await reload()
-            if conversationId == nil, input.isEmpty, requestTask == nil {
-                conversationId = conversations.last?.id
+            if conversationId == nil, input.isEmpty, !inFlight {
+                let selectionKey = host.requestKey(purpose: .advice)
+                let selected = host.requestCenter.conversationSelections[selectionKey]
+                conversationId = selected.flatMap { id in
+                    conversations.contains(where: { $0.id == id }) || host.requestCenter.statuses[host.requestKey(purpose: .advice, conversation: id)] != nil ? id : nil
+                } ?? conversations.last?.id
+                scope = ChatEditScope(rawValue: host.requestCenter.conversationPermissions[requestKey] ?? "") ?? .advice
+            }
+        }
+        .onChange(of: host.requestCenter.revision) { _, _ in Task { await reload() } }
+        .onChange(of: scope) { _, value in
+            if conversationId != nil {
+                host.requestCenter.conversationPermissions[requestKey] = value.rawValue
             }
         }
         .onChange(of: host.syncScheduler?.revision) { _, _ in
@@ -159,115 +211,67 @@ struct AssistantChatView: View {
             syncNotice = failed == true ? "会話はこの端末に保存済み。同期は接続できると再試行します。" : nil
         }
 
-        .onChange(of: host.contextID) { _, _ in requestTask?.cancel(); conversationId = nil; entries = []; scope = .advice }
-        .onDisappear { requestTask?.cancel() }
-    }
-
-    private var hasUnfinishedRequest: Bool {
-        let requests = entries.filter { $0.record.kind == "request" }
-        let latest = Dictionary(grouping: requests, by: { $0.record.key }).values.compactMap(\.last)
-        return latest.contains { (try? $0.record.decoded(WritingTurnState.self).state) == "running" }
+        .onChange(of: host.contextID) { _, _ in conversationId = nil; entries = []; scope = .advice }
     }
 
     private func reload() async {
-        do { entries = try await host.records(false) } catch { notice = error.localizedDescription }
+        let context = host.contextID
+        do {
+            let loaded = try await host.recoverInterruptedRequests(host.records(false), defaults: defaults)
+            guard host.contextID == context else { return }
+            entries = loaded
+        } catch { notice = error.localizedDescription }
+    }
+
+    private func selectConversation(_ id: UUID?) {
+        conversationId = id; scope = .advice
+        host.requestCenter.conversationSelections[host.requestKey(purpose: .advice)] = id
+        if id != nil {
+            host.requestCenter.conversationPermissions[requestKey] = ChatEditScope.advice.rawValue
+        }
     }
 
     private func send() {
         let question = input.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard requestTask == nil, !question.isEmpty else { return }
-        let selectedConversationID = conversationId
-        let existingConversations = conversations
-        let history = messages
-        let requestedScope = scope
-        let requestedReference = referenceScope
-        let id = UUID(); requestId = id
-        requestTask = Task { @MainActor in
-            defer {
-                if requestId == id {
-                    requestTask = nil; requestId = nil
-                }
+        guard !inFlight, !question.isEmpty else { return }
+        do {
+            let id = conversationId ?? UUID(), isNew = conversationId == nil
+            if let selected = conversationId {
+                _ = try WritingConversation.recordForSending(selectedID: selected, conversations: conversations, capture: host.capture())
             }
-            var turn: WritingRecord?
-            var turnConversationID = selectedConversationID
+            if try host.sendChat(question: question, conversation: id, isNew: isNew, history: messages,
+                                 scope: scope, reference: referenceScope, defaults: defaults) {
+                conversationId = id; input = ""; notice = nil
+                host.requestCenter.conversationSelections[host.requestKey(purpose: .advice)] = id
+                host.requestCenter.conversationPermissions[requestKey] = scope.rawValue
+            }
+        } catch { notice = error.localizedDescription }
+    }
+
+    private func retry() {
+        Task { @MainActor in
             do {
-                let capture = try host.capture()
-                let conversation = try WritingConversation.recordForSending(
-                    selectedID: selectedConversationID, conversations: existingConversations, capture: capture
-                )
-                let grant = try requestedScope.grant(capture)
-                let preferences = AssistantPreferences(defaults: defaults)
-                let config = try preferences.configuration(.advice)
-                try? await host.synchronizeNow()
-                try await WritingPrompts.migrateIfNeeded(host: host, defaults: defaults)
-                let prompt = try await WritingPrompts.effective(host: host, defaults: defaults, purpose: .advice)
-                try Task.checkCancellation()
-                let message = WritingMessage(role: "user", text: question, requestId: id)
-                let request = try config.chatRequest(capture: capture, grant: grant, messages: history + [message],
-                                                     apiKey: preferences.key(endpoint: config.endpoint), effectivePrompt: prompt,
-                                                     referenceScope: requestedReference)
-                if selectedConversationID == nil {
-                    try await host.append(conversation)
-                    self.conversationId = conversation.id
+                let entries = try await host.records(false)
+                let request = AssistantRequestRecord.latest(entries).filter {
+                    (try? $0.record.decoded(AssistantRequestRecord.self).conversationId) == conversationId
+                }.max { $0.record.createdAt < $1.record.createdAt }
+                if let request {
+                    if try await !host.retry(request.record, entries: entries, defaults: defaults) {
+                        try await rebuildChat()
+                    }
                 }
-                let conversationId = conversation.id
-                turnConversationID = conversationId
-                let started = try WritingRecord(workId: capture.workId, kind: "request", key: id.uuidString.lowercased(),
-                                                payload: WritingRecord.payload(WritingTurnState(state: "running", effectivePrompt: prompt,
-                                                                                                conversationId: conversationId,
-                                                                                                detail: requestedScope.rawValue)))
-                try await host.append(started); turn = started
-                try await host.append(WritingRecord(workId: capture.workId, kind: "message", key: conversationId.uuidString.lowercased(),
-                                                    payload: WritingRecord.payload(message)))
-                input = ""; scope = .advice; notice = "回答を待っています…"; await reload()
-                let raw = try await AssistantClient.send(request)
-                try Task.checkCancellation()
-                guard raw.utf8.count <= 900_000 else { throw AssistantError.tooLarge }
-                let answer = try JSONDecoder().decode(AssistantChatAnswer.self, from: Data(raw.utf8))
-                // Persist the complete answer, including rejected edits, before any application.
-                try await host.append(WritingRecord(workId: capture.workId, kind: "message", key: conversationId.uuidString.lowercased(),
-                                                    payload: WritingRecord.payload(WritingMessage(
-                                                        role: "assistant",
-                                                        text: answer.reply,
-                                                        requestId: id
-                                                    ))))
-                var completed = "completed"
-                if !answer.changes.isEmpty {
-                    let edit = try WritingEdit(id: id, workId: capture.workId, documentId: capture.document.id,
-                                               changes: answer.changes.map { try $0.change() })
-                    try await host.append(WritingRecord(id: edit.id, workId: capture.workId, kind: "edit", key: id.uuidString.lowercased(),
-                                                        payload: WritingRecord.payload(edit)))
-                    do {
-                        _ = try edit.applying(to: capture.document, attachments: capture.attachments, grant: grant)
-                        try await host.apply(edit, grant); notice = "指定した範囲に反映しました。取り消しできます。"
-                    } catch { completed = "rejected"; notice = error.localizedDescription }
-                } else {
-                    notice = nil
-                }
-                try await endTurn(started, state: completed, prompt: prompt, conversation: conversationId, detail: notice ?? "回答を保存しました。")
-                await reload()
-            } catch {
-                notice = Task.isCancelled ? WritingError.interrupted.localizedDescription : error.localizedDescription
-                if let turn, let conversationId = turnConversationID {
-                    let message = notice ?? "中断しました。"
-                    // A fresh task can save cancellation status; it still uses the captured account/work guard.
-                    await Task { @MainActor in
-                        try? await endTurn(turn, state: "interrupted", prompt: "", conversation: conversationId, detail: message)
-                    }.value
-                }
-                await reload()
-            }
+            } catch { notice = error.localizedDescription }
         }
     }
 
-    private func endTurn(_ started: WritingRecord, state: String, prompt: String, conversation: UUID, detail: String) async throws {
-        try await host.append(WritingRecord(workId: started.workId, kind: "request", key: started.key, parentId: started.id,
-                                            payload: WritingRecord.payload(WritingTurnState(
-                                                state: state,
-                                                effectivePrompt: prompt,
-                                                conversationId: conversation,
-                                                detail: detail
-                                            ))))
+    private func rebuildChat() async throws {
+        guard let conversationId, !inFlight else { return }
+        let saved = try await host.records(false)
+        _ = try WritingConversation.recordForSending(selectedID: conversationId, conversations: WritingConversation.displayed(saved), capture: host.capture())
+        let history = WritingConversation.messages(saved, conversation: conversationId)
+        guard let lastUser = history.lastIndex(where: { $0.role == "user" }) else { throw WritingError.invalidRecord }
+        _ = try host.sendChat(question: history[lastUser].text, conversation: conversationId, isNew: false,
+                              history: Array(history.prefix(lastUser)), scope: scope, reference: referenceScope, defaults: defaults, reusingQuestion: true)
     }
 
     private func undo(_ id: UUID) async {

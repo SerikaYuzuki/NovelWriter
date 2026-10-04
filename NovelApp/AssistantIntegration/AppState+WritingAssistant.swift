@@ -17,47 +17,49 @@ extension AppState {
             guard !Task.isCancelled, let self, documentSessionToken == session, snapshotSyncV2ActiveWorkID == work, matchesSnapshotSyncV2AccountScope(account),
                   permitsDocumentInteraction else { throw WritingError.changedScope }
         }
-        let context: () async throws -> SyncV2WritingContext = {
-            try validate()
+        // Record delivery belongs to the captured work, independently of the visible document session.
+        let context: () async throws -> SyncV2WritingContext = { [weak self] in
+            guard let self, matchesSnapshotSyncV2AccountScope(account) else { throw WritingError.changedScope }
             let result = try await application.writingContext(workID: work)
-            try validate(); return result
+            guard matchesSnapshotSyncV2AccountScope(account) else { throw WritingError.changedScope }
+            return result
         }
         let contextID = "\(workUUID)-\(session)-\(account)"
         let scheduler = writingSyncScheduler
-        var host = WritingAssistantHost(contextID: contextID, capture: { [weak self] in
-            try validate(); guard let self else { throw WritingError.changedScope }
-            return try captureWritingDocument(workUUID: workUUID)
-        }, records: { common in
-            try await application.writingRecords(context: context(), common: common)
-        }, append: { record in
-            try await application.appendWritingRecord(record, context: context())
-            try validate()
-            scheduler.recordAppended(contextID: contextID)
-        }, synchronize: {
-            try await application.synchronizeWriting(context: context())
-        }, apply: { [weak self] edit, grant in
-            try validate(); guard let self else { throw WritingError.changedScope }
-            defer { scheduler.recordAppended(contextID: contextID) }
-            let ctx = try await context()
-            try await applyWritingEdit(edit, grant: grant, application: application, context: ctx, validate: validate)
-        }, undo: { [weak self] id in
-            try validate(); guard let self else { throw WritingError.changedScope }
-            defer { scheduler.recordAppended(contextID: contextID) }
-            let ctx = try await context()
-            guard let journal = try await application.writingEdit(id: id, context: ctx),
-                  ["applied", "prepared"].contains(journal.state) else { throw WritingError.interrupted }
-            let edit = try JSONDecoder().decode(WritingStoredEdit.self, from: Data(journal.payload.utf8)).prepared
-            if edit.changes.first?.path.first == "thumbnails" {
-                try await undoMCPThumbnail(id, application: application, context: ctx, validate: validate)
-                return
-            }
-            try await applyWritingEdit(edit.inverse, grant: .wholeWork, application: application, context: ctx, validate: validate)
-            try await application.finishWritingEdit(id: id, state: "undone", context: ctx)
-        }, syncScheduler: scheduler, editState: { id in
-            try await application.writingEdit(id: id, context: context())?.state
-        }, editOutcome: { edit in
-            try await application.writingEditOutcome(edit, context: context())
-        })
+        var host = WritingAssistantHost(contextID: contextID, workID: workUUID, accountID: String(describing: account), defaults: userDefaults,
+                                        requestCenter: assistantRequestCenter, capture: { [weak self] in
+                                            try validate(); guard let self else { throw WritingError.changedScope }
+                                            return try captureWritingDocument(workUUID: workUUID)
+                                        }, records: { common in
+                                            try await application.writingRecords(context: context(), common: common)
+                                        }, append: { record in
+                                            try await application.appendWritingRecord(record, context: context())
+                                            scheduler.recordAppended(contextID: contextID)
+                                        }, synchronize: {
+                                            try await application.synchronizeWriting(context: context())
+                                        }, apply: { [weak self] edit, grant in
+                                            try validate(); guard let self else { throw WritingError.changedScope }
+                                            defer { scheduler.recordAppended(contextID: contextID) }
+                                            let ctx = try await context()
+                                            try await applyWritingEdit(edit, grant: grant, application: application, context: ctx, validate: validate)
+                                        }, undo: { [weak self] id in
+                                            try validate(); guard let self else { throw WritingError.changedScope }
+                                            defer { scheduler.recordAppended(contextID: contextID) }
+                                            let ctx = try await context()
+                                            guard let journal = try await application.writingEdit(id: id, context: ctx),
+                                                  ["applied", "prepared"].contains(journal.state) else { throw WritingError.interrupted }
+                                            let edit = try JSONDecoder().decode(WritingStoredEdit.self, from: Data(journal.payload.utf8)).prepared
+                                            if edit.changes.first?.path.first == "thumbnails" {
+                                                try await undoMCPThumbnail(id, application: application, context: ctx, validate: validate)
+                                                return
+                                            }
+                                            try await applyWritingEdit(edit.inverse, grant: .wholeWork, application: application, context: ctx, validate: validate)
+                                            try await application.finishWritingEdit(id: id, state: "undone", context: ctx)
+                                        }, syncScheduler: scheduler, editState: { id in
+                                            try await application.writingEdit(id: id, context: context())?.state
+                                        }, editOutcome: { edit in
+                                            try await application.writingEditOutcome(edit, context: context())
+                                        })
         host.readThumbnail = { [weak self] owner in
             guard let self else { throw WritingError.changedScope }
             return try readMCPThumbnail(owner, validate: validate)
@@ -66,6 +68,17 @@ extension AppState {
             try validate(); guard let self else { throw WritingError.changedScope }
             defer { scheduler.recordAppended(contextID: contextID) }
             return try await applyMCPThumbnail(request, grant: grant, application: application, context: context(), validate: validate)
+        }
+        host.localAccountID = account.accountID ?? "local"
+        host.localEdit = { id in
+            guard let journal = try await application.writingEdit(id: id, context: context()) else { return nil }
+            return try JSONDecoder().decode(WritingStoredEdit.self, from: Data(journal.payload.utf8)).prepared
+        }
+        host.applyExactProofreading = { [weak self] edit, grant, episode, text in
+            try validate(); guard let self else { throw WritingError.changedScope }
+            defer { scheduler.recordAppended(contextID: contextID) }
+            try await applyWritingEdit(edit, grant: grant, application: application, context: context(), validate: validate,
+                                       exactEpisode: (episode, text))
         }
         return host
     }
@@ -90,7 +103,7 @@ extension AppState {
     }
 
     private func applyWritingEdit(_ edit: WritingEdit, grant: WritingGrant, application: SyncV2Application,
-                                  context: SyncV2WritingContext, validate: () throws -> Void) async throws {
+                                  context: SyncV2WritingContext, validate: () throws -> Void, exactEpisode: (EpisodeID, String)? = nil) async throws {
         _ = try await WritingCompositionBoundary.capture {
             try validate(); return try self.captureWritingDocument(workUUID: edit.workId)
         }
@@ -101,6 +114,9 @@ extension AppState {
                 let initial = try await WritingCompositionBoundary.capture {
                     try validate(); return try self.captureWritingDocument(workUUID: edit.workId)
                 }
+                if let (episode, text) = exactEpisode {
+                    guard initial.episodeId == episode, initial.document.chapters.flatMap(\.episodes).first(where: { $0.id == episode })?.content == text else { throw WritingError.changedTarget }
+                }
                 let edit = try edit.prepared(for: initial.document, attachments: initial.attachments)
                 _ = try edit.applying(to: initial.document, attachments: initial.attachments, grant: grant)
                 guard try await application.claimWritingEdit(requested, prepared: edit, context: context) else { throw WritingError.alreadyApplied }
@@ -108,6 +124,9 @@ extension AppState {
                     try validate()
                     let current = try await WritingCompositionBoundary.capture {
                         try validate(); return try self.captureWritingDocument(workUUID: edit.workId)
+                    }
+                    if let (episode, text) = exactEpisode {
+                        guard current.episodeId == episode, current.document.chapters.flatMap(\.episodes).first(where: { $0.id == episode })?.content == text else { throw WritingError.changedTarget }
                     }
                     let mutation = try edit.applying(to: current.document, attachments: current.attachments, grant: grant)
                     let replacement = mutation.document

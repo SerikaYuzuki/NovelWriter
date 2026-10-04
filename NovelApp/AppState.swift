@@ -9,6 +9,7 @@ import NovelSyncV2Application
 import NovelSyncV2PortableBridge
 import NovelTiming
 import NovelWorkspace
+import NovelWorkspaceUI
 import NovelWritingProgress
 import NovelWritingSupport
 import Observation
@@ -99,6 +100,7 @@ typealias DocumentSessionToken = AppDocumentSessionToken
 final class AppState {
     let syncSessionController = SyncSessionController<AppDocumentSessionToken, SnapshotSyncV2AccountScopeToken, Bool>()
     let timing: FuminiwaTiming
+    let assistantRequestCenter = AssistantRequestCenter()
     let writingSyncScheduler: WritingSyncScheduler
     let writingProgress: WritingProgressTracker
     let writingProgressRoot: URL?
