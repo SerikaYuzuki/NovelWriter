@@ -111,6 +111,7 @@ final class AppState {
     let snapshotSyncV2CheckpointOverride: SnapshotSyncV2CheckpointOverride?
     let snapshotSyncV2OpenOverride: SnapshotSyncV2OpenOverride?
     let snapshotSyncV2OpenLocalOverride: SnapshotSyncV2OpenLocalOverride?
+    let snapshotSyncV2LibraryOverride: SnapshotSyncV2LibraryOverride?
     let snapshotSyncV2CatalogOverride: SnapshotSyncV2CatalogOverride?
     let snapshotSyncV2AfterStagedRemoteOverride: SnapshotSyncV2AfterStagedRemoteOverride?
     #endif
@@ -225,6 +226,7 @@ final class AppState {
         snapshotSyncV2CheckpointOverride = dependencies.snapshotSyncV2CheckpointOverride
         snapshotSyncV2OpenOverride = dependencies.snapshotSyncV2OpenOverride
         snapshotSyncV2OpenLocalOverride = dependencies.snapshotSyncV2OpenLocalOverride
+        snapshotSyncV2LibraryOverride = dependencies.snapshotSyncV2LibraryOverride
         snapshotSyncV2CatalogOverride = dependencies.snapshotSyncV2CatalogOverride
         snapshotSyncV2AfterStagedRemoteOverride = dependencies.snapshotSyncV2AfterStagedRemoteOverride
         #endif
