@@ -2,6 +2,7 @@ import EditorKit
 import NovelCore
 import NovelSyncV2
 import NovelUI
+import NovelWorkspace
 import NovelWorkspaceUI
 import SwiftUI
 
@@ -45,7 +46,7 @@ enum IOSAdaptiveWritingLayoutTransition {
 struct IOSAdaptiveWritingView: View {
     let store: IOSDocumentStore
     let openEpisode: (ChapterID, EpisodeID) -> Void
-    let expectedSession: IOSDocumentSessionToken?
+    let expectedSession: WorkspaceSessionToken?
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var toolDestination: IOSWritingTool?
     @State private var regularProjectSection: IOSRegularProjectSection? = .writing

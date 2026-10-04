@@ -1,5 +1,6 @@
 import NovelCore
 import NovelUI
+import NovelWorkspace
 import SwiftUI
 
 enum IOSPlotSelection: Hashable {
@@ -10,7 +11,7 @@ enum IOSPlotSelection: Hashable {
 @MainActor
 struct IOSPlotFeatureView: View {
     let store: IOSDocumentStore
-    let expectedSession: IOSDocumentSessionToken?
+    let expectedSession: WorkspaceSessionToken?
     @State private var selection: IOSPlotSelection?
 
     init(store: IOSDocumentStore) {
@@ -31,7 +32,7 @@ struct IOSPlotFeatureView: View {
 struct IOSPlotOutlineView: View {
     let store: IOSDocumentStore
     @Binding var selection: IOSPlotSelection?
-    let expectedSession: IOSDocumentSessionToken?
+    let expectedSession: WorkspaceSessionToken?
     let usesNavigationLinks: Bool
 
     @State private var editMode: EditMode = .inactive
@@ -357,7 +358,7 @@ private struct IOSPlotDeletionRequest: Identifiable {
     }
 
     let id = UUID()
-    let expectedSession: IOSDocumentSessionToken
+    let expectedSession: WorkspaceSessionToken
     let target: Target
 
     var title: String {

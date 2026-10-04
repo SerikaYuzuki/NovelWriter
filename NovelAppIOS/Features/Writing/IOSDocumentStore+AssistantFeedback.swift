@@ -1,6 +1,7 @@
 import Foundation
 import NovelCore
 import NovelThumbnail
+import NovelWorkspace
 import NovelWorkspaceUI
 
 extension IOSDocumentStore {
@@ -16,8 +17,8 @@ extension IOSDocumentStore {
         return attachments.filter { !feedbackNames.contains($0.fileName) && !(ThumbnailOwner(fileName: $0.fileName)?.exists(in: document) ?? false) }
     }
 
-    func saveAssistantFeedback(_ feedback: AssistantFeedback, session: IOSDocumentSessionToken,
-                               account: IOSSnapshotSyncV2AccountScope) async -> Bool {
+    func saveAssistantFeedback(_ feedback: AssistantFeedback, session: WorkspaceSessionToken,
+                               account: WorkspaceAccountScope) async -> Bool {
         guard feedback.purpose == .impressions else { return false }
         guard currentDocumentSessionToken == session, matchesSyncAccount(account),
               !syncV2AccountTransitionInProgress else { return false }
@@ -30,8 +31,8 @@ extension IOSDocumentStore {
         return saved != nil && currentDocumentSessionToken == session && matchesSyncAccount(account)
     }
 
-    func deleteAssistantFeedback(_ feedback: AssistantFeedback, session: IOSDocumentSessionToken,
-                                 account: IOSSnapshotSyncV2AccountScope) async -> Bool {
+    func deleteAssistantFeedback(_ feedback: AssistantFeedback, session: WorkspaceSessionToken,
+                                 account: WorkspaceAccountScope) async -> Bool {
         guard currentDocumentSessionToken == session, matchesSyncAccount(account),
               assistantFeedback.contains(feedback),
               let attachment = attachments.first(where: { $0.fileName == feedback.fileName }) else { return false }

@@ -306,8 +306,8 @@ extension AppState {
         let expectedWorkID = currentSnapshotSyncV2WorkID
         let expectedSnapshotSession = snapshotSyncV2Session
         let accountScope = snapshotSyncV2AccountScopeToken
-        let operation = SyncOperationContext(workID: expectedWorkID, session: expectedSession,
-                                             account: accountScope, editGeneration: nil)
+        let operation = WorkspaceOperationContext(workID: expectedWorkID, session: expectedSession,
+                                                  account: accountScope, editGeneration: nil)
         let operationToken = syncSessionController.beginRemoteOnlyOpen(workID: work.workID)
         snapshotSyncLibraryOpenFailure = nil
         let task = Task { @MainActor [weak self] in
@@ -408,8 +408,8 @@ extension AppState {
         validationRejected: Bool,
         work: StartupLibraryWork,
         operationToken: UUID,
-        accountScope: SnapshotSyncV2AccountScopeToken,
-        expectedSession: AppDocumentSessionToken
+        accountScope: WorkspaceAccountScope,
+        expectedSession: WorkspaceSessionToken
     ) {
         if !installed,
            !Task.isCancelled,

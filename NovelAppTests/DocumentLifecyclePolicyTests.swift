@@ -2,6 +2,7 @@ import Foundation
 @testable import FUMINIWA
 import NovelSyncV2
 import NovelSyncV2Application
+import NovelWorkspace
 import Testing
 
 @MainActor
@@ -24,7 +25,7 @@ struct DocumentLifecyclePolicyTests {
         state.isDocumentTransitionInProgress = true
         #expect(!state.permitsMutation(expectedSession: session))
         state.isDocumentTransitionInProgress = false
-        #expect(!state.permitsMutation(expectedSession: AppDocumentSessionToken(
+        #expect(!state.permitsMutation(expectedSession: WorkspaceSessionToken(
             generation: session.generation + 1,
             documentID: session.documentID,
             workID: session.workID

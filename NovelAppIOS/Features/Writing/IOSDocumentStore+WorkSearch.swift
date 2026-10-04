@@ -6,7 +6,7 @@ import NovelWorkspace
 
 extension IOSDocumentStore {
     var workSearchScope: String {
-        "\(String(describing: currentDocumentSessionToken))-\(snapshotSyncV2AccountScope)-\(String(describing: syncV2ActiveWorkID))-\(syncSessionController.accountGeneration)"
+        "\(String(describing: currentDocumentSessionToken))-\(snapshotSyncV2AccountScope)-\(String(describing: syncV2ActiveWorkID))"
     }
 
     var episodeHistoryCurrentBody: String? {
@@ -31,9 +31,7 @@ extension IOSDocumentStore {
 
     var workReplacementHost: WorkReplacementHost {
         let session = currentDocumentSessionToken, account = snapshotSyncV2AccountScope, work = syncV2ActiveWorkID
-        let accountGeneration = syncSessionController.accountGeneration
         let validate = { [self] in currentDocumentSessionToken == session && snapshotSyncV2AccountScope == account
-            && syncSessionController.accountGeneration == accountGeneration
             && syncV2ActiveWorkID == work && work != nil && !isDocumentTransitionInProgress
             && !syncV2AccountTransitionInProgress && syncV2KeepBothPendingWorkID == nil && !Task.isCancelled
         }

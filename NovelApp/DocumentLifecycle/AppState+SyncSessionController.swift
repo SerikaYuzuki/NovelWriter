@@ -56,10 +56,8 @@ extension AppState {
 }
 
 extension AppState {
-    typealias SyncOperationContext = SyncSessionController<AppDocumentSessionToken, SnapshotSyncV2AccountScopeToken, Bool>.OperationContext
-
-    func matchesSyncOperation(_ expected: SyncOperationContext) -> Bool {
-        expected.isCurrent(SyncOperationContext(
+    func matchesSyncOperation(_ expected: WorkspaceOperationContext) -> Bool {
+        expected.isCurrent(WorkspaceOperationContext(
             workID: currentSnapshotSyncV2WorkID, session: documentSessionToken,
             account: snapshotSyncV2AccountScopeToken,
             editGeneration: expected.editGeneration == nil ? nil : editorContentGeneration

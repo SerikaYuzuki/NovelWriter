@@ -4,6 +4,7 @@ import NovelCore
 import NovelSyncV2
 import NovelSyncV2Application
 import NovelSyncV2Runtime
+import NovelWorkspace
 import NovelWorkspaceUI
 import Testing
 
@@ -23,7 +24,7 @@ struct AssistantFeedbackPersistenceTests {
         let account = state.snapshotSyncV2AccountScopeToken
         let feedback = AssistantFeedback(id: UUID(), purpose: .impressions, scopeTitle: "第一話",
                                          createdAt: Date(timeIntervalSince1970: 1_790_000_001), markdown: "# 感想\n\n旅立ちの場面が心に残った。")
-        let staleAccount = SnapshotSyncV2AccountScopeToken(accountID: "other", accountFence: "other", generation: 0)
+        let staleAccount = WorkspaceAccountScope(accountID: "other", accountFence: "other", serverInstanceID: nil, protocolEpoch: nil, generation: 0)
         #expect(await !state.saveAssistantFeedback(feedback, session: session, account: staleAccount))
         #expect(state.assistantFeedback.isEmpty)
         let advice = AssistantFeedback(id: UUID(), purpose: .advice, scopeTitle: "第一話", createdAt: Date(), markdown: "助言")

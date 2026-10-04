@@ -2,31 +2,32 @@ import EditorKit
 import NovelCore
 import NovelSyncV2
 import NovelSyncV2Application
+import NovelWorkspace
 import Observation
 
 struct IOSWorkspaceEditorDeparture: Equatable {
-    let session: IOSDocumentSessionToken
+    let session: WorkspaceSessionToken
     let chapterID: ChapterID?
     let episodeID: EpisodeID?
 }
 
 enum IOSWorkspaceRoute: Hashable {
-    case projectHome(session: IOSDocumentSessionToken)
-    case projectInfo(session: IOSDocumentSessionToken)
-    case writing(session: IOSDocumentSessionToken)
-    case plot(session: IOSDocumentSessionToken)
-    case characters(session: IOSDocumentSessionToken)
-    case worldbuilding(session: IOSDocumentSessionToken)
-    case feedback(session: IOSDocumentSessionToken)
-    case references(session: IOSDocumentSessionToken)
-    case settings(session: IOSDocumentSessionToken)
+    case projectHome(session: WorkspaceSessionToken)
+    case projectInfo(session: WorkspaceSessionToken)
+    case writing(session: WorkspaceSessionToken)
+    case plot(session: WorkspaceSessionToken)
+    case characters(session: WorkspaceSessionToken)
+    case worldbuilding(session: WorkspaceSessionToken)
+    case feedback(session: WorkspaceSessionToken)
+    case references(session: WorkspaceSessionToken)
+    case settings(session: WorkspaceSessionToken)
     case editor(
-        session: IOSDocumentSessionToken,
+        session: WorkspaceSessionToken,
         chapterID: ChapterID,
         episodeID: EpisodeID
     )
 
-    var session: IOSDocumentSessionToken {
+    var session: WorkspaceSessionToken {
         switch self {
         case let .projectHome(session),
              let .projectInfo(session),
@@ -43,7 +44,7 @@ enum IOSWorkspaceRoute: Hashable {
     }
 
     var documentID: IOSPrivateDocumentID {
-        session.workingCopyID
+        IOSPrivateDocumentID(workID: session.workID)
     }
 }
 
@@ -59,10 +60,10 @@ final class IOSWorkspaceNavigationCoordinator {
     }
 
     private(set) var navigationGeneration: UInt64 = 0
-    private(set) var activeSession: IOSDocumentSessionToken?
+    private(set) var activeSession: WorkspaceSessionToken?
 
     var activeDocumentID: IOSPrivateDocumentID? {
-        activeSession?.workingCopyID
+        activeSession.map { IOSPrivateDocumentID(workID: $0.workID) }
     }
 
     var activeEditorDeparture: IOSWorkspaceEditorDeparture? {
@@ -117,53 +118,53 @@ final class IOSWorkspaceNavigationCoordinator {
         }
     }
 
-    func showProjectHome(for session: IOSDocumentSessionToken) {
+    func showProjectHome(for session: WorkspaceSessionToken) {
         activeSession = session
         path = [.projectHome(session: session)]
     }
 
-    func showProjectInfo(for session: IOSDocumentSessionToken) {
+    func showProjectInfo(for session: WorkspaceSessionToken) {
         prepareProjectPath(for: session)
         path.append(.projectInfo(session: session))
     }
 
-    func showWriting(for session: IOSDocumentSessionToken) {
+    func showWriting(for session: WorkspaceSessionToken) {
         prepareProjectPath(for: session)
         path.append(.writing(session: session))
     }
 
-    func showPlot(for session: IOSDocumentSessionToken) {
+    func showPlot(for session: WorkspaceSessionToken) {
         prepareProjectPath(for: session)
         path.append(.plot(session: session))
     }
 
-    func showCharacters(for session: IOSDocumentSessionToken) {
+    func showCharacters(for session: WorkspaceSessionToken) {
         prepareProjectPath(for: session)
         path.append(.characters(session: session))
     }
 
-    func showWorldbuilding(for session: IOSDocumentSessionToken) {
+    func showWorldbuilding(for session: WorkspaceSessionToken) {
         prepareProjectPath(for: session)
         path.append(.worldbuilding(session: session))
     }
 
-    func showFeedback(for session: IOSDocumentSessionToken) {
+    func showFeedback(for session: WorkspaceSessionToken) {
         prepareProjectPath(for: session)
         path.append(.feedback(session: session))
     }
 
-    func showReferences(for session: IOSDocumentSessionToken) {
+    func showReferences(for session: WorkspaceSessionToken) {
         prepareProjectPath(for: session)
         path.append(.references(session: session))
     }
 
-    func showSettings(for session: IOSDocumentSessionToken) {
+    func showSettings(for session: WorkspaceSessionToken) {
         prepareProjectPath(for: session)
         path.append(.settings(session: session))
     }
 
     func showEditor(
-        for session: IOSDocumentSessionToken,
+        for session: WorkspaceSessionToken,
         chapterID: ChapterID,
         episodeID: EpisodeID
     ) {
@@ -180,7 +181,7 @@ final class IOSWorkspaceNavigationCoordinator {
         )
     }
 
-    func documentDidChange(to session: IOSDocumentSessionToken) {
+    func documentDidChange(to session: WorkspaceSessionToken) {
         let containsStaleRoute = path.contains { $0.session != session }
         guard activeSession != session || containsStaleRoute else { return }
 
@@ -226,7 +227,7 @@ final class IOSWorkspaceNavigationCoordinator {
         return Self.editorDeparture(in: Array(path.dropFirst(retainedCount)))
     }
 
-    private func prepareProjectPath(for session: IOSDocumentSessionToken) {
+    private func prepareProjectPath(for session: WorkspaceSessionToken) {
         activeSession = session
         let startsAtProjectHome = path.first == .projectHome(session: session)
         let containsOnlyCurrentSession = path.allSatisfy { $0.session == session }

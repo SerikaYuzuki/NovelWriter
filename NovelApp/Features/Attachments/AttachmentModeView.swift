@@ -1,9 +1,10 @@
 import NovelCore
+import NovelWorkspace
 import SwiftUI
 
 private struct SessionBoundAttachment: Identifiable {
     var attachment: Attachment
-    var session: DocumentSessionToken
+    var session: WorkspaceSessionToken
 
     var id: String {
         attachment.id

@@ -1,12 +1,13 @@
 import Foundation
 import NovelSyncV2
 import NovelSyncV2Application
+import NovelWorkspace
 
 extension IOSDocumentStore {
     func renameLibraryWork(
         _ item: SyncV2LibraryItem, title: String,
-        expectedSession: IOSDocumentSessionToken?,
-        accountScope: IOSSnapshotSyncV2AccountScope
+        expectedSession: WorkspaceSessionToken?,
+        accountScope: WorkspaceAccountScope
     ) async -> Bool {
         let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty, let application = snapshotSyncV2Application,

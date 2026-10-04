@@ -4,6 +4,7 @@ import NovelCore
 import NovelSyncV2
 import NovelSyncV2Application
 import NovelSyncV2Runtime
+import NovelWorkspace
 import Testing
 
 @MainActor
@@ -26,7 +27,7 @@ struct IOSLibraryImportPresentationTests {
         _ = try await application.checkpoint(workID: target, document: document, reason: .migration, documentCreatedAt: Date())
         store.syncV2LibraryItems = [.init(workID: target, title: document.title,
                                           availability: .remoteOnly, accountState: .active)]
-        var navigatedSession: IOSDocumentSessionToken?
+        var navigatedSession: WorkspaceSessionToken?
         #expect(await store.startRemoteOnlySnapshotSyncV2Open(workID: target,
                                                               shouldOpen: { !navigatedAway }, onOpened: { navigatedSession = $0 }))
         let task = try #require(store.snapshotSyncV2RemoteOnlyOpenTask)
@@ -47,7 +48,7 @@ struct IOSLibraryImportPresentationTests {
     func routeGeneration() {
         let navigation = IOSWorkspaceNavigationCoordinator()
         let generation = navigation.navigationGeneration
-        let session = IOSDocumentSessionToken(workingCopyID: .init(workID: WorkID(UUID())), generation: 1)
+        let session = WorkspaceSessionToken(generation: 1, documentID: UUID(), workID: WorkID(UUID()))
         navigation.showProjectHome(for: session)
         navigation.updatePath([]) { _ in true }
         #expect(navigation.path.isEmpty)

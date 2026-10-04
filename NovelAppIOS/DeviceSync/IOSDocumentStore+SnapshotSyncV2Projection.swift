@@ -5,6 +5,7 @@ import NovelSyncV2
 import NovelSyncV2Application
 import NovelSyncV2PortableBridge
 import NovelSyncV2Runtime
+import NovelWorkspace
 import SwiftUI
 
 extension IOSDocumentStore {
@@ -86,7 +87,7 @@ extension IOSDocumentStore {
         _ application: SyncV2Application,
         workID: WorkID?,
         automaticAdoption: AutoAdoptionExpectation?,
-        expectedAccountScope: IOSSnapshotSyncV2AccountScope,
+        expectedAccountScope: WorkspaceAccountScope,
         resumesWorker: Bool,
         wakeReason: SyncV2WakeReason = .foreground
     ) {
@@ -125,7 +126,7 @@ extension IOSDocumentStore {
         _ application: SyncV2Application,
         workID: WorkID,
         automaticAdoption: AutoAdoptionExpectation?,
-        expectedAccountScope: IOSSnapshotSyncV2AccountScope,
+        expectedAccountScope: WorkspaceAccountScope,
         operationToken: UUID
     ) async {
         let changes = await application.stateChanges(for: workID, until: .now.advanced(by: .seconds(30)))
@@ -187,7 +188,7 @@ extension IOSDocumentStore {
 
     func refreshSnapshotSyncV2Projection(
         workID: WorkID? = nil,
-        expectedAccountScope: IOSSnapshotSyncV2AccountScope? = nil,
+        expectedAccountScope: WorkspaceAccountScope? = nil,
         operationToken: UUID? = nil
     ) async {
         guard !isSyncV2AccountTransitionActive,

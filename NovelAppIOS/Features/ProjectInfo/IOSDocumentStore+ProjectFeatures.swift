@@ -1,6 +1,7 @@
 import Foundation
 import NovelCore
 import NovelThumbnail
+import NovelWorkspace
 
 extension IOSDocumentStore {
     // MARK: - Characters
@@ -8,7 +9,7 @@ extension IOSDocumentStore {
     @discardableResult
     func addCharacter(
         name: String = "名無し",
-        expectedSession: IOSDocumentSessionToken
+        expectedSession: WorkspaceSessionToken
     ) -> CharacterID? {
         guard permitsProjectFeatureMutation,
               validateCurrentDocumentSession(expectedSession) else { return nil }
@@ -20,7 +21,7 @@ extension IOSDocumentStore {
     @discardableResult
     func updateCharacter(
         _ character: NovelCore.Character,
-        expectedSession: IOSDocumentSessionToken
+        expectedSession: WorkspaceSessionToken
     ) -> Bool {
         guard permitsProjectFeatureMutation,
               validateCurrentDocumentSession(expectedSession),
@@ -47,7 +48,7 @@ extension IOSDocumentStore {
     }
 
     @discardableResult
-    func deleteCharacter(id: CharacterID, expectedSession: IOSDocumentSessionToken) -> Bool {
+    func deleteCharacter(id: CharacterID, expectedSession: WorkspaceSessionToken) -> Bool {
         guard permitsProjectFeatureMutation,
               validateCurrentDocumentSession(expectedSession) else { return false }
         var replacement = document
@@ -61,7 +62,7 @@ extension IOSDocumentStore {
     func moveCharacters(
         fromOffsets: IndexSet,
         toOffset: Int,
-        expectedSession: IOSDocumentSessionToken
+        expectedSession: WorkspaceSessionToken
     ) -> Bool {
         guard permitsProjectFeatureMutation,
               validateCurrentDocumentSession(expectedSession),
@@ -81,7 +82,7 @@ extension IOSDocumentStore {
     func addPlotCard(
         title: String = "新しいカード",
         chapterID: ChapterID? = nil,
-        expectedSession: IOSDocumentSessionToken
+        expectedSession: WorkspaceSessionToken
     ) -> PlotCardID? {
         guard permitsProjectFeatureMutation,
               validateCurrentDocumentSession(expectedSession),
@@ -94,7 +95,7 @@ extension IOSDocumentStore {
     @discardableResult
     func updatePlotCard(
         _ card: PlotCard,
-        expectedSession: IOSDocumentSessionToken
+        expectedSession: WorkspaceSessionToken
     ) -> Bool {
         guard permitsProjectFeatureMutation,
               validateCurrentDocumentSession(expectedSession),
@@ -112,7 +113,7 @@ extension IOSDocumentStore {
     }
 
     @discardableResult
-    func deletePlotCard(id: PlotCardID, expectedSession: IOSDocumentSessionToken) -> Bool {
+    func deletePlotCard(id: PlotCardID, expectedSession: WorkspaceSessionToken) -> Bool {
         guard permitsProjectFeatureMutation,
               validateCurrentDocumentSession(expectedSession),
               document.removePlotCard(id: id) != nil else { return false }
@@ -124,7 +125,7 @@ extension IOSDocumentStore {
     func movePlotCards(
         fromOffsets: IndexSet,
         toOffset: Int,
-        expectedSession: IOSDocumentSessionToken
+        expectedSession: WorkspaceSessionToken
     ) -> Bool {
         guard permitsProjectFeatureMutation,
               validateCurrentDocumentSession(expectedSession),
@@ -143,7 +144,7 @@ extension IOSDocumentStore {
     @discardableResult
     func addFlag(
         title: String = "新しい伏線",
-        expectedSession: IOSDocumentSessionToken
+        expectedSession: WorkspaceSessionToken
     ) -> FlagID? {
         guard permitsProjectFeatureMutation,
               validateCurrentDocumentSession(expectedSession) else { return nil }
@@ -155,7 +156,7 @@ extension IOSDocumentStore {
     @discardableResult
     func updateFlag(
         _ flag: Flag,
-        expectedSession: IOSDocumentSessionToken
+        expectedSession: WorkspaceSessionToken
     ) -> Bool {
         guard permitsProjectFeatureMutation,
               validateCurrentDocumentSession(expectedSession),
@@ -169,7 +170,7 @@ extension IOSDocumentStore {
     }
 
     @discardableResult
-    func deleteFlag(id: FlagID, expectedSession: IOSDocumentSessionToken) -> Bool {
+    func deleteFlag(id: FlagID, expectedSession: WorkspaceSessionToken) -> Bool {
         guard permitsProjectFeatureMutation,
               validateCurrentDocumentSession(expectedSession),
               document.removeFlag(id: id) != nil else { return false }
@@ -181,7 +182,7 @@ extension IOSDocumentStore {
     func moveFlags(
         fromOffsets: IndexSet,
         toOffset: Int,
-        expectedSession: IOSDocumentSessionToken
+        expectedSession: WorkspaceSessionToken
     ) -> Bool {
         guard permitsProjectFeatureMutation,
               validateCurrentDocumentSession(expectedSession),
@@ -200,7 +201,7 @@ extension IOSDocumentStore {
     @discardableResult
     func addWorldNote(
         title: String = "新しいノート",
-        expectedSession: IOSDocumentSessionToken
+        expectedSession: WorkspaceSessionToken
     ) -> WorldNoteID? {
         guard permitsProjectFeatureMutation,
               validateCurrentDocumentSession(expectedSession) else { return nil }
@@ -214,7 +215,7 @@ extension IOSDocumentStore {
     @discardableResult
     func updateWorldNote(
         _ note: WorldNote,
-        expectedSession: IOSDocumentSessionToken
+        expectedSession: WorkspaceSessionToken
     ) -> Bool {
         guard permitsProjectFeatureMutation,
               validateCurrentDocumentSession(expectedSession),
@@ -226,7 +227,7 @@ extension IOSDocumentStore {
     }
 
     @discardableResult
-    func deleteWorldNote(id: WorldNoteID, expectedSession: IOSDocumentSessionToken) -> Bool {
+    func deleteWorldNote(id: WorldNoteID, expectedSession: WorkspaceSessionToken) -> Bool {
         guard permitsProjectFeatureMutation,
               validateCurrentDocumentSession(expectedSession),
               let index = document.worldNotes.firstIndex(where: { $0.id == id }) else { return false }
@@ -241,7 +242,7 @@ extension IOSDocumentStore {
     func moveWorldNotes(
         fromOffsets: IndexSet,
         toOffset: Int,
-        expectedSession: IOSDocumentSessionToken
+        expectedSession: WorkspaceSessionToken
     ) -> Bool {
         guard permitsProjectFeatureMutation,
               validateCurrentDocumentSession(expectedSession),
@@ -267,11 +268,11 @@ extension IOSDocumentStore {
         return document.chapters.contains(where: { $0.id == id })
     }
 
-    func matchesCurrentDocumentSession(_ expectedSession: IOSDocumentSessionToken) -> Bool {
+    func matchesCurrentDocumentSession(_ expectedSession: WorkspaceSessionToken) -> Bool {
         currentDocumentSessionToken == expectedSession
     }
 
-    func validateCurrentDocumentSession(_ expectedSession: IOSDocumentSessionToken) -> Bool {
+    func validateCurrentDocumentSession(_ expectedSession: WorkspaceSessionToken) -> Bool {
         guard matchesCurrentDocumentSession(expectedSession) else {
             operationErrorMessage = "作品が切り替わったため、この操作を中止しました。"
             return false

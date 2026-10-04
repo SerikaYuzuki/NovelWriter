@@ -1,11 +1,12 @@
 import NovelCore
+import NovelWorkspace
 import SwiftUI
 
 struct EpisodeRenameRequest {
     let episodeID: EpisodeID
     let chapterID: ChapterID
-    let session: DocumentSessionToken
-    let account: SnapshotSyncV2AccountScopeToken
+    let session: WorkspaceSessionToken
+    let account: WorkspaceAccountScope
     var title: String
 
     @MainActor

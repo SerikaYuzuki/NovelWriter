@@ -1,5 +1,6 @@
 import Foundation
 import NovelCore
+import NovelWorkspace
 import SwiftUI
 
 extension AppState {
@@ -15,7 +16,7 @@ extension AppState {
     }
 
     private func refreshAutomaticSnapshotSyncV2(
-        session: AppDocumentSessionToken, account: SnapshotSyncV2AccountScopeToken
+        session: WorkspaceSessionToken, account: WorkspaceAccountScope
     ) async {
         guard !Task.isCancelled, documentSessionToken == session,
               matchesSnapshotSyncV2AccountScope(account) else { return }
@@ -40,8 +41,8 @@ extension AppState {
 }
 
 private struct SyncStatusObservationID: Hashable {
-    let session: AppDocumentSessionToken
-    let account: SnapshotSyncV2AccountScopeToken
+    let session: WorkspaceSessionToken
+    let account: WorkspaceAccountScope
     var chapter: ChapterID?
     var episode: EpisodeID?
     var isActive = true

@@ -4,6 +4,7 @@ import NovelCore
 import NovelSyncV2
 import NovelSyncV2Application
 import NovelThumbnail
+import NovelWorkspace
 import NovelWorkspaceUI
 import NovelWritingSupport
 
@@ -14,7 +15,7 @@ extension IOSDocumentStore {
 
     func applyAssistantProofreading(_ manuscript: AssistantManuscript, replacement: String,
                                     editingToken: IOSEpisodeEditingToken,
-                                    account: IOSSnapshotSyncV2AccountScope) -> Bool {
+                                    account: WorkspaceAccountScope) -> Bool {
         guard writingInteractionAllowed, currentEpisodeEditingToken == editingToken,
               matchesSyncAccount(account) else { return false }
         return writingProgress.withUncountedEditorChange {

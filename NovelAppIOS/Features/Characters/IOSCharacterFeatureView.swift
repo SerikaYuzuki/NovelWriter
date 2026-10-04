@@ -1,12 +1,13 @@
 import NovelCore
 import NovelThumbnail
 import NovelUI
+import NovelWorkspace
 import SwiftUI
 
 @MainActor
 struct IOSCharacterFeatureView: View {
     let store: IOSDocumentStore
-    let expectedSession: IOSDocumentSessionToken?
+    let expectedSession: WorkspaceSessionToken?
     @State private var selection: CharacterID?
 
     init(store: IOSDocumentStore) {
@@ -27,7 +28,7 @@ struct IOSCharacterFeatureView: View {
 struct IOSCharacterOutlineView: View {
     let store: IOSDocumentStore
     @Binding var selection: CharacterID?
-    let expectedSession: IOSDocumentSessionToken?
+    let expectedSession: WorkspaceSessionToken?
     let usesNavigationLinks: Bool
 
     @State private var deletionRequest: IOSCharacterDeletionRequest?
@@ -174,7 +175,7 @@ struct IOSCharacterOutlineView: View {
 struct IOSCharacterDetailView: View {
     let store: IOSDocumentStore
     let characterID: CharacterID?
-    let expectedSession: IOSDocumentSessionToken?
+    let expectedSession: WorkspaceSessionToken?
     var dismissAfterDeletion = false
     var onDeletion: () -> Void = {}
 
@@ -451,7 +452,7 @@ private struct IOSCharacterRow: View {
 
 private struct IOSCharacterDeletionRequest: Identifiable {
     let id = UUID()
-    let expectedSession: IOSDocumentSessionToken
+    let expectedSession: WorkspaceSessionToken
     let characterIDs: [CharacterID]
 
     var message: String {
@@ -461,7 +462,7 @@ private struct IOSCharacterDeletionRequest: Identifiable {
 
 private struct IOSSingleCharacterDeletionRequest: Identifiable {
     let id = UUID()
-    let expectedSession: IOSDocumentSessionToken
+    let expectedSession: WorkspaceSessionToken
     let characterID: CharacterID
     let displayName: String
 

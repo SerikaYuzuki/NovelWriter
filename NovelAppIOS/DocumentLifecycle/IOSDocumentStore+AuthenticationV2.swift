@@ -2,6 +2,7 @@ import Foundation
 import NovelAuth
 import NovelAuthApple
 import NovelSyncV2Application
+import NovelWorkspace
 import OSLog
 
 private enum IOSDocumentStoreAuthenticationError: Error {
@@ -282,17 +283,19 @@ extension IOSDocumentStore {
             #else
             serverInstanceID = $0.serverInstanceID.uuidString.lowercased()
             #endif
-            return IOSSnapshotSyncV2AccountScope(
+            return WorkspaceAccountScope(
                 accountID: $0.accountID,
                 accountFence: $0.accountFence,
                 serverInstanceID: serverInstanceID,
-                protocolEpoch: Int64($0.syncProtocolEpoch)
+                protocolEpoch: Int64($0.syncProtocolEpoch),
+                generation: oldScope.generation
             )
-        } ?? IOSSnapshotSyncV2AccountScope(
+        } ?? WorkspaceAccountScope(
             accountID: nil,
             accountFence: nil,
             serverInstanceID: nil,
-            protocolEpoch: nil
+            protocolEpoch: nil,
+            generation: oldScope.generation
         )
         let changed = oldScope != newScope
         let needsDurableReconciliation = snapshotSyncV2Application != nil &&

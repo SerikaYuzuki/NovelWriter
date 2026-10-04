@@ -560,7 +560,7 @@ extension AppState {
         selectedWorldNoteID = nil
         plotOutlineSelection = document.chapters.first.map { .chapter($0.id) } ?? .unassigned
         editorContentGeneration &+= 1
-        documentSessionToken = AppDocumentSessionToken(
+        documentSessionToken = WorkspaceSessionToken(
             generation: editorContentGeneration,
             documentID: document.id,
             workID: workID

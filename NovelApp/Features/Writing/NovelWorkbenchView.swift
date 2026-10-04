@@ -3,6 +3,7 @@ import NovelCore
 import NovelTextAnalysis
 import NovelThumbnail
 import NovelUI
+import NovelWorkspace
 import NovelWorkspaceUI
 import SwiftUI
 import UniformTypeIdentifiers
@@ -45,7 +46,7 @@ struct NovelWorkbenchView: View {
     @State private var selectedFeedbackID: UUID?
     @State private var overlayState = WorkbenchOverlayState()
     @State private var isImportingAttachment = false
-    @State private var attachmentImportSession: DocumentSessionToken?
+    @State private var attachmentImportSession: WorkspaceSessionToken?
     @State private var attachmentImportMessage: OperationMessage?
     @State private var isPlotCardRailPresented = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion

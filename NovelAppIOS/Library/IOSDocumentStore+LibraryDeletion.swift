@@ -2,6 +2,7 @@ import Foundation
 import NovelCore
 import NovelSyncV2
 import NovelSyncV2Application
+import NovelWorkspace
 
 extension IOSDocumentStore {
     func libraryDeletionDisabledReason(for workID: WorkID) -> String? {
@@ -15,15 +16,15 @@ extension IOSDocumentStore {
     }
 
     func deleteLibraryWork(
-        _ item: SyncV2LibraryItem, expectedSession: IOSDocumentSessionToken?,
-        accountScope: IOSSnapshotSyncV2AccountScope
+        _ item: SyncV2LibraryItem, expectedSession: WorkspaceSessionToken?,
+        accountScope: WorkspaceAccountScope
     ) async -> Bool {
         guard let application = snapshotSyncV2Application,
               currentDocumentSessionToken == expectedSession,
               matchesSyncAccount(accountScope),
               libraryDeletionDisabledReason(for: item.workID) == nil else { return false }
-        let context = SyncOperationContext(workID: syncV2ActiveWorkID, session: expectedSession,
-                                           account: accountScope, editGeneration: nil)
+        let context = WorkspaceOperationContext(workID: syncV2ActiveWorkID, session: expectedSession,
+                                                account: accountScope, editGeneration: nil)
         cancelSnapshotSyncV2BackgroundOperations()
         let prepared = await documentOperationGate.perform { [weak self] in
             guard let self, matchesSyncOperation(context),

@@ -20,17 +20,6 @@ struct IOSPrivateDocumentID: Hashable, Sendable {
     }
 }
 
-struct IOSDocumentSessionToken: Hashable, Sendable {
-    let workingCopyID: IOSPrivateDocumentID
-    let generation: UInt64
-
-    /// The sync owner is explicit even while the package-name compatibility
-    /// value remains available to navigation code and retired fixtures.
-    var workID: WorkID? {
-        workingCopyID.workID
-    }
-}
-
 enum IOSDocumentLibraryAvailability: Equatable, Sendable {
     case available, unreadable, local, server, pending, offline, conflict
 }
@@ -173,7 +162,7 @@ extension IOSDocumentStore {
     @discardableResult
     func applySnapshotSyncV2LibraryProjection(
         _ projection: SyncV2LibraryProjection,
-        expectedAccountScope: IOSSnapshotSyncV2AccountScope,
+        expectedAccountScope: WorkspaceAccountScope,
         refreshGeneration: UInt64
     ) -> Bool {
         guard !isSyncV2AccountTransitionActive,
@@ -259,7 +248,7 @@ extension IOSDocumentStore {
     func applySnapshotSyncV2RemoteCatalogPage(
         remoteItems: [SyncV2RemoteCatalogEntry],
         nextCursor: String?,
-        expectedAccountScope: IOSSnapshotSyncV2AccountScope,
+        expectedAccountScope: WorkspaceAccountScope,
         refreshGeneration: UInt64
     ) -> Bool {
         guard !isSyncV2RemoteAccountTransitionActive,
@@ -339,7 +328,7 @@ extension IOSDocumentStore {
         _ page: SyncV2HistoryPage,
         existingItems: [SyncV2HistoryItem],
         workID: WorkID,
-        expectedAccountScope: IOSSnapshotSyncV2AccountScope,
+        expectedAccountScope: WorkspaceAccountScope,
         refreshGeneration: UInt64
     ) -> Bool {
         guard !isSyncV2AccountTransitionActive,

@@ -2,6 +2,7 @@ import NovelCore
 import NovelSyncV2
 import NovelSyncV2Application
 import NovelUI
+import NovelWorkspace
 import NovelWorkspaceUI
 import SwiftUI
 import UniformTypeIdentifiers
@@ -257,8 +258,8 @@ private struct IOSShareSheet: UIViewControllerRepresentable {
 }
 
 private struct AutomaticSyncObservationID: Equatable {
-    let session: IOSDocumentSessionToken?
-    let account: IOSSnapshotSyncV2AccountScope
+    let session: WorkspaceSessionToken?
+    let account: WorkspaceAccountScope
     var chapter: ChapterID?
     var episode: EpisodeID?
     let isActive: Bool

@@ -27,7 +27,7 @@ extension AppState {
         selectedText: String,
         episodeID: EpisodeID,
         in chapterID: ChapterID,
-        expectedSession: DocumentSessionToken
+        expectedSession: WorkspaceSessionToken
     ) -> Bool {
         let episodeStillExists = document.chapters.first(where: { $0.id == chapterID })?
             .episodes.contains(where: { $0.id == episodeID }) == true
@@ -57,7 +57,7 @@ extension AppState {
     func copyEpisodeManuscript(
         episodeID: EpisodeID,
         in chapterID: ChapterID,
-        expectedSession: DocumentSessionToken
+        expectedSession: WorkspaceSessionToken
     ) -> Bool {
         guard isCurrentManuscriptCopyContext(expectedSession) else {
             return failManuscriptCopy(.staleContext)
@@ -94,7 +94,7 @@ extension AppState {
     @discardableResult
     func copyChapterManuscript(
         chapterID: ChapterID,
-        expectedSession: DocumentSessionToken
+        expectedSession: WorkspaceSessionToken
     ) -> Bool {
         guard isCurrentManuscriptCopyContext(expectedSession) else {
             return failManuscriptCopy(.staleContext)
@@ -141,7 +141,7 @@ extension AppState {
         manuscriptCopyNotice = nil
     }
 
-    private func isCurrentManuscriptCopyContext(_ expectedSession: DocumentSessionToken) -> Bool {
+    private func isCurrentManuscriptCopyContext(_ expectedSession: WorkspaceSessionToken) -> Bool {
         permitsDocumentInteraction && documentSessionToken == expectedSession
     }
 
@@ -253,7 +253,7 @@ extension AppState {
     func updateWorldNoteContent(
         _ content: String,
         for id: WorldNoteID,
-        expectedSession: DocumentSessionToken? = nil
+        expectedSession: WorkspaceSessionToken? = nil
     ) {
         guard permitsEditorSynchronization(expectedSession: expectedSession) else { return }
         guard let index = document.worldNotes.firstIndex(where: { $0.id == id }),
@@ -265,7 +265,7 @@ extension AppState {
 
     /// 世界観ノートを削除し、隣接ノートへ選択を移す。
     @discardableResult
-    func deleteWorldNote(id: WorldNoteID, expectedSession: DocumentSessionToken? = nil) -> Bool {
+    func deleteWorldNote(id: WorldNoteID, expectedSession: WorkspaceSessionToken? = nil) -> Bool {
         guard permitsMutation(expectedSession: expectedSession) else { return false }
         guard let index = document.worldNotes.firstIndex(where: { $0.id == id }) else { return false }
         var replacement = document
@@ -448,7 +448,7 @@ extension AppState {
 
     /// 章を削除し、隣接章へ選択を移す。最後の1章は削除しない。
     @discardableResult
-    func deleteChapter(id: ChapterID, expectedSession: DocumentSessionToken? = nil) -> Bool {
+    func deleteChapter(id: ChapterID, expectedSession: WorkspaceSessionToken? = nil) -> Bool {
         guard permitsMutation(expectedSession: expectedSession) else { return false }
         if selectedChapterID == id {
             guard permitsDocumentInteraction else { return false }
@@ -488,7 +488,7 @@ extension AppState {
     func deleteEpisode(
         id episodeID: EpisodeID,
         from chapterID: ChapterID? = nil,
-        expectedSession: DocumentSessionToken? = nil
+        expectedSession: WorkspaceSessionToken? = nil
     ) -> Bool {
         guard permitsMutation(expectedSession: expectedSession) else { return false }
         if selectedEpisodeID == episodeID {
@@ -562,7 +562,7 @@ extension AppState {
         _ content: String,
         for episodeID: EpisodeID,
         in chapterID: ChapterID,
-        expectedSession: DocumentSessionToken? = nil,
+        expectedSession: WorkspaceSessionToken? = nil,
         expectedEditorContentGeneration: UInt64? = nil
     ) {
         guard permitsEditorSynchronization(expectedSession: expectedSession) else { return }

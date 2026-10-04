@@ -2,6 +2,7 @@ import Foundation
 import NovelCore
 import NovelSyncV2
 import NovelThumbnail
+import NovelWorkspace
 
 extension IOSDocumentStore {
     var supportsAttachments: Bool {
@@ -9,7 +10,7 @@ extension IOSDocumentStore {
     }
 
     @discardableResult
-    func refreshAttachments(expectedSession: IOSDocumentSessionToken) async -> Bool {
+    func refreshAttachments(expectedSession: WorkspaceSessionToken) async -> Bool {
         await documentOperationGate.perform { [weak self] in
             guard let self,
                   validateCurrentDocumentSession(expectedSession) else { return false }
@@ -35,8 +36,8 @@ extension IOSDocumentStore {
     @discardableResult
     func importAttachment(
         from sourceURL: URL,
-        expectedSession: IOSDocumentSessionToken,
-        expectedAccountScope: IOSSnapshotSyncV2AccountScope? = nil
+        expectedSession: WorkspaceSessionToken,
+        expectedAccountScope: WorkspaceAccountScope? = nil
     ) async -> Attachment? {
         await documentOperationGate.perform { [weak self] in
             guard let self,
@@ -60,8 +61,8 @@ extension IOSDocumentStore {
     @discardableResult
     func deleteAttachment(
         _ attachment: Attachment,
-        expectedSession: IOSDocumentSessionToken,
-        expectedAccountScope: IOSSnapshotSyncV2AccountScope? = nil
+        expectedSession: WorkspaceSessionToken,
+        expectedAccountScope: WorkspaceAccountScope? = nil
     ) async -> Bool {
         let attachmentSession = expectedSession
         return await documentOperationGate.perform { [weak self] in
@@ -86,7 +87,7 @@ extension IOSDocumentStore {
 
     func attachmentPreviewURL(
         for attachment: Attachment,
-        expectedSession: IOSDocumentSessionToken
+        expectedSession: WorkspaceSessionToken
     ) -> URL? {
         guard matchesCurrentDocumentSession(expectedSession),
               attachments.contains(where: { $0.id == attachment.id }) else { return nil }
@@ -107,7 +108,7 @@ extension IOSDocumentStore {
     }
 
     func synchronizeActiveEditorForAttachmentMutation(
-        expectedSession: IOSDocumentSessionToken
+        expectedSession: WorkspaceSessionToken
     ) -> Bool {
         switch editorCommandSession.captureActiveCommittedText() {
         case let .captured(text):
@@ -161,9 +162,9 @@ extension IOSDocumentStore {
 
     private func importV2Attachment(
         from sourceURL: URL,
-        expectedSession: IOSDocumentSessionToken,
+        expectedSession: WorkspaceSessionToken,
         expectedWorkID: WorkID,
-        expectedAccountScope: IOSSnapshotSyncV2AccountScope
+        expectedAccountScope: WorkspaceAccountScope
     ) async -> Attachment? {
         guard let application = snapshotSyncV2Application,
               !syncV2AccountTransitionInProgress,
@@ -232,9 +233,9 @@ extension IOSDocumentStore {
 
     private func deleteV2Attachment(
         _ attachment: Attachment,
-        expectedSession: IOSDocumentSessionToken,
+        expectedSession: WorkspaceSessionToken,
         expectedWorkID: WorkID,
-        expectedAccountScope: IOSSnapshotSyncV2AccountScope
+        expectedAccountScope: WorkspaceAccountScope
     ) async -> Bool {
         guard let application = snapshotSyncV2Application,
               !syncV2AccountTransitionInProgress,

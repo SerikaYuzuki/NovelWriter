@@ -1,5 +1,6 @@
 import Foundation
 import NovelCore
+import NovelWorkspace
 
 /// 執筆画面からの選択・作品編集を、起動と保存のcomposition rootから分離する。
 /// すべての操作は従来どおり`markDocumentChanged()`へ集約し、保存・同期境界は変えない。
@@ -60,8 +61,8 @@ extension IOSDocumentStore {
 
     func updateEpisodeTitle(
         _ title: String, chapterID: ChapterID, episodeID: EpisodeID,
-        expectedSession: IOSDocumentSessionToken? = nil,
-        expectedAccountScope: IOSSnapshotSyncV2AccountScope? = nil
+        expectedSession: WorkspaceSessionToken? = nil,
+        expectedAccountScope: WorkspaceAccountScope? = nil
     ) {
         guard expectedSession == nil || currentDocumentSessionToken == expectedSession,
               expectedAccountScope == nil || matchesSyncAccount(expectedAccountScope),

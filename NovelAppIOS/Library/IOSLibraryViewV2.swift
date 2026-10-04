@@ -1,6 +1,7 @@
 import NovelSyncV2
 import NovelSyncV2Application
 import NovelUI
+import NovelWorkspace
 import NovelWorkspaceUI
 import SwiftUI
 
@@ -19,15 +20,15 @@ struct IOSLibraryView: View {
     @State private var searchText = ""
     @State private var pendingImportOpen: WorkID?
     @State private var pendingRename: SyncV2LibraryItem?
-    @State private var renameSession: IOSDocumentSessionToken?
-    @State private var renameAccountScope: IOSSnapshotSyncV2AccountScope?
+    @State private var renameSession: WorkspaceSessionToken?
+    @State private var renameAccountScope: WorkspaceAccountScope?
     @State private var renameTitle = ""
     @State private var renamingIDs: Set<WorkID> = []
     @State private var renameFailed = false
 
     @State private var pendingDeletion: SyncV2LibraryItem?
-    @State private var deletionSession: IOSDocumentSessionToken?
-    @State private var deletionAccountScope: IOSSnapshotSyncV2AccountScope?
+    @State private var deletionSession: WorkspaceSessionToken?
+    @State private var deletionAccountScope: WorkspaceAccountScope?
 
     @State private var showingProtection = false
 

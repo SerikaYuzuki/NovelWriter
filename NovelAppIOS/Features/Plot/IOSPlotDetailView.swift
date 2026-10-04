@@ -1,10 +1,11 @@
 import NovelCore
+import NovelWorkspace
 import SwiftUI
 
 struct IOSPlotDetailView: View {
     let store: IOSDocumentStore
     let selection: IOSPlotSelection?
-    let expectedSession: IOSDocumentSessionToken?
+    let expectedSession: WorkspaceSessionToken?
     var dismissAfterDeletion = false
     var onDeletion: () -> Void = {}
 
@@ -222,7 +223,7 @@ struct IOSPlotDetailView: View {
 
 private struct IOSPlotItemDeletionRequest: Identifiable {
     let id = UUID()
-    let expectedSession: IOSDocumentSessionToken
+    let expectedSession: WorkspaceSessionToken
     let target: IOSPlotSelection
     let displayTitle: String
 

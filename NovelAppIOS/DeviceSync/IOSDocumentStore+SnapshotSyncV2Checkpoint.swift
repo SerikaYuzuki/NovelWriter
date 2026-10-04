@@ -5,6 +5,7 @@ import NovelSyncV2
 import NovelSyncV2Application
 import NovelSyncV2PortableBridge
 import NovelSyncV2Runtime
+import NovelWorkspace
 
 extension IOSDocumentStore {
     func runAutomaticSnapshotSyncV2() async {
@@ -19,7 +20,7 @@ extension IOSDocumentStore {
     }
 
     private func refreshAutomaticSnapshotSyncV2(
-        session: IOSDocumentSessionToken?, account: IOSSnapshotSyncV2AccountScope
+        session: WorkspaceSessionToken?, account: WorkspaceAccountScope
     ) async {
         guard !Task.isCancelled, currentDocumentSessionToken == session,
               matchesSyncAccount(account),

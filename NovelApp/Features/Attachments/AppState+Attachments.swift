@@ -2,11 +2,12 @@ import Foundation
 import NovelCore
 import NovelSyncV2
 import NovelThumbnail
+import NovelWorkspace
 
 /// 添付はv2 snapshotの一部としてSQLiteへ保存する。`.novelpkg`のcodecは、
 /// この画面から明示的に書き出す／取り込む場合にだけ呼び出される。
 extension AppState {
-    func reloadAttachments(expectedSession: DocumentSessionToken? = nil) async {
+    func reloadAttachments(expectedSession: WorkspaceSessionToken? = nil) async {
         guard permitsEditorSynchronization(expectedSession: expectedSession) else { return }
         attachmentPreviewURLs.removeAll()
         attachments = snapshotSyncV2Attachments.map {
@@ -15,7 +16,7 @@ extension AppState {
     }
 
     @discardableResult
-    func addAttachment(from sourceURL: URL, expectedSession: DocumentSessionToken? = nil) async -> Attachment? {
+    func addAttachment(from sourceURL: URL, expectedSession: WorkspaceSessionToken? = nil) async -> Attachment? {
         var added: Attachment?
         let succeeded = await performSnapshotDataMutation(expectedSession: expectedSession) {
             added = await self.addAttachmentWithinSaveBoundary(from: sourceURL, expectedSession: expectedSession)
@@ -25,7 +26,7 @@ extension AppState {
     }
 
     @discardableResult
-    func deleteAttachment(_ attachment: Attachment, expectedSession: DocumentSessionToken? = nil) async -> Bool {
+    func deleteAttachment(_ attachment: Attachment, expectedSession: WorkspaceSessionToken? = nil) async -> Bool {
         await performSnapshotDataMutation(expectedSession: expectedSession) {
             await self.deleteAttachmentWithinSaveBoundary(attachment, expectedSession: expectedSession)
         }
@@ -38,7 +39,7 @@ extension AppState {
     }
 
     func performSnapshotDataMutation(
-        expectedSession: DocumentSessionToken? = nil,
+        expectedSession: WorkspaceSessionToken? = nil,
         operation: @MainActor () async -> Bool
     ) async -> Bool {
         let session = expectedSession ?? documentSessionToken
@@ -64,7 +65,7 @@ extension AppState {
     @discardableResult
     func addAttachmentWithinSaveBoundary(
         from sourceURL: URL,
-        expectedSession: DocumentSessionToken? = nil
+        expectedSession: WorkspaceSessionToken? = nil
     ) async -> Attachment? {
         guard permitsMutation(expectedSession: expectedSession) else { return nil }
         do {
@@ -99,7 +100,7 @@ extension AppState {
     @discardableResult
     func deleteAttachmentWithinSaveBoundary(
         _ attachment: Attachment,
-        expectedSession: DocumentSessionToken? = nil
+        expectedSession: WorkspaceSessionToken? = nil
     ) async -> Bool {
         guard permitsMutation(expectedSession: expectedSession) else { return false }
         let previousPayloads = snapshotSyncV2Attachments

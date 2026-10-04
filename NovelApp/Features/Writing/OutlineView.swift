@@ -2,6 +2,7 @@ import AppKit
 import EditorKit
 import NovelCore
 import NovelUI
+import NovelWorkspace
 import SwiftUI
 
 struct OutlineContainerView: View {
@@ -321,7 +322,7 @@ struct OutlineView: View {
 
     private func sessionBoundEpisodes(
         in chapter: Chapter,
-        session: DocumentSessionToken
+        session: WorkspaceSessionToken
     ) -> [EpisodeDeletionRequest] {
         filteredEpisodes(in: chapter).map {
             EpisodeDeletionRequest(episode: $0, chapterID: chapter.id, session: session)
