@@ -1,7 +1,7 @@
 import Foundation
 import NovelCore
 import NovelSyncV2
-import NovelThumbnail
+import NovelSyncV2Application
 import NovelWorkspace
 
 /// 添付はv2 snapshotの一部としてSQLiteへ保存する。`.novelpkg`のcodecは、
@@ -70,31 +70,11 @@ extension AppState {
         guard permitsMutation(expectedSession: expectedSession) else { return nil }
         do {
             let bytes = try Data(contentsOf: sourceURL, options: [.mappedIfSafe])
-            let sourceName = sourceURL.lastPathComponent.isEmpty ? "資料" : sourceURL.lastPathComponent
-            let originalName = ThumbnailOwner.isReserved(sourceName) ? "資料-" + sourceName : sourceName
-            let usedNames = Set(snapshotSyncV2Attachments.map(\.fileName))
-            let fileName = Self.uniqueAttachmentName(originalName, usedNames: usedNames)
-            let previousPayloads = snapshotSyncV2Attachments
-            let previousRecords = attachments
-            let previousPreviews = attachmentPreviewURLs
-            let item = SyncAttachment(
-                attachmentId: UUID(),
-                fileName: fileName,
-                bytes: bytes
+            let item = await attachmentCommandsWithinSaveBoundary(reason: .navigation).add(
+                bytes, named: sourceURL.lastPathComponent, style: .parentheses, context: operationContext
             )
-            snapshotSyncV2Attachments.append(item)
-            attachmentPreviewURLs.removeValue(forKey: fileName)
-            attachments.append(Attachment(fileName: fileName, byteCount: Int64(bytes.count)))
-            guard await checkpointSnapshotSyncV2(document, reason: .navigation) else {
-                snapshotSyncV2Attachments = previousPayloads
-                attachments = previousRecords
-                attachmentPreviewURLs = previousPreviews
-                return nil
-            }
-            return Attachment(fileName: fileName, byteCount: Int64(bytes.count))
-        } catch {
-            return nil
-        }
+            return item.map { Attachment(fileName: $0.fileName, byteCount: Int64($0.byteCount)) }
+        } catch { return nil }
     }
 
     @discardableResult
@@ -103,25 +83,29 @@ extension AppState {
         expectedSession: WorkspaceSessionToken? = nil
     ) async -> Bool {
         guard permitsMutation(expectedSession: expectedSession) else { return false }
-        let previousPayloads = snapshotSyncV2Attachments
-        let previousRecords = attachments
-        let previousPreviews = attachmentPreviewURLs
-        let originalCount = snapshotSyncV2Attachments.count
-        snapshotSyncV2Attachments.removeAll { $0.fileName == attachment.fileName }
-        guard snapshotSyncV2Attachments.count != originalCount else { return false }
-        let removedPreview = attachmentPreviewURLs.removeValue(forKey: attachment.fileName)
-        attachments.removeAll { $0.fileName == attachment.fileName }
-        let saved = await checkpointSnapshotSyncV2(document, reason: .navigation)
-        guard saved else {
-            snapshotSyncV2Attachments = previousPayloads
-            attachments = previousRecords
-            attachmentPreviewURLs = previousPreviews
-            return false
+        let preview = attachmentPreviewURLs[attachment.fileName]
+        let saved = await attachmentCommandsWithinSaveBoundary(reason: .navigation).delete(
+            named: attachment.fileName, context: operationContext
+        )
+        if saved, let preview {
+            try? fileManager.removeItem(at: preview)
         }
-        if let removedPreview {
-            try? fileManager.removeItem(at: removedPreview)
+        return saved
+    }
+
+    func installWorkspaceAttachments(_ replacement: WorkspaceAttachmentSet) {
+        let changed = workspaceAttachments.records.filter { replacement[$0.fileName] != $0 }.map(\.fileName)
+        for name in changed {
+            attachmentPreviewURLs.removeValue(forKey: name)
         }
-        return true
+        workspaceAttachments = replacement
+        attachments = replacement.attachments
+    }
+
+    func attachmentCommandsWithinSaveBoundary(reason: SyncV2CheckpointReason) -> WorkspaceAttachmentCommands {
+        WorkspaceAttachmentCommands(host: self, boundary: { await $0() }, checkpoint: { document, candidate in
+            await self.checkpointSnapshotSyncV2(document, reason: reason, attachments: candidate.records)
+        })
     }
 
     /// Materialize the SQLite resource bytes into a disposable URL for AppKit
@@ -149,19 +133,5 @@ extension AppState {
         } catch {
             return nil
         }
-    }
-
-    private static func uniqueAttachmentName(_ name: String, usedNames: Set<String>) -> String {
-        guard usedNames.contains(name) else { return name }
-        let url = URL(fileURLWithPath: name)
-        let stem = url.deletingPathExtension().lastPathComponent
-        let suffix = url.pathExtension.isEmpty ? "" : ".\(url.pathExtension)"
-        var index = 2
-        var candidate = "\(stem) (\(index))\(suffix)"
-        while usedNames.contains(candidate) {
-            index += 1
-            candidate = "\(stem) (\(index))\(suffix)"
-        }
-        return candidate
     }
 }

@@ -1,6 +1,6 @@
 import NovelWorkspace
 
-extension AppState: WorkspaceHost {
+extension AppState: WorkspaceAttachmentHost {
     var operationContext: WorkspaceOperationContext {
         WorkspaceOperationContext(
             workID: currentSnapshotSyncV2WorkID, session: documentSessionToken,

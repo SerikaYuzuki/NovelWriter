@@ -153,9 +153,9 @@ extension IOSDocumentStore {
                             self.editorContentGeneration &+= 1
                         }
                     }
-                    self.syncV2AttachmentPayloads = Dictionary(uniqueKeysWithValues: mergedAttachments.map { ($0.fileName, $0.bytes) })
-                    self.syncV2AttachmentIDs = Dictionary(uniqueKeysWithValues: mergedAttachments.map { ($0.fileName, $0.id) })
-                    self.attachments = mergedAttachments.map { Attachment(fileName: $0.fileName, byteCount: Int64($0.bytes.count)) }
+                    guard self.adoptV2AttachmentRecords(mergedAttachments.map {
+                        SyncAttachment(attachmentId: $0.id, fileName: $0.fileName, bytes: $0.bytes)
+                    }) else { throw WritingError.changedTarget }
                     self.document = replacement
                     self.repairWritingSelection()
                     self.markDocumentChanged()

@@ -41,11 +41,11 @@ let package = Package(
         ),
         .target(
             name: "NovelWorkspace",
-            dependencies: ["NovelCore", "NovelTextAnalysis", "NovelSyncV2", "NovelSyncV2Application", "NovelWritingSupport", "NovelTiming"]
+            dependencies: ["NovelCore", "NovelTextAnalysis", "NovelSyncV2", "NovelSyncV2Application", "NovelWritingSupport", "NovelTiming", "NovelThumbnail"]
         ),
         .testTarget(
             name: "NovelWorkspaceTests",
-            dependencies: ["NovelWorkspace", "NovelCore", "NovelTextAnalysis", "NovelSyncV2", "NovelTiming"]
+            dependencies: ["NovelWorkspace", "NovelCore", "NovelTextAnalysis", "NovelSyncV2", "NovelTiming", "NovelThumbnail"]
         ),
         .target(name: "NovelTiming"),
         .testTarget(name: "NovelTimingTests", dependencies: ["NovelTiming"]),

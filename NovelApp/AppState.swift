@@ -89,7 +89,16 @@ final class AppState {
 
     var outlinePresentation = OutlinePresentationState()
     var attachments: [Attachment]
-    @ObservationIgnored var snapshotSyncV2Attachments: [SyncAttachment]
+    @ObservationIgnored var workspaceAttachments = WorkspaceAttachmentSet()
+    var snapshotSyncV2Attachments: [SyncAttachment] {
+        get { workspaceAttachments.records }
+        set {
+            if let replacement = WorkspaceAttachmentSet(newValue) {
+                workspaceAttachments = replacement
+            }
+        }
+    }
+
     @ObservationIgnored var attachmentPreviewURLs: [String: URL]
 
     var documentSessionToken: WorkspaceSessionToken
@@ -247,7 +256,6 @@ final class AppState {
         externalDocumentOpenErrorMessage = nil
         operationMessage = nil
         attachments = []
-        snapshotSyncV2Attachments = []
         snapshotSyncV2Resources = []
         snapshotSyncV2PortableCreatedAt = nil
         attachmentPreviewURLs = [:]

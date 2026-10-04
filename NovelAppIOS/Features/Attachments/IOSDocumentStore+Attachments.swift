@@ -1,7 +1,7 @@
 import Foundation
 import NovelCore
 import NovelSyncV2
-import NovelThumbnail
+import NovelSyncV2Application
 import NovelWorkspace
 
 extension IOSDocumentStore {
@@ -91,7 +91,7 @@ extension IOSDocumentStore {
     ) -> URL? {
         guard matchesCurrentDocumentSession(expectedSession),
               attachments.contains(where: { $0.id == attachment.id }) else { return nil }
-        guard let bytes = syncV2AttachmentPayloads[attachment.fileName] else { return nil }
+        guard let bytes = workspaceAttachments[attachment.fileName]?.bytes else { return nil }
         let safeName = attachment.fileName.replacingOccurrences(
             of: "[^A-Za-z0-9._-]",
             with: "_",
@@ -138,26 +138,18 @@ extension IOSDocumentStore {
             snapshotSyncOutcome = .failure(.fatal(.invalidLocalState))
             return false
         }
-        replaceAttachments(values.map {
-            Attachment(fileName: $0.fileName, byteCount: Int64($0.byteCount))
-        })
-        syncV2AttachmentPayloads = Dictionary(
-            uniqueKeysWithValues: values.map { ($0.fileName, $0.bytes) }
-        )
-        syncV2AttachmentIDs = Dictionary(
-            uniqueKeysWithValues: values.map { ($0.fileName, $0.attachmentId) }
-        )
+        guard let replacement = WorkspaceAttachmentSet(values) else { return false }
+        installWorkspaceAttachments(replacement)
         return true
     }
 
+    func installWorkspaceAttachments(_ replacement: WorkspaceAttachmentSet) {
+        workspaceAttachments = replacement
+        replaceAttachments(replacement.attachments)
+    }
+
     func validateV2AttachmentRecords(_ values: [SyncAttachment]) -> Bool {
-        var fileNames = Set<String>()
-        var attachmentIDs = Set<UUID>()
-        return values.allSatisfy { value in
-            !value.fileName.isEmpty
-                && fileNames.insert(value.fileName).inserted
-                && attachmentIDs.insert(value.attachmentId).inserted
-        }
+        WorkspaceAttachmentSet(values) != nil
     }
 
     private func importV2Attachment(
@@ -166,7 +158,7 @@ extension IOSDocumentStore {
         expectedWorkID: WorkID,
         expectedAccountScope: WorkspaceAccountScope
     ) async -> Attachment? {
-        guard let application = snapshotSyncV2Application,
+        guard snapshotSyncV2Application != nil,
               !syncV2AccountTransitionInProgress,
               syncV2ActiveWorkID == expectedWorkID,
               matchesSyncAccount(expectedAccountScope),
@@ -178,53 +170,13 @@ extension IOSDocumentStore {
             }
         }
         do {
-            let result = try await saveCoordinator.performExclusiveAfterFlushing(flushAfter: true) {
-                () async throws -> Attachment? in
-                guard !syncV2AccountTransitionInProgress,
-                      syncV2ActiveWorkID == expectedWorkID,
-                      matchesSyncAccount(expectedAccountScope),
-                      validateCurrentDocumentSession(expectedSession) else { return nil }
-                let bytes = try Data(contentsOf: sourceURL)
-                let sourceName = sourceURL.lastPathComponent.isEmpty ? "資料" : sourceURL.lastPathComponent
-                let originalName = ThumbnailOwner.isReserved(sourceName) ? "資料-" + sourceName : sourceName
-                let name = uniqueV2AttachmentName(originalName)
-                let value = Attachment(fileName: name, byteCount: Int64(bytes.count))
-                let previousAttachments = attachments
-                let previousPayloads = syncV2AttachmentPayloads
-                let previousIDs = syncV2AttachmentIDs
-                replaceAttachments(previousAttachments + [value])
-                syncV2AttachmentPayloads[name] = bytes
-                syncV2AttachmentIDs[name] = UUID()
-                do {
-                    _ = try await application.checkpoint(
-                        workID: expectedWorkID,
-                        document: document,
-                        reason: .explicit,
-                        documentCreatedAt: documentCreatedAt,
-                        attachments: currentV2AttachmentsOrThrow()
-                    )
-                } catch {
-                    replaceAttachments(previousAttachments)
-                    syncV2AttachmentPayloads = previousPayloads
-                    syncV2AttachmentIDs = previousIDs
-                    throw error
-                }
-                guard !syncV2AccountTransitionInProgress,
-                      syncV2ActiveWorkID == expectedWorkID,
-                      matchesSyncAccount(expectedAccountScope),
-                      validateCurrentDocumentSession(expectedSession) else { return nil }
-                return value
-            }
-            switch result {
-            case .saveFailedBeforeOperation:
-                operationErrorMessage = "本文を端末へ保存できないため、資料の取り込みを中止しました。"
-                return nil
-            case let .completed(value, savedAfterOperation):
-                if !savedAfterOperation {
-                    operationErrorMessage = "資料は保存しましたが、途中の本文変更を端末へ保存できませんでした。"
-                }
-                return value
-            }
+            let bytes = try Data(contentsOf: sourceURL)
+            let item = await attachmentCommands(
+                beforeFailure: "本文を端末へ保存できないため、資料の取り込みを中止しました。",
+                afterFailure: "資料は保存しましたが、途中の本文変更を端末へ保存できませんでした。",
+                checkpointFailure: "資料を取り込めませんでした。外部の原本は変更していません。"
+            ).add(bytes, named: sourceURL.lastPathComponent, style: .hyphen, context: operationContext)
+            return item.map { Attachment(fileName: $0.fileName, byteCount: Int64($0.byteCount)) }
         } catch {
             operationErrorMessage = "資料を取り込めませんでした。外部の原本は変更していません。"
             return nil
@@ -237,98 +189,53 @@ extension IOSDocumentStore {
         expectedWorkID: WorkID,
         expectedAccountScope: WorkspaceAccountScope
     ) async -> Bool {
-        guard let application = snapshotSyncV2Application,
+        guard snapshotSyncV2Application != nil,
               !syncV2AccountTransitionInProgress,
               syncV2ActiveWorkID == expectedWorkID,
               matchesSyncAccount(expectedAccountScope),
               validateCurrentDocumentSession(expectedSession) else { return false }
-        do {
-            let result = try await saveCoordinator.performExclusiveAfterFlushing(flushAfter: true) {
-                guard !syncV2AccountTransitionInProgress,
-                      syncV2ActiveWorkID == expectedWorkID,
-                      matchesSyncAccount(expectedAccountScope),
-                      validateCurrentDocumentSession(expectedSession) else { return false }
-                let previousAttachments = attachments
-                let previousPayloads = syncV2AttachmentPayloads
-                let previousIDs = syncV2AttachmentIDs
-                replaceAttachments(attachments.filter { $0.id != attachment.id })
-                syncV2AttachmentPayloads.removeValue(forKey: attachment.fileName)
-                syncV2AttachmentIDs.removeValue(forKey: attachment.fileName)
-                do {
-                    _ = try await application.checkpoint(
-                        workID: expectedWorkID,
-                        document: document,
-                        reason: .explicit,
-                        documentCreatedAt: documentCreatedAt,
-                        attachments: currentV2AttachmentsOrThrow()
-                    )
-                } catch {
-                    replaceAttachments(previousAttachments)
-                    syncV2AttachmentPayloads = previousPayloads
-                    syncV2AttachmentIDs = previousIDs
-                    throw error
-                }
-                return !syncV2AccountTransitionInProgress
-                    && syncV2ActiveWorkID == expectedWorkID
-                    && matchesSyncAccount(expectedAccountScope)
-                    && validateCurrentDocumentSession(expectedSession)
-            }
+        return await attachmentCommands(
+            beforeFailure: "本文を端末へ保存できないため、資料の削除を中止しました。",
+            afterFailure: "資料は削除しましたが、途中の本文変更を端末へ保存できませんでした。",
+            checkpointFailure: "資料を削除できませんでした。現在の作品は変更していません。"
+        ).delete(named: attachment.fileName, context: operationContext)
+    }
+
+    /// Called inside the document gate, after the platform editor synchronization.
+    func attachmentCommands(beforeFailure: String? = nil, afterFailure: String? = nil,
+                            checkpointFailure: String, requiresPostSave: Bool = false) -> WorkspaceAttachmentCommands {
+        let expected = operationContext
+        return WorkspaceAttachmentCommands(host: self, boundary: { operation in
+            let result = await self.saveCoordinator.performExclusiveAfterFlushing(flushAfter: true, operation)
             switch result {
             case .saveFailedBeforeOperation:
-                operationErrorMessage = "本文を端末へ保存できないため、資料の削除を中止しました。"
-                return false
-            case let .completed(didDelete, savedAfterOperation):
-                if didDelete, !savedAfterOperation {
-                    operationErrorMessage = "資料は削除しましたが、途中の本文変更を端末へ保存できませんでした。"
+                if let beforeFailure {
+                    self.operationErrorMessage = beforeFailure
                 }
-                return didDelete
+                return false
+            case let .completed(saved, flushed):
+                if saved, !flushed, let afterFailure {
+                    self.operationErrorMessage = afterFailure
+                }
+                return saved && (!requiresPostSave || flushed)
             }
-        } catch {
-            operationErrorMessage = "資料を削除できませんでした。現在の作品は変更していません。"
-            return false
-        }
+        }, checkpoint: { document, candidate in
+            guard let application = self.snapshotSyncV2Application, let work = expected.workID,
+                  self.currentV2Attachments() != nil else { return false }
+            do {
+                _ = try await application.checkpoint(workID: work, document: document, reason: .explicit,
+                                                     documentCreatedAt: self.documentCreatedAt, attachments: candidate.records)
+                return true
+            } catch {
+                self.operationErrorMessage = checkpointFailure
+                return false
+            }
+        })
     }
 
     func currentV2Attachments() -> [SyncAttachment]? {
-        var records: [SyncAttachment] = []
-        for attachment in attachments {
-            guard let bytes = syncV2AttachmentPayloads[attachment.fileName] else { return nil }
-            let attachmentID: UUID
-            if let existing = syncV2AttachmentIDs[attachment.fileName] {
-                attachmentID = existing
-            } else {
-                let generated = UUID()
-                syncV2AttachmentIDs[attachment.fileName] = generated
-                attachmentID = generated
-            }
-            records.append(SyncAttachment(
-                attachmentId: attachmentID,
-                fileName: attachment.fileName,
-                bytes: bytes
-            ))
-        }
-        return records
-    }
-
-    private func currentV2AttachmentsOrThrow() throws -> [SyncAttachment] {
-        guard let records = currentV2Attachments() else {
-            operationErrorMessage = "資料の本文を読み込めないため、端末への保存を中止しました。"
-            throw IOSPrivateWorkingCopyLocationError.unsafeRoot
-        }
-        return records
-    }
-
-    private func uniqueV2AttachmentName(_ original: String) -> String {
-        guard attachments.contains(where: { $0.fileName == original }) else { return original }
-        let base = (original as NSString).deletingPathExtension
-        let ext = (original as NSString).pathExtension
-        var index = 2
-        while true {
-            let candidate = ext.isEmpty ? "\(base)-\(index)" : "\(base)-\(index).\(ext)"
-            if !attachments.contains(where: { $0.fileName == candidate }) {
-                return candidate
-            }
-            index += 1
-        }
+        // A metadata-only legacy install must still fail closed instead of saving missing bytes.
+        guard attachments == workspaceAttachments.attachments else { return nil }
+        return workspaceAttachments.records
     }
 }
