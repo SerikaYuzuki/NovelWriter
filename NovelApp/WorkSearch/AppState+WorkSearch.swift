@@ -19,11 +19,10 @@ extension AppState {
         if let replacement {
             workSearch.replacement = replacement
         }
-        textCheck.isPresented = false
         workSearch.isPresented = true
     }
 
-    /// 全作品検索と表記チェックで共有する、保存・scope・本文一致を通すジャンプ。
+    /// 作品全体検索の、保存・scope・本文一致を通すジャンプ。
     func selectWorkTextMatch(_ result: EpisodeTextMatches, match: WorkTextMatch,
                              expectedScope: String, editorSearch: EditorSearchSession) async -> Bool {
         guard workSearchScope == expectedScope,

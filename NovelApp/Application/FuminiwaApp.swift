@@ -457,12 +457,6 @@ private struct WorkbenchFindCommands: View {
         .keyboardShortcut("f", modifiers: [.command, .shift])
         .disabled(!appState.permitsDocumentInteraction)
 
-        Button("表記をチェック…") {
-            Task { await appState.presentTextCheck() }
-        }
-        .keyboardShortcut("k", modifiers: [.command, .option])
-        .disabled(!appState.permitsDocumentInteraction)
-
         Button("次を検索") {
             guard appState.workspaceSelection.section == .structure else { return }
             editorSearchSession.jump(direction: .forward, in: appState.selectedEpisode)

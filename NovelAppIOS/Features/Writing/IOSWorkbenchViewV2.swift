@@ -239,9 +239,6 @@ struct IOSAdaptiveWritingView: View {
         let scope = store.workSearchScope
         Task {
             guard await store.prepareForEditorSurfaceDeparture(), store.workSearchScope == scope else { return }
-            if destination == .textCheck {
-                store.synchronizeTextCheck()
-            }
             toolDestination = destination
         }
     }
@@ -302,9 +299,7 @@ private struct IOSWritingOutlineList: View {
                     Button("作品全体を検索", systemImage: "text.magnifyingglass") {
                         presentTool(.workSearch)
                     }
-                    Button("表記をチェック", systemImage: "text.badge.checkmark") {
-                        presentTool(.textCheck)
-                    }
+
                 } label: { Label("執筆のメニュー", systemImage: "ellipsis.circle") }
             }
             ToolbarItem(placement: .topBarTrailing) {
@@ -665,6 +660,7 @@ struct IOSEditorPane: View {
                     },
                     writingHost: store.writingAssistantHost,
                     chapters: store.document.chapters,
+                    document: store.document,
                     captureScope: { scope in
                         guard store.currentEpisodeEditingToken == editingToken,
                               store.snapshotSyncV2AccountScope == account,

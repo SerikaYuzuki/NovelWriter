@@ -44,7 +44,7 @@ struct AppStateProjectSectionTests {
         #expect(defaults.string(forKey: AppPreferenceKey.projectSection) == "projectInfo")
     }
 
-    @Test("既存ショートカットを保ち感想・アドバイスを追加する")
+    @Test("既存ショートカットを保ち感想を追加する")
     func projectSectionShortcutsMatchRevisedOrder() {
         #expect(ProjectSection.allCases.map { $0.rawValue } == [
             "projectInfo", "structure", "plot", "characters", "worldbuilding", "references", "feedback", "settings"

@@ -41,7 +41,7 @@ struct IOSProjectHomeView: View {
                     feature("伏線 未回収", symbol: "flag", count: unresolvedCount, action: openPlot)
                     feature("資料", symbol: "paperclip", count: referenceCount, action: openReferences)
                     feature("作品情報", symbol: "book.closed", detail: "あらすじ・作品設定", action: openProjectInfo)
-                    feature("感想・アドバイス", symbol: "text.bubble", detail: "保存した回答", action: openFeedback)
+                    feature("感想", symbol: "text.bubble", detail: "保存した回答", action: openFeedback)
                 }
                 .listRowBackground(FuminiwaColor.paper.color)
             }

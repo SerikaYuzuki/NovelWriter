@@ -10,7 +10,9 @@ AIの会話・プロンプト・依頼結果は本文snapshotと別の追記専�
 
 応答は`{record,sequence,conflicted}`。同じID・同じ内容は同じ結果を返し、違う内容での再利用は拒否する。scope row lockの下で処理する。GETはsequence昇順で最大8件、続きがあれば`nextAfter`を返す。共通laneと作品laneそれぞれにaccount/fence別cursorを保持する。ページの順序・account・work・acknowledgement内容をクライアントも照合する。
 
-promptのkeyは用途、parentIdは変更前の採用版。現在の採用版とparentが違う投稿は削除せずconflictedとして保管し、採用版を上書きしない。競合画面で案を読み込み、現在の採用版をparentとして再保存できる。messageは一意IDで追記する。requestは開始・最終結果を別レコードとして記録し、当時の実効プロンプトを開始記録へ残す。
+promptのkeyは`校正`／`感想`／`アドバイス`（payloadは`{"text":"…"}`）と、D-112の`校正チェック`（payloadは`{"checks":["typo",…]}`）。`校正チェック`はaccount共通（workIdなし）の初期設定と、workId付きの作品別上書きを持つ。作品別の採用版があれば共通の選択全体を置き換え、空のchecksも有効。レコードがなければコード初期値を使う。未知のkeyを旧clientは使用せず、未知のチェックidは保持して送信指示には展開しない。serverはpayloadをopaque JSONとして扱い、keyの既存1〜128文字制限を維持する。schema・server・fixtureの変更はない。
+
+parentIdは変更前の採用版。現在の採用版とparentが違う投稿は削除せずconflictedとして保管し、採用版を上書きしない。競合画面で案を読み込み、現在の採用版をparentとして再保存できる。用途別の指示とチェック項目には、確認後に現在のコード初期値で新しいrevisionを保存する「初期値を読み込む」を設ける。保存済みレコードを新しい初期値で自動更新しない。messageは一意IDで追記する。requestは開始・最終結果を別レコードとして記録し、当時の実効プロンプトを開始記録へ残す。
 
 ## 端末とAI実行
 

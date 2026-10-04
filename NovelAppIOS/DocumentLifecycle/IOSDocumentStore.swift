@@ -349,7 +349,6 @@ final class IOSDocumentStore {
     }
 
     let workSearch = WorkSearchSession()
-    let textCheck: TextCheckSession
     var workTextSelectionRequest: EditorSelectionRequest?
     var workTextSelectionToken: IOSEpisodeEditingToken?
 
@@ -465,7 +464,6 @@ final class IOSDocumentStore {
         let timing = FuminiwaTiming(defaults: userDefaults)
         self.timing = timing
         writingSyncScheduler = WritingSyncScheduler(timing: timing)
-        textCheck = TextCheckSession(defaults: userDefaults)
         writingProgress = WritingProgressTracker(defaults: userDefaults, timing: timing)
         self.portableBridge = portableBridge
         self.fileManager = fileManager

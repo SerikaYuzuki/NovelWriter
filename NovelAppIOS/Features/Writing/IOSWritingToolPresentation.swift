@@ -2,7 +2,6 @@ import SwiftUI
 
 enum IOSWritingTool: String, Identifiable {
     case workSearch
-    case textCheck
 
     var id: Self {
         self
@@ -40,7 +39,6 @@ struct IOSWritingToolPresentationModifier: ViewModifier {
     private func toolView(_ tool: IOSWritingTool, onOpenEditor: (() -> Void)? = nil) -> some View {
         switch tool {
         case .workSearch: IOSWorkSearchView(store: store, onOpenEditor: onOpenEditor)
-        case .textCheck: IOSTextCheckView(store: store, onOpenEditor: onOpenEditor)
         }
     }
 }

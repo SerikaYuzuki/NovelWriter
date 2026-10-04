@@ -144,7 +144,6 @@ final class AppState {
     }
 
     let workSearch = WorkSearchSession()
-    let textCheck: TextCheckSession
 
     var outlinePresentation = OutlinePresentationState()
     var attachments: [Attachment]
@@ -267,7 +266,6 @@ final class AppState {
         let timing = FuminiwaTiming(defaults: dependencies.userDefaults)
         self.timing = timing
         writingSyncScheduler = WritingSyncScheduler(timing: timing)
-        textCheck = TextCheckSession(defaults: dependencies.userDefaults)
         writingProgress = WritingProgressTracker(defaults: dependencies.userDefaults, timing: timing)
         writingProgressRoot = dependencies.writingProgressRoot
         portableBridge = dependencies.portableBridge
