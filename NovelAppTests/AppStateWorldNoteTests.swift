@@ -1,6 +1,7 @@
 import Foundation
 @testable import FUMINIWA
 import NovelCore
+import NovelWorkspace
 import Testing
 
 @MainActor
@@ -37,6 +38,35 @@ struct AppStateWorldNoteTests {
 
         #expect(state.selectedWorldNoteID == firstID)
         #expect(state.document.worldNotes.map { $0.id } == [firstID])
+    }
+
+    @Test("Mac adapterは追加時flush・入力中debounceを維持する", .timeLimit(.minutes(1)))
+    func projectFeatureAdapterPreservesSavePolicies() async throws {
+        let state = makeState()
+        let events = AsyncStream<String>.makeStream()
+        defer { events.continuation.finish() }
+        state.saveCoordinator = V2DocumentSaveCoordinator(
+            debounceSleep: { _ in
+                events.continuation.yield("debounced")
+                throw CancellationError()
+            },
+            currentDocument: { state.document },
+            saveOperation: { _ in },
+            saveEventHandler: { event in
+                if event == .saved {
+                    events.continuation.yield("saved")
+                }
+            }
+        )
+        var iterator = events.stream.makeAsyncIterator()
+        state.addWorldNote()
+        #expect(state.selectedWorldNote?.title == "")
+        #expect(await iterator.next() == "saved")
+        let revision = state.saveCoordinator.lastSavedRevision
+        let id = try #require(state.selectedWorldNoteID)
+        state.updateWorldNoteTitle("設定", for: id)
+        #expect(await iterator.next() == "debounced")
+        #expect(state.saveCoordinator.lastSavedRevision == revision)
     }
 
     private func makeState() -> AppState {
