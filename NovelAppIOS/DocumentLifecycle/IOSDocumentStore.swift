@@ -8,6 +8,7 @@ import NovelSyncV2Application
 import NovelSyncV2PortableBridge
 import NovelSyncV2Runtime
 import NovelTiming
+import NovelWorkspace
 import NovelWritingProgress
 import NovelWritingSupport
 import Observation
@@ -379,7 +380,14 @@ final class IOSDocumentStore {
     @ObservationIgnored var testServerInstanceIDOverride: String?
     #endif
     @ObservationIgnored var authSession: FuminiwaSession?
+    #if FUMINIWA_TEST_COMPOSITION
+    @ObservationIgnored var documentOperationDidEnqueue: (@MainActor () -> Void)?
+    @ObservationIgnored lazy var documentOperationGate = DocumentOperationGate(didEnqueueOperation: { [weak self] in
+        self?.documentOperationDidEnqueue?()
+    })
+    #else
     @ObservationIgnored let documentOperationGate = DocumentOperationGate()
+    #endif
     @ObservationIgnored let snapshotSyncV2DocumentGate: ProductionDocumentGate
     @ObservationIgnored var snapshotSyncV2Application: SyncV2Application?
     @ObservationIgnored var snapshotSyncV2ConfigurationTask: Task<Void, Never>?

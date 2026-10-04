@@ -1,5 +1,6 @@
 import Foundation
 import NovelCore
+import NovelWorkspace
 
 /// 明示した範囲の原稿だけをclipboardへコピーする。
 extension IOSDocumentStore {

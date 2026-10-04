@@ -128,6 +128,8 @@ targets:
       - path: NovelApp
     dependencies:
       - package: NovelKit
+        product: NovelWorkspace
+      - package: NovelKit
         product: NovelCore
       - package: NovelKit
         product: NovelWritingSupport
@@ -186,6 +188,7 @@ targets:
     deploymentTarget: "14.0"
     sources:
       - path: NovelAppTests
+      - path: NovelKit/Tests/NovelWorkspaceTests/WorkSearchTestSupport.swift
       - path: NovelKit/Tests/NovelSyncV2ApplicationTests/HistoryPresentationTests.swift
       - path: NovelKit/Tests/NovelUITests/ThemeContrastTests.swift
       - path: NovelKit/Tests/NovelThumbnailTests/SyntheticThumbnailImage.swift
@@ -218,13 +221,9 @@ targets:
         excludes:
           - ResizableAssistantLayout.swift
       - path: NovelApp/Features/AssistantFeedback
-      - path: NovelApp/ManuscriptCopy.swift
-      - path: NovelApp/DocumentLifecycle/DocumentOperationGate.swift
-      - path: NovelApp/DocumentLifecycle/FuminiwaTiming+Defaults.swift
-      - path: NovelApp/DocumentLifecycle/V2DocumentSaveCoordinator.swift
-      - path: NovelApp/DocumentLifecycle/SyncSessionController.swift
-      - path: NovelApp/DocumentLifecycle/SyncSessionController+Deletion.swift
     dependencies:
+      - package: NovelKit
+        product: NovelWorkspace
       - package: NovelKit
         product: NovelCore
       - package: NovelKit
@@ -278,17 +277,14 @@ targets:
     platform: iOS
     deploymentTarget: "17.0"
     sources:
-      - path: NovelAppTests/WorkSearchSessionTests.swift
-      - path: NovelAppTests/TextCheckSessionTests.swift
+      - path: NovelAppTests/WorkSearchIntegrationTestSupport.swift
       - path: NovelAppTests/AssistantClientTests.swift
       - path: NovelAppTests/AssistantChatContextTests.swift
       - path: NovelAppTests/AssistantConversationTests.swift
-      - path: NovelAppTests/FuminiwaTimingDefaultsTests.swift
-      - path: NovelAppTests/V2DocumentSaveCoordinatorTests.swift
-      - path: NovelAppTests/SyncSessionControllerTests.swift
       - path: NovelAppTests/SnapshotHistoryPresentationTests.swift
       - path: NovelAppTests/SnapshotConflictPresentationTests.swift
       - path: NovelAppIOSTests
+      - path: NovelKit/Tests/NovelWorkspaceTests/WorkSearchTestSupport.swift
       - path: NovelKit/Tests/NovelSyncV2ApplicationTests/HistoryPresentationTests.swift
       - path: NovelKit/Tests/NovelUITests/ThemeContrastTests.swift
       - path: NovelKit/Tests/NovelThumbnailTests/SyntheticThumbnailImage.swift

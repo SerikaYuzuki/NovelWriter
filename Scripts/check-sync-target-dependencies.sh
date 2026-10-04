@@ -40,4 +40,29 @@ if rg -n 'name: "(NovelSync|NovelSyncLegacy|NovelSyncTesting|NovelLibrary|NovelL
   exit 1
 fi
 
+# D-111: workspace services never compose storage, runtime or explicit transfer.
+workspace_package="$(mktemp -t fuminiwa-workspace-dependencies)"
+trap 'rm -f "$workspace_package"' EXIT
+swift package --package-path NovelKit dump-package > "$workspace_package"
+jq -e '
+  def dependencies($package; $name):
+    [$package.targets[] | select(.name == $name) | .dependencies[]? |
+      (.byName[0] // .target[0] // .product[0])];
+  def closure($package; $roots):
+    reduce range(0; ($package.targets | length)) as $_
+      ($roots; (. + [.[] as $name | dependencies($package; $name)[]]) | unique);
+  . as $package |
+  ([.targets[] | select(.name == "NovelWorkspace")] | length == 1) and
+  (dependencies($package; "NovelWorkspace") | all(. as $dependency |
+    ["NovelCore", "NovelSyncV2", "NovelSyncV2Application", "NovelAuth", "NovelAuthApple",
+     "EditorKit", "NovelWritingSupport", "NovelWritingProgress", "NovelTextAnalysis",
+     "NovelThumbnail", "NovelTiming"] | index($dependency) != null)) and
+  (closure($package; ["NovelWorkspace"]) | all(. as $dependency |
+    ["NovelSyncV2Runtime", "NovelSyncV2Store", "NovelSyncV2PortableBridge", "NovelStorage"] |
+    index($dependency) == null))
+' "$workspace_package" >/dev/null || {
+  echo "error: NovelWorkspace crossed the D-111 dependency boundary" >&2
+  exit 1
+}
+
 echo "D-090 current synchronization dependency audit passed"

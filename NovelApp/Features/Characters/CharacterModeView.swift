@@ -3,6 +3,7 @@ import NovelCore
 import NovelTextAnalysis
 import NovelThumbnail
 import NovelUI
+import NovelWorkspace
 import SwiftUI
 
 struct CharacterListView: View {

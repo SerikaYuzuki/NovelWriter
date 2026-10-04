@@ -1,6 +1,7 @@
 import NovelCore
 import NovelTextAnalysis
 import NovelUI
+import NovelWorkspace
 import SwiftUI
 
 struct IOSCharacterAppearancesSection: View {

@@ -6,18 +6,18 @@ import NovelTiming
 /// value; WorkID/SQLite is selected by the Snapshot Sync runtime.  URL-based
 /// package writes remain explicit import/export operations outside this type.
 @MainActor
-final class V2DocumentSaveCoordinator {
-    enum SaveEvent: Sendable, Equatable {
+public final class V2DocumentSaveCoordinator {
+    public enum SaveEvent: Sendable, Equatable {
         case dirty, saving, saved, failed
     }
 
-    enum ExclusiveOperationResult<Value: Sendable>: Sendable {
+    public enum ExclusiveOperationResult<Value: Sendable>: Sendable {
         case saveFailedBeforeOperation
         case completed(value: Value, savedAfterOperation: Bool)
     }
 
     private let timing: FuminiwaTiming
-    typealias DebounceSleep = @MainActor @Sendable (UInt64) async throws -> Void
+    public typealias DebounceSleep = @MainActor @Sendable (UInt64) async throws -> Void
 
     private let debounceSleep: DebounceSleep
     private let currentDocument: @MainActor () -> NovelDocument?
@@ -32,7 +32,7 @@ final class V2DocumentSaveCoordinator {
     private var exclusiveWaiters: [CheckedContinuation<Void, Never>] = []
     private var debouncedSaveTask: Task<Void, Never>?
 
-    init(
+    public init(
         timing: FuminiwaTiming = .init(),
         debounceSleep: @escaping DebounceSleep = { try await Task.sleep(nanoseconds: $0) },
         currentDocument: @escaping @MainActor () -> NovelDocument?,
@@ -46,16 +46,16 @@ final class V2DocumentSaveCoordinator {
         self.saveEventHandler = saveEventHandler
     }
 
-    var lastSavedRevision: Int {
+    public var lastSavedRevision: Int {
         savedRevision
     }
 
-    func markDirty() {
+    public func markDirty() {
         saveRevision += 1
         saveEventHandler(.dirty)
     }
 
-    func scheduleDebouncedSave() {
+    public func scheduleDebouncedSave() {
         scheduleDebouncedSave(after: timing.autosaveDebounceSeconds)
     }
 
@@ -81,7 +81,7 @@ final class V2DocumentSaveCoordinator {
     }
 
     @discardableResult
-    func saveNow() async -> Bool {
+    public func saveNow() async -> Bool {
         debouncedSaveTask?.cancel()
         debouncedSaveTask = nil
         while isExclusiveRunning {
@@ -98,7 +98,7 @@ final class V2DocumentSaveCoordinator {
         return await saveDirtyRevisions()
     }
 
-    func performExclusive<T: Sendable>(_ operation: () async throws -> T) async rethrows -> T {
+    public func performExclusive<T: Sendable>(_ operation: () async throws -> T) async rethrows -> T {
         await acquireExclusiveRegion()
         do {
             let value = try await operation()
@@ -110,7 +110,7 @@ final class V2DocumentSaveCoordinator {
         }
     }
 
-    func performExclusiveAfterFlushing<T: Sendable>(
+    public func performExclusiveAfterFlushing<T: Sendable>(
         flushAfter: Bool = false,
         _ operation: () async throws -> T
     ) async rethrows -> ExclusiveOperationResult<T> {

@@ -5,24 +5,24 @@ import Observation
 
 @MainActor
 @Observable
-final class CharacterAppearanceSession {
-    private(set) var appearances: [CharacterAppearance] = []
-    private(set) var isLoading = false
-    private(set) var isStale = true
+public final class CharacterAppearanceSession {
+    public private(set) var appearances: [CharacterAppearance] = []
+    public private(set) var isLoading = false
+    public private(set) var isStale = true
     @ObservationIgnored private var isVisible = true
     @ObservationIgnored private let detect: @Sendable (NovelCore.Character, NovelDocument) -> [CharacterAppearance]
     @ObservationIgnored private let sleep: @MainActor (Duration) async throws -> Void
     @ObservationIgnored private var revision = UUID()
     @ObservationIgnored private var task: Task<Void, Never>?
 
-    init(detect: @escaping @Sendable (NovelCore.Character, NovelDocument) -> [CharacterAppearance] = {
+    public init(detect: @escaping @Sendable (NovelCore.Character, NovelDocument) -> [CharacterAppearance] = {
         CharacterAppearanceDetector.appearances(for: $0, in: $1)
     }, sleep: @escaping @MainActor (Duration) async throws -> Void = { try await Task.sleep(for: $0) }) {
         self.detect = detect
         self.sleep = sleep
     }
 
-    func setVisible(_ visible: Bool, character: NovelCore.Character?, document: NovelDocument) {
+    public func setVisible(_ visible: Bool, character: NovelCore.Character?, document: NovelDocument) {
         isVisible = visible
         if visible {
             if isStale {
@@ -33,7 +33,7 @@ final class CharacterAppearanceSession {
         }
     }
 
-    func refresh(character: NovelCore.Character?, document: NovelDocument) {
+    public func refresh(character: NovelCore.Character?, document: NovelDocument) {
         guard isVisible else { cancel(); return }
         task?.cancel()
         revision = UUID()
@@ -56,7 +56,7 @@ final class CharacterAppearanceSession {
         }
     }
 
-    func cancel() {
+    public func cancel() {
         guard !isStale || isLoading || task != nil else { return }
         task?.cancel(); task = nil; revision = UUID()
         if !isStale {

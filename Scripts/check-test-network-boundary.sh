@@ -80,6 +80,12 @@ for defaults_boundary in \
   fi
 done
 
+# Shared services receive defaults from the app composition root too.
+if rg -n 'UserDefaults\.standard' NovelKit/Sources/NovelWorkspace --glob '*.swift'; then
+  echo "error: NovelWorkspace must receive an explicit UserDefaults domain" >&2
+  exit 1
+fi
+
 if rg -n 'userDefaults:[[:space:]]*UserDefaults[[:space:]]*=' \
   NovelApp/Application/AppDependencies.swift \
   NovelAppIOS/DocumentLifecycle/IOSDocumentStore.swift; then
@@ -144,7 +150,7 @@ while IFS= read -r source; do
     exit 1
   fi
 done < <(
-  rg --files NovelApp NovelAppIOS NovelAppTests NovelAppIOSTests \
+  rg --files NovelApp NovelAppIOS NovelAppTests NovelAppIOSTests NovelKit/Sources/NovelWorkspace \
     --glob '*.swift'
 )
 

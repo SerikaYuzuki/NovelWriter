@@ -41,6 +41,7 @@
 | D-011 / D-014 | 直接配布を前提とし、検証はローカル。GitHub Actionsを導入しない。署名・公開の完了は別途確認する |
 | D-012 | 縦書きは未対応 |
 | D-042 | 通常の開発依頼は実装・品質改善。価格・法務・販促は明示依頼の範囲。必要なデプロイは対象・backup・反映後を確認して進める |
+| D-111 | 共通App層をNovelWorkspace／NovelWorkspaceUIへ段階移設し、両OSの意味差は明示判断して統合する |
 | D-076 | 責務別の構造、Swift 6境界、swift-testing。Swift sourceは400行で確認、600行で警告、800行超は分割する |
 | D-078 | 現行Auth v1はApple-only、opaque AccountID/session/Fence。内容保護はserverReadableV1、E2EEではない。[AUTH](AUTH.md) |
 | D-081〜D-083 / D-085 | PostgreSQLの初期化・bootstrap・migration owner・runtimeを分離。runtimeにDDLを与えず、sequenceはUSAGEのみ。既存migrationと対象識別を保つ |
@@ -141,3 +142,25 @@ HTTP edge応答の旧分類で止まったコマンドは、既存の追加型SQ
 ## D-110 macOS toolbarの同期状態
 
 macOS toolbarの同期状態は形と色で示し、状態名はhelpとaccessibility labelへ残す。標準の「アイコンとテキスト」表示にも対応する。STYLE §5の「記号＋文字」に対するtoolbar限定の例外とし、iOSと作品一覧のStatusLabelは変更しない。
+
+## D-111: 共通App層の段階移設（2026-10-04）
+
+共通処理をNovelKitの`NovelWorkspace`（非UI、@MainActorのservice／port）と`NovelWorkspaceUI`（共有SwiftUI、後続P2）へ移す。`AppState`／`IOSDocumentStore`は薄いadapterとし、後続phaseで`WorkspaceHost` portを導入する。P1は移設・公開範囲・import・compositionの接続だけを変更し、挙動と既存テストを維持する。
+
+`NovelWorkspace`の依存許可はNovelCore、NovelSyncV2、NovelSyncV2Application、NovelAuth、NovelAuthApple、EditorKit、NovelWritingSupport、NovelWritingProgress、NovelTextAnalysis、NovelThumbnail、NovelTiming。必要なものだけを宣言し、NovelSyncV2Runtime、NovelSyncV2Store、NovelSyncV2PortableBridge、NovelStorageには依存しない。`NovelWorkspaceUI`はNovelWorkspace、NovelUI、NovelSyncV2Application、NovelExportへ依存する。compositionと明示Import／Export、AppKit／UIKit、scene／window／終了、background task、pasteboard／panel、MCP、MacSyncV2DocumentGate／ProductionDocumentGate、IOSPrivateWorkingCopyLocationはAppに残す。
+
+片方の意味を暗黙に採用しない。以下は後続phaseの統合方針であり、P1では適用しない。
+
+| 差 | 現状 | 推奨・判断 |
+| --- | --- | --- |
+| D1 | account scopeはMacがaccountID／fence／generation、iOSがaccountID／fence／serverInstanceID／protocolEpoch。iOSのaccountGenerationは増えずWorkSearchの照合が無効 | 全fieldを持つ一つの型へ統合し、両OSで無効化時にgenerationを増やす |
+| D2 | Macのcheckpointはawait後にwork／accountを再検証せず、iOSは再検証する | iOSを採用 |
+| D3 | 未保存編集がある作品全体復元はMacがgate内で保存後に復元し、iOSは拒否 | Macを採用（2026-10-04オーナー決定）。gate内で保存し、その版を履歴に残してから復元する |
+| D4 | Macのkeep-bothは元作品のwrite freeze（syncV2KeepBothPendingWorkID）がない | iOSを採用 |
+| D5 | conflict choiceはMacがgate内でuiStateを再読取し、iOSは表示時projection＋editing generationを使う | 厳しいiOSを採用 |
+| D6 | 棚mergeでpending-deletion行を保持し、削除済みlocal行を落とすのはiOSだけ | pure functionへ統合し、merge時に方針を決める |
+| D7 | safe-adoption gateが異なる | 統合せず注入 |
+| D8 | MacはauthOperationGate＋owner＋count、iOSはrequest window＋lease＋abandon recovery＋revoke retry＋old-epoch fail-closed | iOSモデルをcoreにする |
+| D9 | project feature編集後、Macは即flush、iOSはdebounce | policy parameterにする |
+| D10 | committed-text取得はMacが注入closure、iOSがeditorCommandSession直接参照 | portを通す |
+| D11 | attachmentの表現・順序が異なる | 一つのset型へ統合 |
