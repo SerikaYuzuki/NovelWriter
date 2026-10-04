@@ -313,20 +313,6 @@ struct IOSSnapshotSyncV2AdoptionRestartTests {
         #expect(store.syncV2HistoryCursor == nil)
     }
 
-    @Test("remote-only response must retain the requested WorkID")
-    func remoteOnlyWorkIDMismatchIsRejected() {
-        let requested = WorkID(UUID())
-        let opened = SyncV2OpenedWork(
-            workID: WorkID(UUID()),
-            document: NovelDocument.newDocument(title: "別の作品"),
-            documentCreatedAt: Date(timeIntervalSince1970: 1_700_000_000),
-            generation: 1,
-            snapshotID: nil
-        )
-
-        #expect(acceptsSnapshotSyncV2RemoteOnlyOpen(opened, requestedWorkID: requested) == false)
-    }
-
     private func makeStore(
         environment: AdoptionTestEnvironment,
         fixture: PendingAdoptionFixture,

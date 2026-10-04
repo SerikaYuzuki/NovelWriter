@@ -166,7 +166,11 @@ P7完了：`WritingAssistantHostFactory`／`WorkReplacementHostFactory`でWorksp
 
 P8a完了：棚のSQLite読取・削除ID・merge、account付きcatalog paging、取り込み監視／取消／端末取得、改名・削除の手順を`LibraryCoordinator`へ集約。`WorkspaceLibraryHost`は既存のOS別IME・保存・document gateと退役を注入し、削除は保存後に編集世代を固定してdurable intentを作り、gate解放後に通信する。MacのstartupState書込時判断、catalog順と削除待ち表示の時機、iOS背景時間を維持。共通の照合・順序テストはfake hostへ移し、SQLite／IME／表示のadapter smokeを残す。open／install・checkpoint・adoption・conflict・authは後続phaseのまま。
 
-P8b完了：`CheckpointCoordinator`へhost document／`WorkspaceOperationContext`からのcheckpoint要求作成、await後のWorkID／installed session／account全field照合、worker wake、明示同期のローカル保存→remote要求、継続state観測を集約。`WorkspaceSyncProjection`はlocal durability→saveStateと履歴待ち通知・認証・失敗の重複抑制を共有する。D2はiOSの意味を採用し、Macも旧work／session／accountのcheckpoint成功・失敗をUIへ反映せず、公開document操作はfalseで返す。`WorkspaceSaveEventProjection`はautosaveの終端通知も照合する。確定済みSQLiteのrevisionはUIの採否と分けて記帳し、Macのaccount reconciliationは保存済みの旧revisionを切替先vaultで再保存しない。編集世代の増加だけではcheckpointを棄却しない。通常保存はApplicationのCOMMIT後worker schedulingだけを使い、追加wake・同期用コピー・network待ちを加えない。IME／document gate、Macの終了とpending revoke、iOSの背景時間・flush・parked lane／adoption／reprojection所有権はApp hookへ残す。純粋な照合・順序・投影はpackageのfake hostで検証し、両adapterにSQLite確定後の遅延完了テストを置く。bootstrap／open／installはP8c、adoption／conflict／authの統合は後続phaseとする。
+P8b完了：`CheckpointCoordinator`へhost document／`WorkspaceOperationContext`からのcheckpoint要求作成、await後のWorkID／installed session／account全field照合、worker wake、明示同期のローカル保存→remote要求、継続state観測を集約。`WorkspaceSyncProjection`はlocal durability→saveStateと履歴待ち通知・認証・失敗の重複抑制を共有する。D2はiOSの意味を採用し、Macも旧work／session／accountのcheckpoint成功・失敗をUIへ反映せず、公開document操作はfalseで返す。`WorkspaceSaveEventProjection`はautosaveの終端通知も照合する。確定済みSQLiteのrevisionはUIの採否と分けて記帳し、Macのaccount reconciliationは保存済みの旧revisionを切替先vaultで再保存しない。編集世代の増加だけではcheckpointを棄却しない。通常保存はApplicationのCOMMIT後worker schedulingだけを使い、追加wake・同期用コピー・network待ちを加えない。IME／document gate、Macの終了とpending revoke、iOSの背景時間・flush・parked lane／adoption／reprojection所有権はApp hookへ残す。純粋な照合・順序・投影はpackageのfake hostで検証し、両adapterにSQLite確定後の遅延完了テストを置く。bootstrap／open／installとsafe adoption／reprojectionはP8c、conflict choice／authの統合は後続phaseとする。
+
+P8c完了：`WorkOpenCoordinator`へlocal open、gate外のremote-only downloadとopening進捗、準備済み境界でのexpected WorkID／SQLite local version／session確認・install・再投影を集約。`AdoptionCoordinator`はpending Inboxと同一workのready projectionを照合し、automatic／explicit adoptionのsession取得→arm→token→SQLite apply→disarm→install→再投影、および30秒deadline付きreprojectionを共有する。両経路とも取得・各await完了でWorkID／installed session／account全field／準備済み編集世代を再確認し、旧成功・旧失敗を別作品へ適用しない。remote取得中の編集は許容し、IME確定→ローカル保存後の世代をinstall境界で固定する。本文なしのopen結果は検証失敗として保持し、bootstrapのfresh workへのfallbackはApplicationが返すworkNotFoundだけに限定する。
+
+D7は`WorkspaceAdoptionPort`のsession／arm／disarmへ注入して解決し、`MacSyncV2DocumentGate`とiOSの`ProductionDocumentGate`は統合しない。document operation gate、IME／保存、背景時間、task owner、automatic attemptの再試行方針、選択保持とportable payload検証はApp adapterに残す。Macの同一内容adoptionでは本文・Undoを再installしない。Mac startupStateの書込時判断、startInLibrary、workNotFound→fresh workはAppに残し、保存済み作品の起動openだけ共有処理を呼ぶ。requested WorkIDの純粋テストをpackageへ移し、fake hostで順序・遅延完了・失敗時原稿保持・再投影を検証する。両OS固有のadoption restart／install validation／transition／library refresh／bootstrapテストはAppに保持する。
 
 片方の意味を暗黙に採用しない。以下は後続phaseの統合方針であり、P1では適用しない。
 
@@ -178,7 +182,7 @@ P8b完了：`CheckpointCoordinator`へhost document／`WorkspaceOperationContext
 | D4 | Macのkeep-bothは元作品のwrite freeze（syncV2KeepBothPendingWorkID）がない | iOSを採用 |
 | D5 | conflict choiceはMacがgate内でuiStateを再読取し、iOSは表示時projection＋editing generationを使う | 厳しいiOSを採用 |
 | D6 | 棚mergeでpending-deletion行を保持し、削除済みlocal行を落とすのはiOSだけ | iOSを採用（2026-10-04オーナー決定、P3）。NovelWorkspaceのpure functionへ統合し、削除待ち行を保持、削除済みIDはlocal／remote／保持行から除外する |
-| D7 | safe-adoption gateが異なる | 統合せず注入 |
+| D7 | P8cで解決。safe-adoption gateの意味差を保持する | `WorkspaceAdoptionPort`へ各OSのsession／arm／disarmを注入。gate実装は統合しない |
 | D8 | MacはauthOperationGate＋owner＋count、iOSはrequest window＋lease＋abandon recovery＋revoke retry＋old-epoch fail-closed | iOSモデルをcoreにする |
 | D9 | P5で解決。Macは操作時flush／入力中debounce、iOSはdebounce | 操作ごとのsave policy parameterで既存挙動を維持 |
 | D10 | P7で解決。committed-text取得をWorkspaceEditorHostのメソッドへ統合 | Macの注入closure／iOSのEditorCommandSessionはadapterで維持 |

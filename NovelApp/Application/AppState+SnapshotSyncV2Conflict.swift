@@ -227,34 +227,30 @@ extension AppState {
             }
             guard let application = self?.snapshotSyncV2Application,
                   let observedWorkID = self?.currentSnapshotSyncV2WorkID else { return }
-            let changes = await application.stateChanges(for: observedWorkID, until: .now.advanced(by: .seconds(30)))
-            for await event in changes {
-                guard !Task.isCancelled, let self,
-                      snapshotSyncV2AutoAdoptionToken == operationToken,
-                      matchesSnapshotSyncV2AccountScope(accountScope),
-                      documentSessionToken == expectedSession,
-                      startupState.isReady,
-                      snapshotSyncV2Application === application else { return }
-                guard let workID = currentSnapshotSyncV2WorkID,
-                      let state = await application.uiState(workID: workID) else {
-                    return
+            guard let self else { return }
+            await AdoptionCoordinator(application: application).reproject(
+                host: self, workID: observedWorkID,
+                isCurrent: {
+                    self.snapshotSyncV2AutoAdoptionToken == operationToken
+                        && self.matchesSnapshotSyncV2AccountScope(accountScope)
+                        && self.documentSessionToken == expectedSession
+                        && self.startupState.isReady && self.snapshotSyncV2Application === application
+                }, receive: { state in
+                    guard let state else { return false }
+                    switch state.remoteProgress {
+                    case .readyForSafeAdoption:
+                        guard self.saveState == .saved, self.hasCommittedEditorTextMatchingSelectedEpisode() else { return false }
+                        _ = await self.applySnapshotSyncV2ServerVersion(expectedAccountScope: accountScope, automatically: true)
+                        return false
+                    case .failed, .fenceChanged, .parkedDifferentAccount,
+                         .quarantined, .needsChoice, .receiptMismatch:
+                        return false
+                    case .idle, .noChanges, .pending, .syncing, .offline,
+                         .authenticationRequired, .retryable:
+                        return true
+                    }
                 }
-                guard event.concerns(workID) else { continue }
-                switch state.remoteProgress {
-                case .readyForSafeAdoption:
-                    guard saveState == .saved, hasCommittedEditorTextMatchingSelectedEpisode() else { return }
-                    _ = await applySnapshotSyncV2ServerVersion(
-                        expectedAccountScope: accountScope, automatically: true
-                    )
-                    return
-                case .failed, .fenceChanged, .parkedDifferentAccount,
-                     .quarantined, .needsChoice, .receiptMismatch:
-                    return
-                case .idle, .noChanges, .pending, .syncing, .offline,
-                     .authenticationRequired, .retryable:
-                    break
-                }
-            }
+            )
         }
     }
 
@@ -316,123 +312,61 @@ extension AppState {
         guard let platformGate = snapshotSyncV2DocumentGate else { return false }
         let workID = expectedSnapshotSession.workID
         let session = expectedSnapshotSession
-        var automaticAttempt: SyncV2PendingAdoption?
-        var automaticAdoptionFailed = false
-        defer {
-            // A cancelled or invalidated boundary is not an adoption
-            // failure. Reopening this Work must still be able to adopt.
-            if let automaticAttempt, !automaticAdoptionFailed {
-                automaticAdoptionAttempts[expectedAccountScope]?[workID]?.remove(automaticAttempt.inboxID)
-            }
+        var coordinator = AdoptionCoordinator(application: application)
+        #if FUMINIWA_TEST_COMPOSITION
+        coordinator.applyStaged = { boundary in
+            let opened = try await application.applyStagedRemote(at: boundary)
+            await self.snapshotSyncV2AfterStagedRemoteOverride?()
+            return opened
         }
+        #endif
+        let port = WorkspaceAdoptionPort(
+            isCurrent: {
+                self.matchesSnapshotSyncV2Identity(workID: workID, documentSession: expectedDocumentSession,
+                                                   snapshotSession: expectedSnapshotSession)
+                    && self.matchesSnapshotSyncV2AccountScope(expectedAccountScope)
+                    && self.saveState == .saved && self.hasCommittedEditorTextMatchingSelectedEpisode()
+            },
+            session: { _ in session },
+            arm: { session, pending, _ in
+                try await platformGate.arm(
+                    session: session, expectedLocalVersion: pending.expectedLocalVersion,
+                    proof: SyncV2SafeBoundaryProof(
+                        editorGeneration: self.editorContentGeneration,
+                        hasMarkedText: self.activeCommittedTextCapture() == .compositionInProgress,
+                        hasUnsavedChanges: self.saveState != .saved, pendingIntentCleared: true
+                    )
+                )
+            }, disarm: { await platformGate.disarm(session: $0) },
+            claim: { !automatically || self.claimAutomaticAdoption($0, account: expectedAccountScope) },
+            finishAttempt: { pending, failed in
+                // Mac retries invalidated/cancelled boundaries, but retains actual failures.
+                if automatically, !failed {
+                    self.automaticAdoptionAttempts[expectedAccountScope]?[workID]?.remove(pending.inboxID)
+                }
+            }, install: { opened in
+                let installed = await self.installSnapshotSyncV2ServerAdoption(
+                    opened, application: application, expectedDocumentSession: expectedDocumentSession,
+                    expectedSnapshotSession: expectedSnapshotSession, expectedAccountScope: expectedAccountScope
+                )
+                if !installed, self.matchesSnapshotSyncV2Identity(
+                    workID: workID, documentSession: expectedDocumentSession, snapshotSession: expectedSnapshotSession
+                ), self.matchesSnapshotSyncV2AccountScope(expectedAccountScope) {
+                    self.operationMessage = "サーバーの作品データを検証できませんでした。端末の表示は変更していません。"
+                }
+                return installed
+            }, project: { self.applySnapshotSyncV2State($0) }
+        )
         do {
-            // The editor boundary may have synchronously committed the
-            // last NSTextView value. Drain that local revision before
-            // taking the proof; no remote worker is awaited here.
-            // A safe adoption must never create a fresh local SyncIntent
-            // while proving the boundary. The editor must already be at
-            // a committed local checkpoint; otherwise leave the verified
-            // Inbox pending for an explicit retry after the next save.
-            guard let pending = try await pendingSnapshotSyncV2ServerAdoption(
-                application: application,
-                workID: workID,
-                expectedAccountScope: expectedAccountScope
-            ) else {
-                return false
-            }
-            guard !automatically || claimAutomaticAdoption(pending, account: expectedAccountScope) else { return false }
-            if automatically {
-                automaticAttempt = pending
-            }
-            try await platformGate.arm(
-                session: session,
-                expectedLocalVersion: pending.expectedLocalVersion,
-                proof: SyncV2SafeBoundaryProof(
-                    editorGeneration: editorContentGeneration,
-                    hasMarkedText: activeCommittedTextCapture() == .compositionInProgress,
-                    hasUnsavedChanges: saveState != .saved,
-                    pendingIntentCleared: true
-                )
-            )
-            guard matchesSnapshotSyncV2Identity(
-                workID: workID,
-                documentSession: expectedDocumentSession,
-                snapshotSession: expectedSnapshotSession
-            ), matchesSnapshotSyncV2AccountScope(expectedAccountScope) else {
-                await platformGate.disarm(session: session)
-                return false
-            }
-            let token = try await application.documentGateToken(for: session)
-            guard matchesSnapshotSyncV2Identity(
-                workID: workID,
-                documentSession: expectedDocumentSession,
-                snapshotSession: expectedSnapshotSession
-            ), matchesSnapshotSyncV2AccountScope(expectedAccountScope) else {
-                await platformGate.disarm(session: session)
-                return false
-            }
-            let opened = try await application.applyStagedRemote(
-                at: SafeAdoptionBoundary(
-                    workID: workID,
-                    inboxID: pending.inboxID,
-                    session: session,
-                    gate: token
-                )
-            )
-            #if FUMINIWA_TEST_COMPOSITION
-            await snapshotSyncV2AfterStagedRemoteOverride?()
-            #endif
-            guard matchesSnapshotSyncV2Identity(
-                workID: workID,
-                documentSession: expectedDocumentSession,
-                snapshotSession: expectedSnapshotSession
-            ), matchesSnapshotSyncV2AccountScope(expectedAccountScope) else {
-                await platformGate.disarm(session: session)
-                return false
-            }
-            guard opened.document != nil else { throw SyncV2ApplicationError.workNotFound }
-            await platformGate.disarm(session: session)
-            guard await installSnapshotSyncV2ServerAdoption(
-                opened,
-                application: application,
-                expectedDocumentSession: expectedDocumentSession,
-                expectedSnapshotSession: expectedSnapshotSession,
-                expectedAccountScope: expectedAccountScope
-            ) else {
-                operationMessage = "サーバーの作品データを検証できませんでした。端末の表示は変更していません。"
-                return false
-            }
-            await refreshSnapshotSyncV2UIState()
-            return true
+            return try await coordinator.adoptAtPreparedBoundary(host: self, workID: workID, port: port)
         } catch {
-            await platformGate.disarm(session: session)
             guard !Task.isCancelled, !(error is CancellationError),
                   matchesSnapshotSyncV2Identity(workID: workID, documentSession: expectedDocumentSession,
                                                 snapshotSession: expectedSnapshotSession),
                   matchesSnapshotSyncV2AccountScope(expectedAccountScope) else { return false }
-            automaticAdoptionFailed = true
             reportSnapshotSyncV2OpenFailure(error)
             return false
         }
-    }
-
-    private func pendingSnapshotSyncV2ServerAdoption(
-        application: SyncV2Application,
-        workID: WorkID,
-        expectedAccountScope: WorkspaceAccountScope
-    ) async throws -> SyncV2PendingAdoption? {
-        guard matchesSnapshotSyncV2AccountScope(expectedAccountScope),
-              saveState == .saved,
-              let pending = try await application.pendingAdoption(workID: workID),
-              matchesSnapshotSyncV2AccountScope(expectedAccountScope),
-              hasCommittedEditorTextMatchingSelectedEpisode(),
-              let state = await application.uiState(workID: workID),
-              matchesSnapshotSyncV2AccountScope(expectedAccountScope),
-              state.lastTypedResult == .adoptionPending,
-              state.remoteProgress == .readyForSafeAdoption(inboxID: pending.inboxID) else {
-            return nil
-        }
-        return pending
     }
 
     private func installSnapshotSyncV2ServerAdoption(

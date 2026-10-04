@@ -17,24 +17,26 @@ extension IOSDocumentStore {
         operationErrorMessage = nil
         let targetWorkID = WorkID(workID)
         let expectedAccountScope = snapshotSyncV2AccountScope
+        let expected = CheckpointCoordinator.context(of: self)
         let didOpen = await documentOperationGate.perform { [weak self] in
-            guard let self, !isSyncV2AccountTransitionActive else { return false }
+            guard let self, !isSyncV2AccountTransitionActive,
+                  CheckpointCoordinator.matches(expected, host: self) else { return false }
             var didOpen = false
             let transitioned = await performDocumentTransition {
                 do {
-                    // `performDocumentTransition` first confirms IME input and
-                    // flushes a dirty editor through the local SQLite
-                    // checkpoint.  It never wakes or awaits the remote worker.
-                    let opened = try await application.openLocal(workID: targetWorkID)
-                    guard matchesLocalSyncAccount(expectedAccountScope),
-                          opened.workID == targetWorkID else { return }
-                    guard let value = opened.document else { throw SyncV2ApplicationError.workNotFound }
-                    guard installSnapshotSyncV2Opened(opened, value: value) else { throw SyncV2ApplicationError.safeBoundaryRejected }
-                    let state = await application.uiState(workID: opened.workID)
-                    guard matchesLocalSyncAccount(expectedAccountScope),
-                          syncV2ActiveWorkID == targetWorkID else { return }
-                    applySnapshotSyncV2State(state)
-                    didOpen = true
+                    let prepared = operationContext
+                    let coordinator = WorkOpenCoordinator(application: application)
+                    guard let opened = try await coordinator.readLocal(workID: targetWorkID, isCurrent: {
+                        prepared.isCurrent(self.operationContext) && self.matchesLocalSyncAccount(expectedAccountScope)
+                    }) else { return }
+                    didOpen = try await coordinator.installAtPreparedBoundary(
+                        opened, workID: targetWorkID, host: self,
+                        isCurrent: { self.matchesLocalSyncAccount(expectedAccountScope) },
+                        install: { opened, _ in
+                            guard let value = opened.document else { return false }
+                            return self.installSnapshotSyncV2Opened(opened, value: value)
+                        }, project: { self.applySnapshotSyncV2State($0) }
+                    )
                 } catch {
                     guard matchesLocalSyncAccount(expectedAccountScope) else { return }
                     snapshotSyncV2RemoteOnlyOpenFailure = syncV2FailureKind(error)
@@ -78,18 +80,16 @@ extension IOSDocumentStore {
             guard let self else { return }
             defer { finishLibraryOpen(operationToken: operationToken) }
             do {
-                let opened = try await openRemoteOnlyWithBackgroundTime(application, workID: workID)
-                guard opened.document != nil else { throw SyncV2ApplicationError.workNotFound }
-                let matchesRequestedWork = acceptsSnapshotSyncV2RemoteOnlyOpen(
-                    opened,
-                    requestedWorkID: workID
-                )
-                guard matchesRequestedWork,
-                      !Task.isCancelled,
-                      !isSyncV2RemoteAccountTransitionActive,
-                      snapshotSyncV2RemoteOnlyOpenToken == operationToken,
-                      matchesSyncAccount(expectedAccountScope) else { return }
-                libraryImportPhases[workID] = ImportPhase(stage: .opening)
+                var coordinator = WorkOpenCoordinator(application: application)
+                coordinator.download = { try await self.openRemoteOnlyWithBackgroundTime(application, workID: $0) }
+                guard let opened = try await coordinator.downloadRemoteOnly(
+                    workID: workID,
+                    isCurrent: { !self.isSyncV2RemoteAccountTransitionActive
+                        && self.snapshotSyncV2RemoteOnlyOpenToken == operationToken
+                        && self.matchesSyncAccount(expectedAccountScope)
+                    },
+                    opening: { self.libraryImportPhases[workID] = ImportPhase(stage: .opening) }
+                ) else { return }
                 let installed = await documentOperationGate.perform { [weak self] in
                     guard let self,
                           !isSyncV2RemoteAccountTransitionActive,
@@ -102,35 +102,25 @@ extension IOSDocumentStore {
                     }
                     var installed = false
                     let transitioned = await performDocumentTransition {
-                        guard try await application.isCurrentLocalVersion(opened) else {
-                            throw SyncV2ApplicationError.safeBoundaryRejected
+                        installed = try await coordinator.installAtPreparedBoundary(
+                            opened, workID: workID, host: self, verifiesLocalVersion: true,
+                            isCurrent: { self.snapshotSyncV2RemoteOnlyOpenToken == operationToken
+                                && !self.isSyncV2RemoteAccountTransitionActive
+                                && self.currentDocumentSessionToken == expectedSession
+                                && shouldOpen() && self.matchesSyncOperation(operation)
+                            },
+                            install: { opened, _ in
+                                guard let value = opened.document else { return false }
+                                return self.installSnapshotSyncV2Opened(opened, value: value)
+                            }, project: { self.applySnapshotSyncV2State($0) }
+                        )
+                        if installed {
+                            if shouldOpen(), let session = currentDocumentSessionToken {
+                                onOpened(session)
+                            } else {
+                                libraryNotice = "『\(title)』をこの端末に取り込みました"
+                            }
                         }
-                        guard snapshotSyncV2RemoteOnlyOpenToken == operationToken,
-                              !isSyncV2RemoteAccountTransitionActive,
-                              currentDocumentSessionToken == expectedSession,
-                              shouldOpen(),
-                              matchesSyncOperation(operation),
-                              acceptsSnapshotSyncV2RemoteOnlyOpen(
-                                  opened,
-                                  requestedWorkID: workID
-                              ),
-                              let value = opened.document else {
-                            throw SyncV2ApplicationError.workNotFound
-                        }
-                        guard installSnapshotSyncV2Opened(opened, value: value) else {
-                            throw SyncV2ApplicationError.invalidRuntimeMode
-                        }
-                        let state = await application.uiState(workID: opened.workID)
-                        guard snapshotSyncV2RemoteOnlyOpenToken == operationToken,
-                              matchesRemoteSyncAccount(expectedAccountScope),
-                              syncV2ActiveWorkID == workID else { return }
-                        applySnapshotSyncV2State(state)
-                        if shouldOpen(), let session = currentDocumentSessionToken {
-                            onOpened(session)
-                        } else {
-                            libraryNotice = "『\(title)』をこの端末に取り込みました"
-                        }
-                        installed = true
                     }
                     return transitioned && installed
                 }

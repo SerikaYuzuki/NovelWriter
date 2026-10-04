@@ -366,24 +366,7 @@ extension AppState {
             var shouldCreateFreshWork = true
             if let workID, let application = snapshotSyncV2Application {
                 do {
-                    let opened = try await application.openLocal(workID: workID)
-                    guard let openedDocument = opened.document else {
-                        startupState = .recovery(.init(message: "保存済みの作品を読み込めませんでした。"))
-                        return
-                    }
-                    guard installV2Document(
-                        openedDocument,
-                        workID: opened.workID,
-                        createdAt: opened.documentCreatedAt,
-                        attachments: opened.attachments,
-                        resources: opened.resources,
-                        expectedWorkID: workID
-                    ) else {
-                        startupState = .recovery(.init(message: "保存済みの作品を検証できませんでした。"))
-                        return
-                    }
-                    snapshotSyncV2Session = await application.beginSession(workID: opened.workID)
-                    await refreshSnapshotSyncV2UIState()
+                    guard try await openBootstrapSnapshotWork(workID, application: application) else { return }
                     shouldCreateFreshWork = false
                 } catch SyncV2ApplicationError.workDeletionPending {
                     userDefaults.removeObject(forKey: "fuminiwa.v2.activeWorkID")
