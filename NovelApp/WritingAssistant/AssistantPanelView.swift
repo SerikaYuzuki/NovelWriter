@@ -14,8 +14,6 @@ struct AssistantPanelView: View {
     var applyProofreading: ((AssistantManuscript, String) -> Bool)?
     var saveFeedback: ((AssistantFeedback) async -> Bool)?
     var writingHost: WritingAssistantHost?
-    var externalSettings: AnyView?
-    @State private var showingExternalSettings = false
     var chapters: [Chapter] = []
     var captureScope: ((AssistantScope) throws -> AssistantManuscript)?
     @State private var scope = AssistantScope.current
@@ -27,7 +25,9 @@ struct AssistantPanelView: View {
     @State private var notice: String?
     @State private var pending: AssistantManuscript?
     @State private var pendingConfiguration: AssistantConfiguration?
+    #if os(iOS)
     @State private var showingSettings = false
+    #endif
     @State private var requestTask: Task<Void, Never>?
     @State private var requestID: UUID?
 
@@ -38,11 +38,14 @@ struct AssistantPanelView: View {
                     .foregroundStyle(FuminiwaColor.accent.color)
                     .symbolRenderingMode(.hierarchical)
                 Spacer()
-                if externalSettings != nil {
-                    Button("外部AI", systemImage: "cable.connector") { showingExternalSettings = true }.labelStyle(.iconOnly)
-                }
+                #if os(macOS)
+                SettingsLink { Label("設定", systemImage: "gearshape") }
+                    .labelStyle(.iconOnly)
+                    .help("設定の「AI支援」を開く")
+                #else
                 Button("設定", systemImage: "gearshape") { showingSettings = true }
                     .labelStyle(.iconOnly)
+                #endif
                 Button("閉じる", systemImage: "xmark", action: close).labelStyle(.iconOnly)
             }
             Picker("用途", selection: $purpose) {
@@ -91,47 +94,44 @@ struct AssistantPanelView: View {
         .padding(16)
         .frame(minWidth: 300, idealWidth: 360, maxWidth: .infinity, maxHeight: .infinity)
         .background(FuminiwaColor.paper.color)
-        .sheet(isPresented: $showingExternalSettings) {
-            NavigationStack {
-                externalSettings.toolbar { Button("閉じる") { showingExternalSettings = false } }
-            }.frame(minWidth: 480, minHeight: 480)
-        }
-        .sheet(isPresented: $showingSettings) {
-            NavigationStack {
-                AssistantSettingsView(defaults: defaults, writingHost: writingHost)
-                    .toolbar { Button("閉じる") { showingSettings = false } }
-            }.frame(minWidth: 340, minHeight: 480)
-        }
-        .sheet(isPresented: Binding(get: { pending != nil }, set: {
-            if !$0 {
-                pending = nil; pendingConfiguration = nil
+        #if os(iOS)
+            .sheet(isPresented: $showingSettings) {
+                NavigationStack {
+                    AssistantSettingsView(defaults: defaults, writingHost: writingHost)
+                        .toolbar { ToolbarItem(placement: .cancellationAction) { Button("閉じる") { showingSettings = false } } }
+                }.frame(minWidth: 340, minHeight: 480)
             }
-        })) {
-            VStack(alignment: .leading, spacing: 16) {
-                Text("\(pendingPurpose.rawValue)に送信する本文").font(.headline)
-                if pendingPurpose != .proofreading {
-                    Text("回答は「感想・アドバイス」に日時付きで保存し、作品と一緒に同期します。")
-                        .font(.caption)
+        #endif
+            .sheet(isPresented: Binding(get: { pending != nil }, set: {
+                if !$0 {
+                    pending = nil; pendingConfiguration = nil
                 }
-                if pendingPurpose == .proofreading, canApplyProofreading {
-                    Text("校正が完了すると本文を上書きし、変更箇所を色で示します。取り消しできます。")
-                        .font(.caption)
-                }
-                Text("送信先：\(pendingConfiguration?.endpoint.absoluteString ?? "")").font(.caption)
-                Text("\(pending?.title ?? "") ・ \(pending?.content.count ?? 0)文字")
-                ScrollView { Text(pending?.content ?? "").textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }
-                HStack {
-                    Button("キャンセル") { pending = nil; pendingConfiguration = nil }
-                    Spacer()
-                    Button("この本文を送信", action: send).buttonStyle(.borderedProminent)
-                }
-            }.padding(20).frame(minWidth: 340, idealWidth: 500, minHeight: 420)
-        }
-        .onChange(of: contextID) { _, _ in reset(); scope = .current }
-        .onChange(of: purpose) { _, _ in reset() }
-        .onChange(of: scope) { _, _ in reset() }
-        .onChange(of: chapters.map { $0.id.description + $0.episodes.map(\.id.description).joined() }) { _, _ in reset(); scope = .current }
-        .onDisappear { reset() }
+            })) {
+                VStack(alignment: .leading, spacing: 16) {
+                    Text("\(pendingPurpose.rawValue)に送信する本文").font(.headline)
+                    if pendingPurpose != .proofreading {
+                        Text("回答は「感想・アドバイス」に日時付きで保存し、作品と一緒に同期します。")
+                            .font(.caption)
+                    }
+                    if pendingPurpose == .proofreading, canApplyProofreading {
+                        Text("校正が完了すると本文を上書きし、変更箇所を色で示します。取り消しできます。")
+                            .font(.caption)
+                    }
+                    Text("送信先：\(pendingConfiguration?.endpoint.absoluteString ?? "")").font(.caption)
+                    Text("\(pending?.title ?? "") ・ \(pending?.content.count ?? 0)文字")
+                    ScrollView { Text(pending?.content ?? "").textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }
+                    HStack {
+                        Button("キャンセル") { pending = nil; pendingConfiguration = nil }
+                        Spacer()
+                        Button("この本文を送信", action: send).buttonStyle(.borderedProminent)
+                    }
+                }.padding(20).frame(minWidth: 340, idealWidth: 500, minHeight: 420)
+            }
+            .onChange(of: contextID) { _, _ in reset(); scope = .current }
+            .onChange(of: purpose) { _, _ in reset() }
+            .onChange(of: scope) { _, _ in reset() }
+            .onChange(of: chapters.map { $0.id.description + $0.episodes.map(\.id.description).joined() }) { _, _ in reset(); scope = .current }
+            .onDisappear { reset() }
     }
 
     private var effectiveScope: AssistantScope {

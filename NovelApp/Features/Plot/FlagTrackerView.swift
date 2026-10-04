@@ -16,7 +16,7 @@ struct FlagSectionView: View {
                 .frame(minWidth: 240, idealWidth: 280, maxHeight: .infinity)
 
             FlagDetailView(onChapterJump: onChapterJump)
-                .frame(minWidth: 280, idealWidth: 360, maxHeight: .infinity)
+                .frame(minWidth: 320, idealWidth: 360, maxHeight: .infinity)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .confirmationDialog(
@@ -266,66 +266,59 @@ private struct FlagEditor: View {
     let onCommit: () -> Void
 
     var body: some View {
-        ViewThatFits(in: .vertical) {
-            editorContent
-            ScrollView { editorContent }
-        }
-        .onDisappear(perform: onCommit)
-    }
-
-    private var editorContent: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            TextField("タイトル", text: $title)
-                .onSubmit(onCommit)
-
-            Button {
-                onToggleResolved()
-            } label: {
-                Label(isResolved ? "未回収に戻す" : "現在章で回収", systemImage: isResolved ? "arrow.uturn.backward" : "checkmark")
-            }
-
-            Picker("張った章", selection: $plantedChapterID) {
-                chapterPickerOptions()
-            }
-
-            Picker("回収章", selection: $resolvedChapterID) {
-                chapterPickerOptions()
-            }
-
-            HStack {
-                Button {
-                    if let plantedChapterID {
-                        onJump(plantedChapterID)
-                    }
-                } label: {
-                    Label("張った章へ", systemImage: "arrowshape.turn.up.right")
-                }
-                .disabled(plantedChapterID == nil)
+        Form {
+            Section("伏線") {
+                TextField("タイトル", text: $title, axis: .vertical)
+                    .lineLimit(1 ... 3)
+                    .onSubmit(onCommit)
 
                 Button {
-                    if let resolvedChapterID {
-                        onJump(resolvedChapterID)
-                    }
+                    onToggleResolved()
                 } label: {
-                    Label("回収章へ", systemImage: "arrowshape.turn.up.right")
+                    Label(isResolved ? "未回収に戻す" : "現在章で回収", systemImage: isResolved ? "arrow.uturn.backward" : "checkmark")
                 }
-                .disabled(resolvedChapterID == nil)
-            }
 
-            if showsOrderWarning {
-                Label("回収章が張った章より前です", systemImage: "exclamationmark.triangle")
-                    .foregroundStyle(StyleToken.warning)
-            }
+                Picker("張った章", selection: $plantedChapterID) {
+                    chapterPickerOptions()
+                }
 
-            VStack(alignment: .leading, spacing: 8) {
-                Text("メモ")
-                    .foregroundStyle(.secondary)
+                Picker("回収章", selection: $resolvedChapterID) {
+                    chapterPickerOptions()
+                }
+
+                HStack {
+                    Button {
+                        if let plantedChapterID {
+                            onJump(plantedChapterID)
+                        }
+                    } label: {
+                        Label("張った章へ", systemImage: "arrowshape.turn.up.right")
+                    }
+                    .disabled(plantedChapterID == nil)
+
+                    Button {
+                        if let resolvedChapterID {
+                            onJump(resolvedChapterID)
+                        }
+                    } label: {
+                        Label("回収章へ", systemImage: "arrowshape.turn.up.right")
+                    }
+                    .disabled(resolvedChapterID == nil)
+                }
+
+                if showsOrderWarning {
+                    Label("回収章が張った章より前です", systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(StyleToken.warning)
+                }
+            }
+            Section("メモ") {
                 TextEditor(text: $note)
-                    .frame(minHeight: 100, maxHeight: .infinity)
+                    .frame(minHeight: 120, idealHeight: 200)
+                    .accessibilityLabel("伏線のメモ")
             }
         }
-        .padding(16)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .formStyle(.grouped)
+        .onDisappear(perform: onCommit)
     }
 
     @ViewBuilder

@@ -63,7 +63,7 @@
 
 ## 5. コンポーネント
 
-- 標準button、List selection、focus ringを使う。主操作は`.borderedProminent`、通常は`.bordered`、toolbar／行内は`.borderless`。破壊的操作は`.destructive`と対象が分かる確認を付ける。
+- 標準button、List selection、focus ringを使う。主操作は`.borderedProminent`、通常は`.bordered`、行内は`.borderless`。toolbarのlabel style／button style／control sizeはOS標準に任せる。破壊的操作は`.destructive`と対象が分かる確認を付ける。
 - Sidebarはアイコン＋短い名詞。通常行はタイトル＋captionの2行。章Disclosureは章名・話数・文字数を一行にし、label全体で開閉できるようにする。
 - 空状態は`ContentUnavailableView`で状況と次の一歩を示し、実在する操作ボタンを付ける。未設定、読込失敗、offlineを「作品がありません」にまとめない。
 - macOSのtoolbarは [TOOLBAR.md](TOOLBAR.md)。保存／同期は上部へ集約し、下部は話／全体文字数や検索結果などに使う。同じ保存状態を上下に重複させない。
@@ -78,7 +78,7 @@
 - 人物詳細は72ptの画像＋名前・ふりがな・役割を見出しにまとめ、設定をsurface cardへ分ける。色の選択状態はringとcheckmarkでも伝える。世界観詳細の画像領域は設定済みのときだけ表示し、未設定でも画像設定・dropの入口を残す。
 - プロット・伏線は`surfaceCard`相当の面と0.5ptの境界、選択は1.5ptのaccent。iPadはカード、iPhone・拡大文字・並べ替え編集中は一覧。未回収はwarningの`flag`、回収済みはleafの`checkmark.circle.fill`。通常時は影を付けない。
 - 切り抜きは対象形状の外側を暗くし、輪郭を表示する。位置・倍率の操作を保ち、「使用する」を主操作にする。
-- 状態は必ず記号＋文字。同期済みleaf、同期中／未取得accent、同期待ち／端末内secondary、offlineは記号tertiary・文字secondary、競合warning、失敗danger。文言と意味は共通applicationに従う。SF Symbolsはhierarchical、system weight。
+- 状態は原則として記号＋文字。macOS toolbarの同期状態だけはD-110により記号＋色とし、全文をhelp／accessibility labelに残す。標準の「アイコンとテキスト」表示では状態名も示す。同期済みleaf、同期中／未取得accent、同期待ち／端末内secondary、offlineは記号tertiary・文字secondary、競合warning、失敗danger。文言と意味は共通applicationに従う。SF Symbolsはhierarchical、system weight。
 
 ## 6. 起動・同期・復旧の表示
 

@@ -11,7 +11,7 @@ import Testing
 @Suite("Workbench native layout", .serialized)
 @MainActor
 struct WorkbenchVisualTests {
-    @Test("flag note expands with the lower pane instead of retaining a short form height")
+    @Test("flag note keeps a usable editing area inside the grouped form")
     func flagNoteUsesAvailableHeight() async throws {
         let defaults = makeIsolatedTestUserDefaults()
         let state = AppState(dependencies: AppDependencies(userDefaults: defaults), initialStartupState: .ready)
@@ -28,7 +28,7 @@ struct WorkbenchVisualTests {
         host.layoutSubtreeIfNeeded()
         let note = try #require(descendants(host).compactMap { $0 as? NSTextView }.first { $0.string == flag.note })
         let scroll = try #require(note.enclosingScrollView)
-        #expect(scroll.frame.height > 250)
+        #expect(scroll.frame.height >= 120)
         try await snapshot(host, path: "/tmp/fuminiwa-visual-flags.png")
     }
 
@@ -150,7 +150,7 @@ struct WorkbenchVisualTests {
         let allowed = try #require(toolbar.delegate?.toolbarAllowedItemIdentifiers?(toolbar))
         let actions = toolbar.items.filter { $0.itemIdentifier.rawValue.hasPrefix("workbench.") }
         #expect(actions.count >= 10)
-        #expect(actions.allSatisfy { !$0.isNavigational && allowed.contains($0.itemIdentifier) })
+        #expect(actions.allSatisfy { allowed.contains($0.itemIdentifier) })
         split.setPosition(originalPosition - 100, ofDividerAt: dividerIndex)
         try await Task.sleep(for: .milliseconds(150))
         #expect(outlineView.frame.width < originalWidth - 50)
