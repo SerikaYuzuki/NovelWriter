@@ -11,7 +11,7 @@ struct LibraryView: View {
             .frame(minWidth: 700, minHeight: 480)
             .navigationTitle("ふみにわ")
             .task {
-                guard observesLibrary else { return }
+                guard observesLibrary, case .documentSelection = appState.startupState else { return }
                 await appState.refreshSnapshotLibrary()
                 await appState.refreshSnapshotRemoteCatalog()
             }
