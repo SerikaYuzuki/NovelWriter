@@ -1,7 +1,7 @@
 import Foundation
 import NovelSyncV2
 
-/// Stall timeline for remote-only imports; tests advance an injected clock.
+/// Stall clock for remote-only downloads; tests advance the injected clock.
 package struct SyncV2ImportClock: Sendable {
     package let now: @Sendable () -> ContinuousClock.Instant
     package let sleep: @Sendable (Duration) async throws -> Void
@@ -12,10 +12,6 @@ package struct SyncV2ImportClock: Sendable {
     }
 
     package static let live = SyncV2ImportClock(now: { .now }, sleep: { try await Task.sleep(for: $0) })
-
-    func makeProgress() -> ImportProgress {
-        ImportProgress(now: now, bufferingPolicy: .bufferingNewest(1))
-    }
 }
 
 public extension SyncV2Application {
@@ -123,7 +119,7 @@ public extension SyncV2Application {
             setLaneFlag(\.shouldOpenImportedWork, workID: workID, value: true)
         }
         lanes[workID, default: WorkLane()].importFailure = nil
-        let progress = remoteOnlyImportClock.makeProgress()
+        let progress = ImportProgress(now: remoteOnlyImportClock.now)
         lanes[workID, default: WorkLane()].importProgress = progress
         let generation = historyScopeGeneration
         let timeout = remoteOnlyImportTimeout
@@ -157,7 +153,7 @@ public extension SyncV2Application {
         do {
             try checkRemoteOnlyScope(generation)
             let clock = remoteOnlyImportClock
-            let progress = ImportProgress.current ?? clock.makeProgress()
+            let progress = ImportProgress.current ?? ImportProgress(now: clock.now)
             let inbox = try await ImportProgress.$current.withValue(progress) {
                 try await withThrowingTaskGroup(of: SyncV2RemoteInbox.self) { group in
                     group.addTask { try await self.remoteReads.downloadRemoteOnly(workID: workID) }

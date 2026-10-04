@@ -33,11 +33,16 @@ public final class ImportProgress: @unchecked Sendable {
     private let continuation: AsyncStream<ImportPhase>.Continuation
 
     public convenience init() {
-        self.init(now: { .now }, bufferingPolicy: .bufferingNewest(1))
+        self.init(now: { .now })
     }
 
-    package init(now: @escaping @Sendable () -> ContinuousClock.Instant,
-                 bufferingPolicy: AsyncStream<ImportPhase>.Continuation.BufferingPolicy) {
+    /// The stall deadline reads `now`; the application injects its import clock.
+    package convenience init(now: @escaping @Sendable () -> ContinuousClock.Instant) {
+        self.init(now: now, bufferingPolicy: .bufferingNewest(1))
+    }
+
+    init(now: @escaping @Sendable () -> ContinuousClock.Instant,
+         bufferingPolicy: AsyncStream<ImportPhase>.Continuation.BufferingPolicy) {
         self.now = now
         latest = now()
         emitted = latest
