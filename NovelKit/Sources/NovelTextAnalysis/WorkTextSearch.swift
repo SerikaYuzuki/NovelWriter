@@ -28,6 +28,14 @@ public struct EpisodeTextChange: Equatable, Sendable {
     public let after: String
     public let count: Int
 
+    public init(chapterID: ChapterID, episodeID: EpisodeID, before: String, after: String, count: Int) {
+        self.chapterID = chapterID
+        self.episodeID = episodeID
+        self.before = before
+        self.after = after
+        self.count = count
+    }
+
     public var inverse: Self {
         Self(chapterID: chapterID, episodeID: episodeID, before: after, after: before, count: count)
     }

@@ -34,6 +34,26 @@ extension AppState {
         return true
     }
 
+    var episodeHistoryCurrentBody: String? {
+        guard let episode = selectedEpisode else { return nil }
+        switch activeCommittedTextCapture() {
+        case let .captured(text): return text
+        case .compositionInProgress: return nil
+        case .notActive: return episode.content
+        }
+    }
+
+    func episodeRestoreHost(episodeID: EpisodeID) -> WorkReplacementHost {
+        let host = workReplacementHost
+        let allowed = { [self] in
+            guard selectedEpisodeID == episodeID, document.episode(episodeID) != nil else { return false }
+            return host.validate() && snapshotSyncConflict == nil
+                && activeCommittedTextCapture() != .compositionInProgress
+        }
+        return WorkReplacementHost(scope: host.scope, validate: allowed, document: host.document,
+                                   boundary: host.boundary, snapshot: host.snapshot, apply: host.apply)
+    }
+
     var workReplacementHost: WorkReplacementHost {
         let session = documentSessionToken, account = snapshotSyncV2AccountScopeToken, work = snapshotSyncV2ActiveWorkID
         let validate = { [self] in documentSessionToken == session && snapshotSyncV2AccountScopeToken == account

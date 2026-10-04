@@ -41,6 +41,7 @@
 | D-011 / D-014 | 直接配布を前提とし、検証はローカル。GitHub Actionsを導入しない。署名・公開の完了は別途確認する |
 | D-012 | 縦書きは未対応 |
 | D-042 | 通常の開発依頼は実装・品質改善。価格・法務・販促は明示依頼の範囲。必要なデプロイは対象・backup・反映後を確認して進める |
+| D-114 | 話ごとの本文履歴と単話復元を共有層に実装し、復元前checkpointは手動保存として記録する |
 | D-111 | 共通App層をNovelWorkspace／NovelWorkspaceUIへ段階移設し、両OSの意味差は明示判断して統合する |
 | D-076 | 責務別の構造、Swift 6境界、swift-testing。Swift sourceは400行で確認、600行で警告、800行超は分割する |
 | D-078 | 現行Auth v1はApple-only、opaque AccountID/session/Fence。内容保護はserverReadableV1、E2EEではない。[AUTH](AUTH.md) |
@@ -183,3 +184,13 @@ AI依頼をアプリ単位のセンターが所有し、パネル・用途・話
 記録の保存先を送信時の作品へ固定する。校正は同じsession・話・送信本文の一致時だけ共通編集サービス＋永続Undoで反映し、それ以外は未反映結果として確認後に扱う。チャットの編集もsession/account/許可を照合し、不一致なら会話に変更案を残す。送信入力は同期記録へ保存しない。終了状態は既存requestへ、チャット返信・編集は会話へ、感想は保存リストへ残す。校正の変更一覧と照合用ハッシュは端末内だけに保存し、全文の変更前後は既存のローカルUndo journalだけに置く。再起動後の校正・感想は通常の送信前プレビューを再表示する。wire/schemaを変えない。従来の感想attachmentも保持する。中断の自動再送はしない。
 
 「アドバイス」のキーは維持してUIを「チャット」とし、相談だけはMarkdownで返す。編集許可は同じ会話中は維持し、会話切替・新規会話では相談だけへ戻す。会話の名称変更は既存conversationのrevision、削除は端末内の非表示とする。
+
+## D-114: 話ごとのスナップショット履歴と復元（2026-10-04）
+
+owner承認済み。執筆中の履歴popoverは「第N話「タイトル」の履歴」とし、対象話の本文object IDが連続して同じ版をまとめ、新しい順に表示する。話未選択・執筆画面外では従来の作品全体履歴を使う。macOSのFile menuに「スナップショット…」、iOSの執筆menuに「この話の履歴」を置き、作品全体履歴への入口も保つ。
+
+SQLiteのsnapshot_entriesとsnapshots、および同じaccount bindingの検証済みInboxを1本のmetadata queryで読む。未取得版は末尾の取得行にまとめる。最初のローカル100件をオンライン応答より先に表示し、古い履歴はキャンセル可能な画面所有taskで順次追加する。オンライン取得後は先頭の暫定ページを日時順の統合ページへ置き換え、以降はページ境界の同じ本文もまとめる。閉じる・話/Work/session/account切替で読み込みを中止する。作品全体のmacOS履歴も同じ段階取得APIを使う。字数は表示行だけで既存の本文previewから計算し、Work/object IDでcacheする。日付Section、自動保存のまとめ、前の異なる本文との差分・半減警告・現在本文との一致を両OS共通のEpisodeHistoryListで表示する。
+
+単話復元はNovelWorkspaceのEpisodeRestoreSessionで、既存WorkReplacementHostのdocument gate → IME確定とローカル保存 → 確認時本文との一致 → explicit checkpoint → 共通WritingEdit検査・永続Undo journal → 1つのEpisodeTextChangeをEditorKitへ適用 → ローカル保存、の順に実行する。checkpoint失敗時は本文を変えない。native Undoを1回にし、他の話は変更しない。競合未解決・IME変換中・話削除・Work/session/account変更では拒否する。話が存在しなければ作品全体履歴へ案内する。作品全体のrestore経路は呼ばない。
+
+新しいreasonは追加せず、復元前checkpointは「手動保存」と表示する。schema/wire/fixtureは変更しない。history_occurrencesのWork別indexは現行schemaの厳密なattestationに影響するため、今回は追加しない。

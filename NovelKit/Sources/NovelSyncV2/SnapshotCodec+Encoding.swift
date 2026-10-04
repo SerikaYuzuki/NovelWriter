@@ -170,6 +170,11 @@ struct SnapshotEncodingContext {
 }
 
 extension SnapshotCodec {
+    /// The identical canonical value bytes used by episode body entries.
+    public static func episodeBodyObjectID(_ body: String) -> ObjectID {
+        ObjectID(data: value(body))
+    }
+
     static func value(_ string: String) -> Data {
         CanonicalJSON.object([("value", .string(string))])
     }

@@ -290,19 +290,12 @@ extension WorkRepository {
     }
 
     static func parseHistoryDate(_ value: String) -> Date? {
-        let formatter = ISO8601DateFormatter()
-        formatter.timeZone = TimeZone(secondsFromGMT: 0)
-        formatter.formatOptions = [
-            .withInternetDateTime,
-            .withDashSeparatorInDate,
-            .withColonSeparatorInTime,
-            .withFractionalSeconds
-        ]
-        if let date = formatter.date(from: value) {
-            return date
+        // Most rows use canonical whole-second timestamps. Keep legacy fractional
+        // timestamps readable without allocating a formatter for every occurrence.
+        if value.contains(".") {
+            return fractionalHistoryDates.date(value)
         }
-        formatter.formatOptions.remove(.withFractionalSeconds)
-        return formatter.date(from: value)
+        return CanonicalTimestamp.date(value)
     }
 
     static func historyScopeKey(_ scope: V2LocalWorkScope) -> String {
@@ -352,5 +345,21 @@ extension WorkRepository {
         let binding: V2AccountBinding
         let head: SnapshotID
         let ids: Set<SnapshotID>
+    }
+}
+
+private let fractionalHistoryDates = FractionalHistoryDates()
+
+private final class FractionalHistoryDates: @unchecked Sendable {
+    private let lock = NSLock()
+    private let formatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.formatOptions = [.withInternetDateTime, .withDashSeparatorInDate, .withColonSeparatorInTime, .withFractionalSeconds]
+        return formatter
+    }()
+
+    func date(_ value: String) -> Date? {
+        lock.withLock { formatter.date(from: value) }
     }
 }

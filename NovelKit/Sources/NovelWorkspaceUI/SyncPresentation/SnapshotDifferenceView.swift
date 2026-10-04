@@ -95,15 +95,28 @@ public struct SnapshotDifferencePreview: View {
     }
 }
 
-private struct SnapshotEpisodePreview: View {
+public struct SnapshotEpisodePreview: View {
+    public init(application: SyncV2Application, workID: WorkID, snapshotID: SnapshotID, episodeID: String, heading: String) {
+        self.application = application
+        self.workID = workID
+        self.snapshotID = snapshotID
+        self.episodeID = episodeID
+        self.heading = heading
+    }
+
+    init(application: SyncV2Application, workID: WorkID, snapshotID: SnapshotID, episode: SnapshotEpisodeDifference) {
+        self.init(application: application, workID: workID, snapshotID: snapshotID, episodeID: episode.id, heading: episode.heading)
+    }
+
     let application: SyncV2Application
     let workID: WorkID
     let snapshotID: SnapshotID
-    let episode: SnapshotEpisodeDifference
+    let episodeID: String
+    let heading: String
     @State private var bodyText: String?
     @State private var failed = false
 
-    var body: some View {
+    public var body: some View {
         ScrollView {
             if let bodyText {
                 Text(bodyText.isEmpty ? "本文は空です" : bodyText)
@@ -115,10 +128,10 @@ private struct SnapshotEpisodePreview: View {
                 ProgressView("本文を読み込んでいます…").padding(Spacing.outer)
             }
         }
-        .navigationTitle(episode.heading)
+        .navigationTitle(heading)
         .task {
             do {
-                let value = try await application.snapshotEpisodePreview(workID: workID, snapshotID: snapshotID, episodeID: episode.id)
+                let value = try await application.snapshotEpisodePreview(workID: workID, snapshotID: snapshotID, episodeID: episodeID)
                 guard !Task.isCancelled else { return }
                 bodyText = value
             } catch { failed = true }

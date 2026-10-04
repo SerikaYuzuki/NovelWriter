@@ -4,6 +4,24 @@ import NovelSyncV2Store
 import Testing
 
 struct StoreComparisonTests {
+    @Test func episodeVersionsIncludeVerifiedInboxAndEnforceAccountScope() async throws {
+        let root = temporaryStoreRoot("episode-versions")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = try LocalSyncV2Store(root: root, policy: .createNew)
+        let workID = WorkID(UUID())
+        let fixture = try await createConflict(store: store, workID: workID)
+        let body = try #require(fixture.remote.encoded.manifest.entries.first { $0.entityKey.hasSuffix("/body") })
+        let versions = try await store.episodeBodyVersions(workID: workID, episodeKey: body.entityKey, scope: scopeA)
+        #expect(versions[fixture.remote.encoded.snapshotId] == body)
+        #expect(versions.count >= 2)
+        let missing = try await store.episodeBodyVersions(workID: workID, episodeKey: "episode/missing/body", scope: scopeA)
+        #expect(missing.isEmpty)
+        await #expect(throws: SyncV2StoreError.accountMismatch) {
+            _ = try await store.episodeBodyVersions(workID: workID, episodeKey: body.entityKey, scope: .unbound)
+        }
+        await store.close()
+    }
+
     @Test func comparisonReadsVerifiedConflictInboxWithoutInstallingIt() async throws {
         let root = temporaryStoreRoot("comparison-inbox")
         defer { try? FileManager.default.removeItem(at: root) }
@@ -47,6 +65,10 @@ struct StoreComparisonTests {
                                           expectedRemoteHead: V2RemoteHead(snapshotID: encoded.snapshotId, generation: 1))
         try await store.stageRemote(remote, scope: scopeA)
         #expect(try await store.comparisonManifest(workID: workID, snapshotID: encoded.snapshotId, scope: scopeA) == nil)
+        let key = "episode/\(doc.chapters[0].episodes[0].id.rawValue.uuidString.lowercased())/body"
+        let versions = try await store.episodeBodyVersions(workID: workID, episodeKey: key, scope: scopeA)
+        #expect(versions[encoded.snapshotId] == nil)
+        #expect(versions[checkpoint.snapshotID] != nil)
         await store.close()
     }
 }

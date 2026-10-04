@@ -212,11 +212,36 @@ struct ChapterMemoPopover: View {
 
 struct SnapshotPopover: View {
     @Environment(AppState.self) private var appState
+    let overlayState: WorkbenchOverlayState
+
+    var body: some View {
+        if appState.workspaceSelection.section == .structure,
+           let context = EpisodeHistoryContext(document: appState.document, episodeID: appState.selectedEpisodeID),
+           let application = appState.snapshotSyncV2Application,
+           let workID = appState.currentSnapshotSyncV2WorkID {
+            EpisodeHistoryList(application: application, workID: workID, chapterID: context.chapterID,
+                               episodeID: context.episodeID, heading: context.heading, scope: appState.workSearchScope,
+                               userDefaults: appState.userDefaults, currentBody: { appState.episodeHistoryCurrentBody },
+                               host: { appState.episodeRestoreHost(episodeID: context.episodeID) }, wholeWorkHistory: {
+                                   overlayState.presented = nil
+                                   appState.presentWholeWorkHistory()
+                               })
+                               .id(appState.workSearchScope + context.episodeID.description)
+        } else {
+            WholeWorkSnapshotPopover(overlayState: overlayState)
+        }
+    }
+}
+
+struct WholeWorkSnapshotPopover: View {
+    @State private var refreshRevision = UUID()
+    @Environment(AppState.self) private var appState
     @Environment(SnapshotMenuPresenter.self) private var presenter
 
     let overlayState: WorkbenchOverlayState
 
     var body: some View {
+        let requests = Dictionary(presenter.snapshots.map { ($0.id, $0) }, uniquingKeysWith: { current, _ in current })
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text("スナップショット")
@@ -225,7 +250,7 @@ struct SnapshotPopover: View {
                 Button {
                     Task {
                         _ = await appState.saveExplicitSnapshot()
-                        await presenter.refresh()
+                        refreshRevision = UUID()
                     }
                 } label: {
                     Label("保存", systemImage: "plus")
@@ -236,7 +261,8 @@ struct SnapshotPopover: View {
 
             Divider()
 
-            if presenter.snapshots.isEmpty {
+            if presenter.snapshots.isEmpty, !appState.snapshotSyncHistoryLoading,
+               appState.snapshotSyncHistoryFailure == nil {
                 ContentUnavailableView(
                     "スナップショットがありません",
                     systemImage: "clock.arrow.circlepath",
@@ -246,7 +272,7 @@ struct SnapshotPopover: View {
             } else {
                 List {
                     SnapshotHistorySections(items: presenter.snapshots.map(\.entry), application: appState.snapshotSyncV2Application, workID: appState.currentSnapshotSyncV2WorkID) { entry in
-                        if let request = presenter.snapshots.first(where: { $0.id == entry.occurrenceID }) {
+                        if let request = requests[entry.occurrenceID] {
                             if let application = appState.snapshotSyncV2Application,
                                let workID = appState.currentSnapshotSyncV2WorkID {
                                 let scope = appState.snapshotSyncV2AccountScopeToken
@@ -276,6 +302,12 @@ struct SnapshotPopover: View {
                 }
                 .listStyle(.plain)
             }
+            if appState.snapshotSyncHistoryLoading {
+                ProgressView("古い履歴を読み込み中…")
+            }
+            if let failure = appState.snapshotSyncHistoryFailure {
+                Text(failure).font(.caption).foregroundStyle(.secondary)
+            }
         }
         .padding(12)
         .confirmationDialog("この版を復元しますか？", isPresented: Binding(
@@ -291,7 +323,7 @@ struct SnapshotPopover: View {
         } message: { request in
             Text(HistoryPresentation().label(request.entry) + "\n現在の内容を履歴に残してから、選んだ版へ戻します。")
         }
-        .task {
+        .task(id: appState.workSearchScope + refreshRevision.uuidString) {
             await presenter.refresh()
         }
     }
@@ -387,14 +419,14 @@ final class SnapshotMenuPresenter {
 
     func refresh() async {
         let session = appState.documentSessionToken
-        await appState.refreshSnapshotHistory()
-        guard appState.documentSessionToken == session else { return }
-
-        snapshots = appState.snapshotSyncHistory.map {
-            SnapshotRestoreRequest(entry: $0, session: session)
-        }
-        if snapshotPendingRestore?.session != session {
-            snapshotPendingRestore = nil
+        await appState.refreshSnapshotHistory {
+            guard !Task.isCancelled, self.appState.documentSessionToken == session else { return }
+            self.snapshots = self.appState.snapshotSyncHistory.map {
+                SnapshotRestoreRequest(entry: $0, session: session)
+            }
+            if self.snapshotPendingRestore?.session != session {
+                self.snapshotPendingRestore = nil
+            }
         }
     }
 
