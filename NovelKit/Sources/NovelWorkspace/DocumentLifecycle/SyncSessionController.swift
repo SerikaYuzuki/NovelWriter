@@ -7,40 +7,49 @@ import Observation
 /// host still commits IME, saves locally and installs while holding its gate.
 @MainActor
 @Observable
-final class SyncSessionController<Session: Equatable & Sendable, Account: Equatable & Sendable, OpenResult: Sendable> {
-    struct OperationContext: Sendable {
-        let workID: WorkID?
-        let session: Session
-        let account: Account
-        let editGeneration: UInt64?
+public final class SyncSessionController<Session: Equatable & Sendable, Account: Equatable & Sendable, OpenResult: Sendable> {
+    public init() {}
 
-        func isCurrent(_ current: Self) -> Bool {
+    public struct OperationContext: Sendable {
+        public let workID: WorkID?
+        public let session: Session
+        public let account: Account
+        public let editGeneration: UInt64?
+
+        public init(workID: WorkID?, session: Session, account: Account, editGeneration: UInt64?) {
+            self.workID = workID
+            self.session = session
+            self.account = account
+            self.editGeneration = editGeneration
+        }
+
+        public func isCurrent(_ current: Self) -> Bool {
             workID == current.workID && session == current.session
                 && account == current.account && editGeneration == current.editGeneration
         }
     }
 
-    var remoteOnlyTask: Task<OpenResult, Never>?
-    var remoteOnlyOwner: UUID?
-    var remoteOnlyWorkID: WorkID?
-    var remoteOnlyStartedAt: Date?
-    var prefetchTask: Task<Void, Never>?
-    var prefetchWorkID: WorkID?
-    var reprojectionTask: Task<Void, Never>?
-    var reprojectionOwner: UUID?
-    var accountGeneration: UInt64 = 0
-    var accountOwner: UUID?
-    var accountTransitionRequested = false
-    var accountTransitionInProgress = false
-    var remoteSuspension: SyncV2AccountTransitionRemoteSuspensionToken?
+    public var remoteOnlyTask: Task<OpenResult, Never>?
+    public var remoteOnlyOwner: UUID?
+    public var remoteOnlyWorkID: WorkID?
+    public var remoteOnlyStartedAt: Date?
+    public var prefetchTask: Task<Void, Never>?
+    public var prefetchWorkID: WorkID?
+    public var reprojectionTask: Task<Void, Never>?
+    public var reprojectionOwner: UUID?
+    public var accountGeneration: UInt64 = 0
+    public var accountOwner: UUID?
+    public var accountTransitionRequested = false
+    public var accountTransitionInProgress = false
+    public var remoteSuspension: SyncV2AccountTransitionRemoteSuspensionToken?
     private var remoteLeases: Set<SyncV2AccountTransitionRemoteSuspensionToken> = []
 
-    enum RemoteCancellation {
+    public enum RemoteCancellation {
         case releaseImmediately
         case retainUntilFinished
     }
 
-    func beginRemoteOnlyOpen(workID: WorkID) -> UUID {
+    public func beginRemoteOnlyOpen(workID: WorkID) -> UUID {
         let owner = UUID()
         remoteOnlyOwner = owner
         remoteOnlyWorkID = workID
@@ -48,7 +57,7 @@ final class SyncSessionController<Session: Equatable & Sendable, Account: Equata
         return owner
     }
 
-    func finishRemoteOnlyOpen(owner: UUID?, preservingPrefetchStart: Bool = false) {
+    public func finishRemoteOnlyOpen(owner: UUID?, preservingPrefetchStart: Bool = false) {
         guard remoteOnlyOwner == owner else { return }
         remoteOnlyOwner = nil
         remoteOnlyTask = nil
@@ -58,7 +67,7 @@ final class SyncSessionController<Session: Equatable & Sendable, Account: Equata
         }
     }
 
-    func cancelBackgroundOperations(remoteOnly policy: RemoteCancellation) {
+    public func cancelBackgroundOperations(remoteOnly policy: RemoteCancellation) {
         switch policy {
         case .releaseImmediately:
             let task = remoteOnlyTask
@@ -79,7 +88,7 @@ final class SyncSessionController<Session: Equatable & Sendable, Account: Equata
         reprojectionTask = nil
     }
 
-    func beginReprojection() -> UUID {
+    public func beginReprojection() -> UUID {
         reprojectionOwner = nil
         reprojectionTask?.cancel()
         let owner = UUID()
@@ -87,13 +96,13 @@ final class SyncSessionController<Session: Equatable & Sendable, Account: Equata
         return owner
     }
 
-    func finishReprojection(owner: UUID) {
+    public func finishReprojection(owner: UUID) {
         guard reprojectionOwner == owner else { return }
         reprojectionOwner = nil
         reprojectionTask = nil
     }
 
-    func startPrefetch(workID: WorkID, operation: @escaping @MainActor () async -> Void) {
+    public func startPrefetch(workID: WorkID, operation: @escaping @MainActor () async -> Void) {
         prefetchWorkID = workID
         remoteOnlyStartedAt = Date()
         prefetchTask = Task { @MainActor [weak self] in
@@ -109,18 +118,18 @@ final class SyncSessionController<Session: Equatable & Sendable, Account: Equata
         }
     }
 
-    func matchesAccount(_ expected: Account, current: Account, transitionActive: Bool = false) -> Bool {
+    public func matchesAccount(_ expected: Account, current: Account, transitionActive: Bool = false) -> Bool {
         !transitionActive && current == expected
     }
 
-    func beginRemoteSuspension(_ application: SyncV2Application) async -> SyncV2AccountTransitionRemoteSuspensionToken {
+    public func beginRemoteSuspension(_ application: SyncV2Application) async -> SyncV2AccountTransitionRemoteSuspensionToken {
         let token = await application.beginAccountTransitionRemoteSuspension()
         remoteLeases.insert(token)
         return token
     }
 
     @discardableResult
-    func endRemoteSuspension(
+    public func endRemoteSuspension(
         _ application: SyncV2Application,
         token: SyncV2AccountTransitionRemoteSuspensionToken,
         resume: Bool

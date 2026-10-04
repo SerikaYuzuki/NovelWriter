@@ -30,7 +30,7 @@ if rg -n \
   -e 'NoteSync(Client|Coordinator|Transport)?' \
   -e 'WorkSync(Client|Coordinator|Transport)?' \
   -e 'EpisodeSync(Client|Coordinator|Transport)?' \
-  NovelApp NovelAppIOS; then
+  NovelApp NovelAppIOS NovelKit/Sources/NovelWorkspace; then
   fail "retired CloudKit/Note/Work/Episode live runtime leaked into app composition"
 fi
 
@@ -38,7 +38,7 @@ fi
 # intentionally not included in this sync-router scan.
 # D-089: explicit OpenAI generation/catalog URLs belong to the assistant API.
 # Other /v1 routes, including anything else in the assistant directory, still fail.
-if rg -n -e '/v1(/|"|\x27)' SyncServerV2/src/http.rs NovelApp NovelAppIOS \
+if rg -n -e '/v1(/|"|\x27)' SyncServerV2/src/http.rs NovelApp NovelAppIOS NovelKit/Sources/NovelWorkspace \
   | rg -v '^NovelApp/WritingAssistant/AssistantClient\.swift:[0-9]+: *(let requestURL = .*https://api\.openai\.com/v1/responses.*|var request = URLRequest\(url: URL\(string: "https://api\.openai\.com/v1/models"\)!\))$' \
   | rg -v '^NovelApp/WritingAssistant/AssistantChatRequest\.swift:[0-9]+: *url: endpoint\.host == "api\.openai\.com" \? URL\(string: "https://api\.openai\.com/v1/responses"\)! : endpoint,$' \
   | rg -v '^NovelApp/WritingAssistant/AssistantPreferences\.swift:[0-9]+: *defaults\.string\(forKey: "assistant\.endpoint"\) \?\? "https://api\.openai\.com/v1/chat/completions"$'; then

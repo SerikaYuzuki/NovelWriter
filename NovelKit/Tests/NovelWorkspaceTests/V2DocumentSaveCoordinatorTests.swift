@@ -1,11 +1,7 @@
 import Foundation
-#if os(macOS)
-@testable import FUMINIWA
-#else
-@testable import FUMINIWAIOS
-#endif
 import NovelCore
 import NovelTiming
+@testable import NovelWorkspace
 import Testing
 
 @Suite("Local save revision ownership")

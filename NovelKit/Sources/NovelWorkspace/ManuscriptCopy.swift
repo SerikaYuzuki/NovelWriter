@@ -1,7 +1,7 @@
 import Foundation
 
 /// コピー文字列へ含められるscope。clipboard通知には原稿のscopeを露出しない。
-enum ManuscriptCopyScope: String, Sendable, Equatable {
+public enum ManuscriptCopyScope: String, Sendable, Equatable {
     case selection
     case episode
     case chapter
@@ -10,18 +10,23 @@ enum ManuscriptCopyScope: String, Sendable, Equatable {
 /// 章コピー文字列へ含める話データ。
 ///
 /// `Episode`そのものを受け取らず、IDやメモをコピー文字列へ混入できない形に限定する。
-struct ManuscriptCopyEpisode: Sendable, Equatable {
-    let title: String
-    let content: String
+public struct ManuscriptCopyEpisode: Sendable, Equatable {
+    public let title: String
+    public let content: String
+
+    public init(title: String, content: String) {
+        self.title = title
+        self.content = content
+    }
 }
 
 /// 利用者が明示的に選んだ、コピー文字列へ含めてよい原稿データ。
-enum ManuscriptCopySource: Sendable, Equatable {
+public enum ManuscriptCopySource: Sendable, Equatable {
     case selection(text: String)
     case episode(title: String, content: String)
     case chapter(title: String, episodes: [ManuscriptCopyEpisode])
 
-    var scope: ManuscriptCopyScope {
+    public var scope: ManuscriptCopyScope {
         switch self {
         case .selection:
             .selection
@@ -58,35 +63,41 @@ enum ManuscriptCopySource: Sendable, Equatable {
 /// コピー文字列生成時のローカルresource上限。
 ///
 /// 上限超過時は切り詰めず拒否する。
-struct ManuscriptCopyLimits: Sendable, Equatable {
-    static let standard = ManuscriptCopyLimits(
+public struct ManuscriptCopyLimits: Sendable, Equatable {
+    public static let standard = ManuscriptCopyLimits(
         maximumSourceCharacters: 250_000,
         maximumSourceUTF8Bytes: 1_000_000,
         maximumOutputUTF8Bytes: 2_000_000
     )
 
-    let maximumSourceCharacters: Int
-    let maximumSourceUTF8Bytes: Int
-    let maximumOutputUTF8Bytes: Int
+    public let maximumSourceCharacters: Int
+    public let maximumSourceUTF8Bytes: Int
+    public let maximumOutputUTF8Bytes: Int
+
+    public init(maximumSourceCharacters: Int, maximumSourceUTF8Bytes: Int, maximumOutputUTF8Bytes: Int) {
+        self.maximumSourceCharacters = maximumSourceCharacters
+        self.maximumSourceUTF8Bytes = maximumSourceUTF8Bytes
+        self.maximumOutputUTF8Bytes = maximumOutputUTF8Bytes
+    }
 }
 
 /// 生成済みコピー文字列と、resource境界を検証するための計数値。
-struct ManuscriptCopy: Sendable, Equatable {
-    let scope: ManuscriptCopyScope
-    let text: String
-    let sourceCharacterCount: Int
-    let sourceUTF8ByteCount: Int
+public struct ManuscriptCopy: Sendable, Equatable {
+    public let scope: ManuscriptCopyScope
+    public let text: String
+    public let sourceCharacterCount: Int
+    public let sourceUTF8ByteCount: Int
 }
 
-enum ManuscriptCopyError: Error, Sendable, Equatable {
+public enum ManuscriptCopyError: Error, Sendable, Equatable {
     case emptyContent
     case sourceCharacterLimitExceeded(limit: Int, actual: Int)
     case sourceUTF8ByteLimitExceeded(limit: Int, actual: Int)
     case outputUTF8ByteLimitExceeded(limit: Int, actual: Int)
 }
 
-enum ManuscriptCopyBuilder {
-    static func make(
+public enum ManuscriptCopyBuilder {
+    public static func make(
         source: ManuscriptCopySource,
         limits: ManuscriptCopyLimits = .standard
     ) throws -> ManuscriptCopy {

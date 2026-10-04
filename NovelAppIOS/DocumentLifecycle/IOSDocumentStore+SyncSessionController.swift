@@ -1,6 +1,7 @@
 import Foundation
 import NovelSyncV2
 import NovelSyncV2Application
+import NovelWorkspace
 
 extension IOSDocumentStore {
     var snapshotSyncV2RemoteOnlyOpenTask: Task<Void, Never>? {

@@ -1,5 +1,6 @@
 import NovelCore
 import NovelTextAnalysis
+import NovelWorkspace
 import SwiftUI
 
 struct TextCheckResults: View {

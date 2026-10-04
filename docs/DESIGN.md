@@ -156,6 +156,8 @@ macOSの[AppDependencies](../NovelApp/Application/AppDependencies.swift)と各Ap
 
 macOSは`NovelApp/AppState.swift`、iOSは`NovelAppIOS/DocumentLifecycle/IOSDocumentStore.swift`が画面の状態を持つ。機能処理は既存の責務別extensionに置く。作品操作と非同期確認は呼出時のsession / WorkID / account scopeを保持し、完了時に検査する。
 
+共通App層は[D-111](DECISIONS.md#d-111-共通app層の段階移設2026-10-04)に従い、非UIのNovelWorkspaceと共有SwiftUIのNovelWorkspaceUIへ段階移設する。AppState／IOSDocumentStoreは後続のWorkspaceHost portを介する薄いadapterへ整理し、OS固有のcomposition／gateはAppに残す。既知の意味差はD-111で個別に判断し、移設だけで統合しない。
+
 ### 5.3 ContentView
 
 macOSは[ContentView](../NovelApp/Application/ContentView.swift)から作品選択・recovery・既存Workbenchへ分岐する。ready以外で編集可能なWorkbenchを作らない。iOSは作品棚→作品ホーム→機能画面の階層と、iPadの複数列を使う。

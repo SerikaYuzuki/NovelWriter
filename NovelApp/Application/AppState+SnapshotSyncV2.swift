@@ -3,6 +3,7 @@ import NovelCore
 import NovelSyncV2
 import NovelSyncV2Application
 import NovelSyncV2PortableBridge
+import NovelWorkspace
 import NovelWritingProgress
 import os
 import SwiftUI

@@ -8,6 +8,7 @@ import NovelSyncV2
 import NovelSyncV2Application
 import NovelSyncV2PortableBridge
 import NovelTiming
+import NovelWorkspace
 import NovelWritingProgress
 import NovelWritingSupport
 import Observation
@@ -187,7 +188,14 @@ final class AppState {
     var snapshotSyncLibraryOpenFailure: SyncV2Failure?
     var snapshotSyncLibraryIsLoading = false
     @ObservationIgnored var snapshotSyncV2CatalogRefreshToken: UUID?
+    #if FUMINIWA_TEST_COMPOSITION
+    @ObservationIgnored var documentOperationDidEnqueue: (@MainActor () -> Void)?
+    @ObservationIgnored lazy var documentOperationGate = DocumentOperationGate(didEnqueueOperation: { [weak self] in
+        self?.documentOperationDidEnqueue?()
+    })
+    #else
     @ObservationIgnored let documentOperationGate = DocumentOperationGate()
+    #endif
     @ObservationIgnored let authOperationGate = AuthOperationGate()
     /// Counts interactive auth requests from invocation until the serialized
     /// operation fully commits. This is separate from the presentation-only

@@ -4,6 +4,7 @@ import NovelCore
 import NovelSyncV2
 import NovelSyncV2Application
 import NovelTiming
+import NovelWorkspace
 import Testing
 
 @MainActor

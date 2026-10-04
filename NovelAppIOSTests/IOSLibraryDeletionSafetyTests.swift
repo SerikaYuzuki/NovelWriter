@@ -104,7 +104,7 @@ extension IOSLibraryDeletionSafetyTests {
         }
         var start = started.stream.makeAsyncIterator()
         _ = await start.next()
-        store.documentOperationGate.didEnqueueOperation = { enqueued.continuation.yield(()) }
+        store.documentOperationDidEnqueue = { enqueued.continuation.yield(()) }
         let session = store.currentDocumentSessionToken
         let scope = store.snapshotSyncV2AccountScope
         let deleting = Task { await store.deleteLibraryWork(item, expectedSession: session, accountScope: scope) }

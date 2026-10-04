@@ -1,11 +1,7 @@
-#if os(macOS)
-@testable import FUMINIWA
-#else
-@testable import FUMINIWAIOS
-#endif
 import Foundation
 import NovelCore
 import NovelTextAnalysis
+@testable import NovelWorkspace
 import Testing
 
 @MainActor

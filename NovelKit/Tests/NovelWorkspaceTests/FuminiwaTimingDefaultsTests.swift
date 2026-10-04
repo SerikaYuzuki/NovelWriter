@@ -1,10 +1,6 @@
 import Foundation
-#if os(macOS)
-@testable import FUMINIWA
-#else
-@testable import FUMINIWAIOS
-#endif
 import NovelTiming
+@testable import NovelWorkspace
 import Testing
 
 struct FuminiwaTimingDefaultsTests {

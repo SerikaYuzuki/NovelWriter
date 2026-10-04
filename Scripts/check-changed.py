@@ -19,6 +19,7 @@ import shlex
 import subprocess
 import sys
 import time
+import tempfile
 from pathlib import Path
 
 import yaml
@@ -80,6 +81,38 @@ def package_graph() -> tuple[dict[str, set[str]], set[str]]:
     return deps, tests
 
 
+def added_package_targets(base: str) -> set[str] | None:
+    """An additive manifest need not select tests for unchanged targets."""
+    try:
+        merge_base = run(["git", "merge-base", base, "HEAD"]).stdout.strip()
+        previous = run(["git", "show", f"{merge_base}:NovelKit/Package.swift"]).stdout
+        current = json.loads(run(["swift", "package", "dump-package"], cwd=REPO / "NovelKit").stdout)
+        with tempfile.TemporaryDirectory(prefix="fuminiwa-manifest-") as directory:
+            path = Path(directory)
+            (path / "Package.swift").write_text(previous)
+            old = json.loads(run(["swift", "package", "dump-package"], cwd=path).stdout)
+        ignored = {"targets", "products", "packageKind"}
+        if {k: v for k, v in old.items() if k not in ignored} != {
+            k: v for k, v in current.items() if k not in ignored
+        }:
+            return None
+        old_targets = {t["name"]: t for t in old["targets"]}
+        new_targets = {t["name"]: t for t in current["targets"]}
+        old_products = {p["name"]: p for p in old["products"]}
+        new_products = {p["name"]: p for p in current["products"]}
+        if any(new_targets.get(name) != target for name, target in old_targets.items()):
+            return None
+        if any(new_products.get(name) != product for name, product in old_products.items()):
+            return None
+        added = new_targets.keys() - old_targets.keys()
+        if any(set(product["targets"]) - added for name, product in new_products.items()
+               if name not in old_products):
+            return None
+        return set(added)
+    except (subprocess.CalledProcessError, KeyError, ValueError):
+        return None
+
+
 def affected_package_tests(changed_targets: set[str], all_tests: bool) -> list[str]:
     deps, tests = package_graph()
     if all_tests:
@@ -132,7 +165,7 @@ class Plan:
             self.steps.append((title, cmd, cwd))
 
 
-def build_plan(files: list[str]) -> Plan:
+def build_plan(files: list[str], base: str = "HEAD") -> Plan:
     plan = Plan()
     swift = [f for f in files if f.endswith(".swift") and (REPO / f).exists()]
     package_targets: set[str] = set()
@@ -152,7 +185,14 @@ def build_plan(files: list[str]) -> Plan:
             editor_ios |= target == "EditorKit"
         elif f.startswith("NovelKit/Tests/"):
             package_targets.add(f.split("/")[2])
-        elif f in ("NovelKit/Package.swift", "NovelKit/Package.resolved"):
+        elif f == "NovelKit/Package.swift":
+            added = added_package_targets(base)
+            package_sources_changed = True
+            if added is None:
+                package_all = True
+            else:
+                package_targets |= added
+        elif f == "NovelKit/Package.resolved":
             package_all = package_sources_changed = True
         elif f.startswith(("NovelApp/", "NovelAppTests/")):
             mac_app_test = True
@@ -247,6 +287,7 @@ def wait_for_simulator(cmd: list[str]) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--base", default="origin/main", help="比較元（既定: origin/main とのmerge base）")
+    parser.add_argument("--step", action="append", help="指定した検証段階だけ実行（失敗後の再実行用、複数指定可）")
     parser.add_argument("--dry-run", action="store_true", help="実行せず計画だけ表示する")
     parser.add_argument("files", nargs="*", help="差分の代わりに対象ファイルを直接指定する")
     args = parser.parse_args()
@@ -255,7 +296,13 @@ def main() -> int:
     print(f"==> {len(files)} changed file(s)")
     for f in files:
         print(f"    {f}")
-    plan = build_plan(files)
+    plan = build_plan(files, args.base)
+    if args.step:
+        selected = set(args.step)
+        unknown = selected - {title for title, _, _ in plan.steps}
+        if unknown:
+            parser.error("unknown step: " + ", ".join(sorted(unknown)))
+        plan.steps = [step for step in plan.steps if step[0] in selected]
     for note in plan.notes:
         print(f"note: {note}")
     if not plan.steps:

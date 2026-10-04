@@ -6,9 +6,9 @@ import Observation
 /// 作品ごとの無視だけをUserDefaultsへ保存する。解析結果・設定は端末内の一時状態。
 @MainActor
 @Observable
-final class TextCheckSession {
-    var isPresented = false
-    var allWork = true {
+public final class TextCheckSession {
+    public var isPresented = false
+    public var allWork = true {
         didSet {
             if oldValue != allWork {
                 invalidate()
@@ -16,7 +16,7 @@ final class TextCheckSession {
         }
     }
 
-    var excludeDialogue = false {
+    public var excludeDialogue = false {
         didSet {
             if oldValue != excludeDialogue {
                 invalidate()
@@ -24,19 +24,19 @@ final class TextCheckSession {
         }
     }
 
-    private(set) var isChecking = false
-    private(set) var hasChecked = false
-    private(set) var scope = ""
-    private(set) var ignored: [String: String] = [:]
-    private(set) var results: [TextCheckIssue] = []
-    var message: String?
+    public private(set) var isChecking = false
+    public private(set) var hasChecked = false
+    public private(set) var scope = ""
+    public private(set) var ignored: [String: String] = [:]
+    public private(set) var results: [TextCheckIssue] = []
+    public var message: String?
     private var workID: UUID?
     private var snapshot: NovelDocument?
     private var revision = UUID()
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private var worker: Task<[TextCheckIssue], Never>?
 
-    init(defaults: UserDefaults) {
+    public init(defaults: UserDefaults) {
         self.defaults = defaults
     }
 
@@ -44,7 +44,7 @@ final class TextCheckSession {
         workID.map { "fuminiwa.textcheck.ignored.\($0.uuidString.lowercased())" }
     }
 
-    var visibleIssues: [TextCheckIssue] {
+    public var visibleIssues: [TextCheckIssue] {
         results.compactMap { issue in
             guard ignored[issue.id] == nil else { return nil }
             let occurrences = issue.occurrences.filter { ignored[Self.occurrenceKey(issue, $0)] == nil }
@@ -54,26 +54,26 @@ final class TextCheckSession {
         }
     }
 
-    var isEmpty: Bool {
+    public var isEmpty: Bool {
         visibleIssues.isEmpty
     }
 
-    var orderedEpisodeIDs: [EpisodeID] {
+    public var orderedEpisodeIDs: [EpisodeID] {
         snapshot?.chapters.flatMap { $0.episodes.map(\.id) } ?? []
     }
 
-    var count: Int {
+    public var count: Int {
         visibleIssues.reduce(0) { $0 + $1.occurrences.count }
     }
 
-    func bind(workID: UUID?, scope: String) {
+    public func bind(workID: UUID?, scope: String) {
         guard self.workID != workID || self.scope != scope else { return }
         invalidate()
         self.workID = workID; self.scope = scope
         ignored = ignoredKey.flatMap { defaults.dictionary(forKey: $0) as? [String: String] } ?? [:]
     }
 
-    func synchronize(document: NovelDocument, workID: UUID?, scope: String) {
+    public func synchronize(document: NovelDocument, workID: UUID?, scope: String) {
         bind(workID: workID, scope: scope)
         if let snapshot, snapshot.chapters != document.chapters || snapshot.characters != document.characters {
             invalidate()
@@ -81,13 +81,13 @@ final class TextCheckSession {
         }
     }
 
-    func invalidate() {
+    public func invalidate() {
         worker?.cancel(); worker = nil; revision = UUID()
         results = []; snapshot = nil; isChecking = false; hasChecked = false; message = nil
     }
 
-    func check(document: NovelDocument, workID: UUID, scope: String, episodeID: EpisodeID?,
-               checker: TextChecker = TextChecker(), validate: @MainActor () -> Bool) async {
+    public func check(document: NovelDocument, workID: UUID, scope: String, episodeID: EpisodeID?,
+                      checker: TextChecker = TextChecker(), validate: @MainActor () -> Bool) async {
         bind(workID: workID, scope: scope)
         invalidate()
         snapshot = document
@@ -103,14 +103,14 @@ final class TextCheckSession {
         results = value; hasChecked = true
     }
 
-    func ignore(_ issue: TextCheckIssue, occurrence: TextCheckOccurrence? = nil) {
+    public func ignore(_ issue: TextCheckIssue, occurrence: TextCheckOccurrence? = nil) {
         guard workID != nil, results.contains(where: { $0.id == issue.id }) else { return }
         let key = occurrence.map { Self.occurrenceKey(issue, $0) } ?? issue.id
         ignored[key] = occurrence.map { "\(issue.title) · \($0.result.episodeTitle) · \($0.match.context)" } ?? issue.title
         persistIgnored()
     }
 
-    func restoreIgnored(_ key: String) {
+    public func restoreIgnored(_ key: String) {
         ignored.removeValue(forKey: key); persistIgnored()
     }
 
@@ -124,7 +124,7 @@ final class TextCheckSession {
         "\(issue.id):\(occurrence.id):\(occurrence.match.context)"
     }
 
-    func prefillReplacement(_ issue: TextCheckIssue, search: WorkSearchSession, expectedScope: String) -> Bool {
+    public func prefillReplacement(_ issue: TextCheckIssue, search: WorkSearchSession, expectedScope: String) -> Bool {
         guard scope == expectedScope, hasChecked, visibleIssues.contains(where: { $0.id == issue.id }),
               let prefill = issue.replacement else { return false }
         search.query = prefill.query; search.replacement = prefill.replacement

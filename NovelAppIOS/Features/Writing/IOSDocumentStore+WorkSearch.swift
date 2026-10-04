@@ -2,6 +2,7 @@ import EditorKit
 import Foundation
 import NovelCore
 import NovelTextAnalysis
+import NovelWorkspace
 
 extension IOSDocumentStore {
     var workSearchScope: String {
