@@ -222,12 +222,11 @@ extension AppState {
 
     /// 世界観ノートを追加し、追加したノートを選択する。
     func addWorldNote() {
-        guard permitsDocumentInteraction else { return }
-        let note = WorldNote(title: "")
-        document.worldNotes.append(note)
-        selectedWorldNoteID = note.id
-        saveCoordinator.markDirty()
-        flushSaveImmediately()
+        guard let id = projectFeatureCommands(.flushNow).addWorldNote(
+            WorldNote(title: ""),
+            expectedSession: documentSessionToken
+        ) else { return }
+        selectedWorldNoteID = id
     }
 
     /// 世界観ノートを選択する。選択前の本文はdidChangeでモデルへ反映済みとする。
@@ -241,12 +240,9 @@ extension AppState {
 
     /// 世界観ノートのタイトルを更新する。空タイトルは編集中の値として許可する。
     func updateWorldNoteTitle(_ title: String, for id: WorldNoteID) {
-        guard permitsDocumentInteraction else { return }
-        guard let index = document.worldNotes.firstIndex(where: { $0.id == id }),
-              document.worldNotes[index].title != title else { return }
-        document.worldNotes[index].title = title
-        saveCoordinator.markDirty()
-        saveCoordinator.scheduleDebouncedSave()
+        guard var note = document.worldNotes.first(where: { $0.id == id }) else { return }
+        note.title = title
+        projectFeatureCommands(.debounced).updateWorldNote(note, expectedSession: documentSessionToken)
     }
 
     /// 世界観ノートの本文を更新する。モデル反映は即時、保存だけをデバウンスする。
@@ -255,39 +251,37 @@ extension AppState {
         for id: WorldNoteID,
         expectedSession: WorkspaceSessionToken? = nil
     ) {
-        guard permitsEditorSynchronization(expectedSession: expectedSession) else { return }
-        guard let index = document.worldNotes.firstIndex(where: { $0.id == id }),
-              document.worldNotes[index].content != content else { return }
-        document.worldNotes[index].content = content
-        saveCoordinator.markDirty()
-        saveCoordinator.scheduleDebouncedSave()
+        guard var note = document.worldNotes.first(where: { $0.id == id }) else { return }
+        note.content = content
+        projectFeatureCommands(.debounced).updateWorldNote(
+            note,
+            expectedSession: expectedSession ?? documentSessionToken
+        )
     }
 
     /// 世界観ノートを削除し、隣接ノートへ選択を移す。
     @discardableResult
     func deleteWorldNote(id: WorldNoteID, expectedSession: WorkspaceSessionToken? = nil) -> Bool {
-        guard permitsMutation(expectedSession: expectedSession) else { return false }
-        guard let index = document.worldNotes.firstIndex(where: { $0.id == id }) else { return false }
-        var replacement = document
-        replacement.worldNotes.remove(at: index)
-        applyOwnerRemoval(replacement)
+        guard let index = document.worldNotes.firstIndex(where: { $0.id == id }),
+              projectFeatureCommands(.flushNow).deleteWorldNote(
+                  id: id,
+                  expectedSession: expectedSession ?? documentSessionToken
+              ) else { return false }
         if selectedWorldNoteID == id {
             let fallbackIndex = min(index, max(document.worldNotes.count - 1, 0))
             selectedWorldNoteID = document.worldNotes.indices.contains(fallbackIndex)
-                ? document.worldNotes[fallbackIndex].id
-                : nil
+                ? document.worldNotes[fallbackIndex].id : nil
         }
-        saveCoordinator.markDirty()
-        flushSaveImmediately()
         return true
     }
 
     /// 世界観ノートの並び順を更新する。
     func moveWorldNotes(fromOffsets: IndexSet, toOffset: Int) {
-        guard permitsDocumentInteraction else { return }
-        document.worldNotes.move(fromOffsets: fromOffsets, toOffset: toOffset)
-        saveCoordinator.markDirty()
-        flushSaveImmediately()
+        projectFeatureCommands(.flushNow).moveWorldNotes(
+            fromOffsets: fromOffsets,
+            toOffset: toOffset,
+            expectedSession: documentSessionToken
+        )
     }
 
     func ensureWorldNoteSelection() {

@@ -146,7 +146,7 @@ macOS toolbarの同期状態は形と色で示し、状態名はhelpとaccessibi
 
 ## D-111: 共通App層の段階移設（2026-10-04）
 
-共通処理をNovelKitの`NovelWorkspace`（非UI、@MainActorのservice／port）と`NovelWorkspaceUI`（共有SwiftUI）へ移す。`AppState`／`IOSDocumentStore`は薄いadapterとし、後続phaseで`WorkspaceHost` portを導入する。P1は移設・公開範囲・import・compositionの接続だけを変更し、挙動と既存テストを維持する。
+共通処理をNovelKitの`NovelWorkspace`（非UI、@MainActorのservice／port）と`NovelWorkspaceUI`（共有SwiftUI）へ移す。`AppState`／`IOSDocumentStore`は`WorkspaceHost` portを介する薄いadapterへ段階的に整理する。P1は移設・公開範囲・import・compositionの接続だけを変更し、挙動と既存テストを維持する。
 
 `NovelWorkspace`の依存許可はNovelCore、NovelSyncV2、NovelSyncV2Application、NovelAuth、NovelAuthApple、EditorKit、NovelWritingSupport、NovelWritingProgress、NovelTextAnalysis、NovelThumbnail、NovelTiming。必要なものだけを宣言し、NovelSyncV2Runtime、NovelSyncV2Store、NovelSyncV2PortableBridge、NovelStorageには依存しない。`NovelWorkspaceUI`はNovelWorkspace、NovelUI、NovelSyncV2Application、NovelExportへ依存する。compositionと明示Import／Export、AppKit／UIKit、scene／window／終了、background task、pasteboard／panel、MCP、MacSyncV2DocumentGate／ProductionDocumentGate、IOSPrivateWorkingCopyLocationはAppに残す。
 
@@ -155,6 +155,8 @@ P2完了：SyncPresentation、HistoryFetchControls／ConnectivityRecovery、Work
 P3完了：認証表示とローカル保存状態をNovelWorkspaceの共通値型へ統合（既存名はtypealias、iOSのdirtyはunsavedの互換名）。作品棚の文言とpreview fixtureをNovelWorkspaceUIへ、local projection＋remote catalog＋削除待ち／削除済みIDのmergeをNovelWorkspaceへ移した。D6により、macOSでも通常projectionから外れた削除待ち作品を最後の棚から保持し、「削除待ち・接続時に再試行」を表示して削除を再試行できる。削除済み作品はlocal行も一覧から消え、catalogや古い保持行で再表示しない。別account保留行、競合表示、タイトル自然順とWorkID同名順を維持する。refreshSnapshotLibraryのstartupStateはawait前の値で決めず、書込時の現在値で作品選択の表示を判断する。認証flow、checkpoint、conflict choice、identity tokenは変更しない。
 
 P4完了：app側のdocument sessionを`WorkspaceSessionToken { generation, workID, documentID }`へ統合し、iOSのdocumentIDはinstall済みdocumentから取得する。iOSの棚・ナビゲーション用IDはWorkIDから導出し、packageNameをtoken equalityに含めない。`NovelSyncV2Application.DocumentSessionToken`はgate固有のまま維持する。account scopeを全5fieldの`WorkspaceAccountScope`へ統合し、両OSの無効化ごとにgenerationを増やす（D1解決）。`SyncSessionController`のsession／account genericを除去し、共通`WorkspaceOperationContext`でWorkID／session／account／編集世代を照合する。remote taskの戻り値だけはOSごとのgenericを維持する。MacのAuthOperationGate、認証flow、各OSの取消policy、ローカル保存とdocument gateは変更しない。
+
+P5完了：最小の`WorkspaceHost` portと`ProjectFeatureCommands`へ人物／プロット／伏線／世界観ノートのCRUD・移動・session／章／move検査を集約し、両Appは既存APIのadapterにした。owner削除はthumbnail cleanup＋install後に保存通知する。D9は`.flushNow`／`.debounced`のpolicy parameterで解決し、Macの入力中debounceと操作・編集確定時flush、iOSのdebounceを維持する。選択・新規ノートタイトル・伏線の初期章はAppに残し、純粋テストはFakeWorkspaceHostへ移した。
 
 片方の意味を暗黙に採用しない。以下は後続phaseの統合方針であり、P1では適用しない。
 
@@ -168,7 +170,7 @@ P4完了：app側のdocument sessionを`WorkspaceSessionToken { generation, work
 | D6 | 棚mergeでpending-deletion行を保持し、削除済みlocal行を落とすのはiOSだけ | iOSを採用（2026-10-04オーナー決定、P3）。NovelWorkspaceのpure functionへ統合し、削除待ち行を保持、削除済みIDはlocal／remote／保持行から除外する |
 | D7 | safe-adoption gateが異なる | 統合せず注入 |
 | D8 | MacはauthOperationGate＋owner＋count、iOSはrequest window＋lease＋abandon recovery＋revoke retry＋old-epoch fail-closed | iOSモデルをcoreにする |
-| D9 | project feature編集後、Macは即flush、iOSはdebounce | policy parameterにする |
+| D9 | P5で解決。Macは操作時flush／入力中debounce、iOSはdebounce | 操作ごとのsave policy parameterで既存挙動を維持 |
 | D10 | committed-text取得はMacが注入closure、iOSがeditorCommandSession直接参照 | portを通す |
 | D11 | attachmentの表現・順序が異なる | 一つのset型へ統合 |
 
