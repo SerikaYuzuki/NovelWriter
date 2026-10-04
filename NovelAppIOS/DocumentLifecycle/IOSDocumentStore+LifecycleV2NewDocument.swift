@@ -20,7 +20,7 @@ extension IOSDocumentStore {
     ) async throws {
         guard !isSyncV2AccountTransitionActive,
               currentDocumentSessionToken == context.expectedSession,
-              syncV2ActiveWorkID == context.expectedWorkID,
+              workspaceModel.activeWorkID == context.expectedWorkID,
               matchesSyncAccount(context.expectedAccountScope) else {
             throw SyncV2ApplicationError.invalidRuntimeMode
         }
@@ -34,7 +34,7 @@ extension IOSDocumentStore {
         )
         guard !isSyncV2AccountTransitionActive,
               currentDocumentSessionToken == context.expectedSession,
-              syncV2ActiveWorkID == context.expectedWorkID,
+              workspaceModel.activeWorkID == context.expectedWorkID,
               matchesSyncAccount(context.expectedAccountScope) else {
             throw SyncV2ApplicationError.invalidRuntimeMode
         }
@@ -51,6 +51,6 @@ extension IOSDocumentStore {
             throw IOSPrivateWorkingCopyLocationError.unsafeRoot
         }
         applySnapshotSyncV2State(result.state)
-        saveState = .saved
+        workspaceModel.saveState = .saved
     }
 }

@@ -14,7 +14,7 @@ struct LibraryRefreshTransitionTests {
         let refresh = Task { await state.refreshSnapshotLibrary() }
         await gate.waitUntilSuspended()
         let created = await state.createNewDocument()
-        let session = state.documentSessionToken
+        let session = state.workspaceModel.documentSessionToken
         let workID = state.currentSnapshotSyncV2WorkID
         let wasReady = state.startupState.isReady
         gate.resume()
@@ -25,7 +25,7 @@ struct LibraryRefreshTransitionTests {
         #expect(state.startupState.isReady)
         #expect(workID != nil)
         #expect(state.currentSnapshotSyncV2WorkID == workID)
-        #expect(state.documentSessionToken == session)
+        #expect(state.workspaceModel.documentSessionToken == session)
     }
 
     @Test("a library refresh completing after a local work open keeps the editor ready")
@@ -45,7 +45,7 @@ struct LibraryRefreshTransitionTests {
         let refresh = Task { await state.refreshSnapshotLibrary() }
         await gate.waitUntilSuspended()
         let opened = await state.openLibraryWork(work)
-        let session = state.documentSessionToken
+        let session = state.workspaceModel.documentSessionToken
         let wasReady = state.startupState.isReady
         gate.resume()
         await refresh.value
@@ -54,8 +54,8 @@ struct LibraryRefreshTransitionTests {
         #expect(wasReady)
         #expect(state.startupState.isReady)
         #expect(state.currentSnapshotSyncV2WorkID == workID)
-        #expect(state.document.id == document.id)
-        #expect(state.documentSessionToken == session)
+        #expect(state.workspaceModel.document.id == document.id)
+        #expect(state.workspaceModel.documentSessionToken == session)
     }
 
     private func makeState() async throws -> (AppState, LibraryReadGate) {

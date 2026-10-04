@@ -44,13 +44,13 @@ struct ThumbnailCaptureTests {
         for dark in [false, true] {
             let scheme: ColorScheme = dark ? .dark : .light
             let suffix = dark ? "dark" : "light"
-            try await capture(LibraryView().environment(state).environment(DocumentPanelPresenter(appState: state))
+            try await capture(LibraryView().environment(state).environment(state.workspaceModel).environment(DocumentPanelPresenter(appState: state))
                 .preferredColorScheme(scheme), name: "shelf-\(suffix)", dark: dark, directory: directory)
             for section in [ProjectSection.projectInfo, .characters, .worldbuilding] {
                 state.workspaceSelection = WorkspaceSelection(section: section)
                 state.selectedCharacterID = character.id
                 state.selectedWorldNoteID = note.id
-                let view = NovelWorkbenchView().environment(state).environment(settings)
+                let view = NovelWorkbenchView().environment(state).environment(state.workspaceModel).environment(settings)
                     .environment(EditorSearchSession()).environment(state.editorCommandSession)
                     .environment(SnapshotMenuPresenter(appState: state)).environment(ExportPresenter(appState: state))
                     .environment(DocumentPanelPresenter(appState: state)).preferredColorScheme(scheme)

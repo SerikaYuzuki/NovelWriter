@@ -62,7 +62,12 @@ final class FakeWorkspaceHost: WorkspaceAttachmentHost, WorkspaceReplacementHost
         true
     }
 
-    var workspaceAttachments = WorkspaceAttachmentSet()
+    lazy var workspaceModel = WorkspaceModel(document: document, session: session, saveState: .unsaved)
+    var workspaceAttachments: WorkspaceAttachmentSet {
+        get { workspaceModel.attachmentSet }
+        set { workspaceModel.attachmentSet = newValue }
+    }
+
     var document = NovelDocument.newDocument()
     var session: WorkspaceSessionToken
     var permitsLocalMutation = true

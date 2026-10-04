@@ -21,13 +21,13 @@ struct IOSWorkspaceNavigationTests {
         let navigation = IOSWorkspaceNavigationCoordinator()
         navigation.showProjectHome(for: session)
         if fromEditor {
-            try navigation.showEditor(for: session, chapterID: #require(store.selectedChapterID),
-                                      episodeID: #require(store.selectedEpisodeID))
+            try navigation.showEditor(for: session, chapterID: #require(store.workspaceModel.selectedChapterID),
+                                      episodeID: #require(store.workspaceModel.selectedEpisodeID))
         }
         #expect(await navigation.returnToLibrary(using: store))
         #expect(navigation.path.isEmpty)
         #expect(store.currentDocumentSessionToken == session)
-        #expect(!store.isDocumentTransitionInProgress)
+        #expect(!store.workspaceModel.isDocumentTransitionInProgress)
         #expect(await store.openPrivateDocument(id: IOSPrivateDocumentID(workID: session.workID)))
     }
 
@@ -38,16 +38,16 @@ struct IOSWorkspaceNavigationTests {
         let store = IOSDocumentStore(userDefaults: environment.defaults, libraryRoot: environment.root)
         await store.bootstrap()
         #expect(await store.makeNewDocument())
-        let selectedWork = try #require(store.syncV2ActiveWorkID)
+        let selectedWork = try #require(store.workspaceModel.activeWorkID)
         #expect(await store.makeNewDocument())
-        #expect(store.syncV2ActiveWorkID != selectedWork)
+        #expect(store.workspaceModel.activeWorkID != selectedWork)
         if signedOut {
-            store.authUIState = .signedOut
+            store.workspaceModel.authUIState = .signedOut
         }
         let navigation = IOSWorkspaceNavigationCoordinator()
         #expect(await navigation.openLibraryWork(selectedWork, using: store))
         let session = try #require(store.currentDocumentSessionToken)
-        #expect(store.syncV2ActiveWorkID == selectedWork)
+        #expect(store.workspaceModel.activeWorkID == selectedWork)
         #expect(navigation.path == [.projectHome(session: session)])
         #expect(store.snapshotSyncV2RemoteOnlyOpenTask == nil)
     }
@@ -190,11 +190,11 @@ struct IOSWorkspaceNavigationTests {
         )
         await store.bootstrap()
         #expect(await store.makeNewDocument())
-        let chapterID = try #require(store.selectedChapterID)
-        let episodeID = try #require(store.selectedEpisodeID)
+        let chapterID = try #require(store.workspaceModel.selectedChapterID)
+        let episodeID = try #require(store.workspaceModel.selectedEpisodeID)
         let session = try #require(store.currentDocumentSessionToken)
 
-        let host = UIHostingController(rootView: IOSEditorPane(store: store, userDefaults: store.userDefaults))
+        let host = UIHostingController(rootView: IOSEditorPane(store: store, userDefaults: store.userDefaults).environment(store.workspaceModel))
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 430, height: 932))
         window.rootViewController = host
         host.view.frame = window.bounds
@@ -215,7 +215,7 @@ struct IOSWorkspaceNavigationTests {
         beginMarkedText(markedText, in: textView)
 
         #expect(textView.markedTextRange != nil)
-        #expect(store.document.episode(episodeID)?.episode.content != textView.text)
+        #expect(store.workspaceModel.document.episode(episodeID)?.episode.content != textView.text)
 
         let didSynchronize = IOSWorkspaceEditorSynchronizer.synchronize(
             store: store,
@@ -228,7 +228,7 @@ struct IOSWorkspaceNavigationTests {
 
         #expect(didSynchronize)
         #expect(textView.markedTextRange == nil)
-        #expect(store.document.episode(episodeID)?.episode.content == textView.text)
+        #expect(store.workspaceModel.document.episode(episodeID)?.episode.content == textView.text)
         #expect(textView.text.hasSuffix(markedText))
     }
 
@@ -242,14 +242,14 @@ struct IOSWorkspaceNavigationTests {
         )
         await store.bootstrap()
         #expect(await store.makeNewDocument())
-        let chapterID = try #require(store.selectedChapterID)
-        let firstEpisodeID = try #require(store.selectedEpisodeID)
+        let chapterID = try #require(store.workspaceModel.selectedChapterID)
+        let firstEpisodeID = try #require(store.workspaceModel.selectedEpisodeID)
         store.addEpisode()
-        let secondEpisodeID = try #require(store.selectedEpisodeID)
+        let secondEpisodeID = try #require(store.workspaceModel.selectedEpisodeID)
         store.selectChapter(chapterID)
         store.selectEpisode(firstEpisodeID)
 
-        let host = UIHostingController(rootView: IOSEditorPane(store: store, userDefaults: store.userDefaults))
+        let host = UIHostingController(rootView: IOSEditorPane(store: store, userDefaults: store.userDefaults).environment(store.workspaceModel))
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 1024, height: 1366))
         window.rootViewController = host
         host.view.frame = window.bounds
@@ -269,7 +269,7 @@ struct IOSWorkspaceNavigationTests {
         let markedText = "切替直前"
         beginMarkedText(markedText, in: textView)
         #expect(textView.markedTextRange != nil)
-        #expect(store.document.episode(firstEpisodeID)?.episode.content != textView.text)
+        #expect(store.workspaceModel.document.episode(firstEpisodeID)?.episode.content != textView.text)
 
         let didChangeSelection = IOSWritingEditorIdentityBoundary(store: store).perform {
             store.selectChapter(chapterID)
@@ -278,8 +278,8 @@ struct IOSWorkspaceNavigationTests {
 
         #expect(didChangeSelection)
         #expect(textView.markedTextRange == nil)
-        #expect(store.document.episode(firstEpisodeID)?.episode.content.hasSuffix(markedText) == true)
-        #expect(store.selectedEpisodeID == secondEpisodeID)
+        #expect(store.workspaceModel.document.episode(firstEpisodeID)?.episode.content.hasSuffix(markedText) == true)
+        #expect(store.workspaceModel.selectedEpisodeID == secondEpisodeID)
     }
 
     private func beginMarkedText(_ markedText: String, in textView: UITextView) {

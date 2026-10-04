@@ -6,7 +6,7 @@ import NovelWorkspace
 
 extension IOSDocumentStore: WorkspaceReplacementHost {
     var workSearchScope: String {
-        "\(String(describing: currentDocumentSessionToken))-\(snapshotSyncV2AccountScope)-\(String(describing: syncV2ActiveWorkID))"
+        "\(String(describing: currentDocumentSessionToken))-\(snapshotSyncV2AccountScope)-\(String(describing: workspaceModel.activeWorkID))"
     }
 
     var episodeHistoryCurrentBody: String? {
@@ -21,8 +21,8 @@ extension IOSDocumentStore: WorkspaceReplacementHost {
     func episodeRestoreHost(episodeID: EpisodeID) -> WorkReplacementHost {
         let host = workReplacementHost
         let allowed = { [self] in
-            guard selectedEpisodeID == episodeID, document.episode(episodeID) != nil else { return false }
-            return host.validate() && snapshotSyncConflict == nil
+            guard workspaceModel.selectedEpisodeID == episodeID, workspaceModel.document.episode(episodeID) != nil else { return false }
+            return host.validate() && workspaceModel.syncConflict == nil
                 && captureCommittedText() != .compositionInProgress
         }
         return WorkReplacementHost(scope: host.scope, validate: allowed, document: host.document,
@@ -34,11 +34,11 @@ extension IOSDocumentStore: WorkspaceReplacementHost {
     }
 
     func checkpointBeforeReplacement() async -> Bool {
-        await checkpointSnapshotSyncV2(document, reason: .explicit)
+        await checkpointSnapshotSyncV2(workspaceModel.document, reason: .explicit)
     }
 
     var replacementInteractionAllowed: Bool {
-        !isDocumentTransitionInProgress && !syncV2AccountTransitionInProgress && syncV2KeepBothPendingWorkID == nil
+        !workspaceModel.isDocumentTransitionInProgress && !syncV2AccountTransitionInProgress && workspaceModel.keepBothPendingWorkID == nil
     }
 
     var selectedEpisodeEditorActive: Bool {
@@ -73,7 +73,7 @@ extension IOSDocumentStore: WorkspaceReplacementHost {
                              expectedScope: String) async -> Bool {
         guard workSearchScope == expectedScope,
               await selectEpisodeAfterDeviceSyncDeparture(chapterID: chapterID, episodeID: episodeID),
-              workSearchScope == expectedScope, let current = document.episode(episodeID)?.episode.content,
+              workSearchScope == expectedScope, let current = workspaceModel.document.episode(episodeID)?.episode.content,
               WorkTextSearch.sameText(current, source) else { return false }
         workTextSelectionRequest = EditorSelectionRequest(range: range)
         workTextSelectionToken = currentEpisodeEditingToken

@@ -26,6 +26,7 @@ struct IOSWorldbuildingFeatureView: View {
 }
 
 struct IOSWorldNoteOutlineView: View {
+    @Environment(WorkspaceModel.self) private var workspace
     let store: IOSDocumentStore
     @Binding var selection: WorldNoteID?
     let expectedSession: WorkspaceSessionToken?
@@ -35,7 +36,7 @@ struct IOSWorldNoteOutlineView: View {
 
     var body: some View {
         List {
-            ForEach(store.document.worldNotes) { note in
+            ForEach(workspace.document.worldNotes) { note in
                 noteRow(note)
             }
             .onDelete(perform: requestDeletion)
@@ -49,7 +50,7 @@ struct IOSWorldNoteOutlineView: View {
             }
         }
         .overlay {
-            if store.document.worldNotes.isEmpty {
+            if workspace.document.worldNotes.isEmpty {
                 ContentUnavailableView {
                     Label("世界観ノートがありません", systemImage: "globe.asia.australia")
                 } actions: {
@@ -129,7 +130,7 @@ struct IOSWorldNoteOutlineView: View {
 
     private func requestDeletion(at offsets: IndexSet) {
         let ids = offsets.compactMap { index in
-            store.document.worldNotes.indices.contains(index) ? store.document.worldNotes[index].id : nil
+            workspace.document.worldNotes.indices.contains(index) ? workspace.document.worldNotes[index].id : nil
         }
         guard !ids.isEmpty, let expectedSession else { return }
         deletionRequest = IOSWorldNoteDeletionRequest(expectedSession: expectedSession, noteIDs: ids)
@@ -158,6 +159,7 @@ struct IOSWorldNoteOutlineView: View {
 }
 
 struct IOSWorldNoteDetailView: View {
+    @Environment(WorkspaceModel.self) private var workspace
     let store: IOSDocumentStore
     let noteID: WorldNoteID?
     let expectedSession: WorkspaceSessionToken?
@@ -175,7 +177,7 @@ struct IOSWorldNoteDetailView: View {
                 ContentUnavailableView {
                     Label("世界観ノートが選択されていません", systemImage: "globe.asia.australia")
                 } description: {
-                    if !store.document.worldNotes.isEmpty {
+                    if !workspace.document.worldNotes.isEmpty {
                         Text("一覧から世界観ノートを選択してください。")
                     }
                 }
@@ -205,7 +207,7 @@ struct IOSWorldNoteDetailView: View {
 
     private var selectedNote: WorldNote? {
         guard let noteID else { return nil }
-        return store.document.worldNotes.first(where: { $0.id == noteID })
+        return workspace.document.worldNotes.first(where: { $0.id == noteID })
     }
 
     private func noteForm(_ note: WorldNote) -> some View {
@@ -251,10 +253,10 @@ struct IOSWorldNoteDetailView: View {
     ) -> Binding<Value> {
         Binding(
             get: {
-                store.document.worldNotes.first(where: { $0.id == id })?[keyPath: keyPath] ?? fallback
+                workspace.document.worldNotes.first(where: { $0.id == id })?[keyPath: keyPath] ?? fallback
             },
             set: { newValue in
-                guard var note = store.document.worldNotes.first(where: { $0.id == id }) else { return }
+                guard var note = workspace.document.worldNotes.first(where: { $0.id == id }) else { return }
                 guard let expectedSession else { return }
                 note[keyPath: keyPath] = newValue
                 _ = store.updateWorldNote(note, expectedSession: expectedSession)

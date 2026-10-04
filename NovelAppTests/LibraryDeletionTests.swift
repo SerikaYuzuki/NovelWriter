@@ -33,7 +33,7 @@ struct LibraryDeletionTests {
         await state.refreshSnapshotLibrary()
         let work = try #require(state.snapshotSyncLibraryWorks.first)
         if dirty {
-            state.document.title = "last unsaved edit"
+            state.workspaceModel.document.title = "last unsaved edit"
             state.markDocumentDirty()
         }
         #expect(await state.deleteLibraryWork(work, accountScope: state.snapshotSyncV2AccountScopeToken))

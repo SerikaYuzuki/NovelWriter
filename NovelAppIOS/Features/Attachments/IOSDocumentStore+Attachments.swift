@@ -16,13 +16,13 @@ extension IOSDocumentStore {
                   validateCurrentDocumentSession(expectedSession) else { return false }
 
             guard let application = snapshotSyncV2Application,
-                  let workID = syncV2ActiveWorkID else { return false }
+                  let workID = workspaceModel.activeWorkID else { return false }
             let expectedAccountScope = snapshotSyncV2AccountScope
             do {
                 let opened = try await application.openLocal(workID: workID)
                 guard !syncV2AccountTransitionInProgress,
                       matchesSyncAccount(expectedAccountScope),
-                      syncV2ActiveWorkID == workID,
+                      workspaceModel.activeWorkID == workID,
                       opened.workID == workID,
                       validateCurrentDocumentSession(expectedSession) else { return false }
                 return replaceV2Attachments(opened.attachments)
@@ -47,7 +47,7 @@ extension IOSDocumentStore {
                   synchronizeActiveEditorForAttachmentMutation(expectedSession: expectedSession) else { return nil }
 
             guard snapshotSyncV2Application != nil,
-                  let expectedWorkID = syncV2ActiveWorkID else { return nil }
+                  let expectedWorkID = workspaceModel.activeWorkID else { return nil }
             let expectedAccountScope = snapshotSyncV2AccountScope
             return await importV2Attachment(
                 from: sourceURL,
@@ -70,11 +70,11 @@ extension IOSDocumentStore {
                   !syncV2AccountTransitionInProgress, !Task.isCancelled,
                   expectedAccountScope == nil || matchesSyncAccount(expectedAccountScope),
                   validateCurrentDocumentSession(attachmentSession),
-                  attachments.contains(where: { $0.id == attachment.id }),
+                  workspaceModel.attachments.contains(where: { $0.id == attachment.id }),
                   synchronizeActiveEditorForAttachmentMutation(expectedSession: attachmentSession) else { return false }
 
             guard snapshotSyncV2Application != nil,
-                  let expectedWorkID = syncV2ActiveWorkID else { return false }
+                  let expectedWorkID = workspaceModel.activeWorkID else { return false }
             let expectedAccountScope = snapshotSyncV2AccountScope
             return await deleteV2Attachment(
                 attachment,
@@ -90,8 +90,8 @@ extension IOSDocumentStore {
         expectedSession: WorkspaceSessionToken
     ) -> URL? {
         guard matchesCurrentDocumentSession(expectedSession),
-              attachments.contains(where: { $0.id == attachment.id }) else { return nil }
-        guard let bytes = workspaceAttachments[attachment.fileName]?.bytes else { return nil }
+              workspaceModel.attachments.contains(where: { $0.id == attachment.id }) else { return nil }
+        guard let bytes = workspaceModel.attachmentSet[attachment.fileName]?.bytes else { return nil }
         let safeName = attachment.fileName.replacingOccurrences(
             of: "[^A-Za-z0-9._-]",
             with: "_",
@@ -113,11 +113,11 @@ extension IOSDocumentStore {
         switch editorCommandSession.captureActiveCommittedText() {
         case let .captured(text):
             guard validateCurrentDocumentSession(expectedSession) else { return false }
-            guard let chapterID = selectedChapterID, let episodeID = selectedEpisodeID else {
+            guard let chapterID = workspaceModel.selectedChapterID, let episodeID = workspaceModel.selectedEpisodeID else {
                 operationErrorMessage = "表示中の本文を安全に保存できないため、資料操作を中止しました。"
                 return false
             }
-            guard document.episode(episodeID)?.chapterID == chapterID else {
+            guard workspaceModel.document.episode(episodeID)?.chapterID == chapterID else {
                 operationErrorMessage = "表示中の本文を安全に保存できないため、資料操作を中止しました。"
                 return false
             }
@@ -144,7 +144,7 @@ extension IOSDocumentStore {
     }
 
     func installWorkspaceAttachments(_ replacement: WorkspaceAttachmentSet) {
-        workspaceAttachments = replacement
+        workspaceModel.attachmentSet = replacement
         replaceAttachments(replacement.attachments)
     }
 
@@ -160,7 +160,7 @@ extension IOSDocumentStore {
     ) async -> Attachment? {
         guard snapshotSyncV2Application != nil,
               !syncV2AccountTransitionInProgress,
-              syncV2ActiveWorkID == expectedWorkID,
+              workspaceModel.activeWorkID == expectedWorkID,
               matchesSyncAccount(expectedAccountScope),
               validateCurrentDocumentSession(expectedSession) else { return nil }
         let accessed = sourceURL.startAccessingSecurityScopedResource()
@@ -191,7 +191,7 @@ extension IOSDocumentStore {
     ) async -> Bool {
         guard snapshotSyncV2Application != nil,
               !syncV2AccountTransitionInProgress,
-              syncV2ActiveWorkID == expectedWorkID,
+              workspaceModel.activeWorkID == expectedWorkID,
               matchesSyncAccount(expectedAccountScope),
               validateCurrentDocumentSession(expectedSession) else { return false }
         return await attachmentCommands(
@@ -235,7 +235,7 @@ extension IOSDocumentStore {
 
     func currentV2Attachments() -> [SyncAttachment]? {
         // A metadata-only legacy install must still fail closed instead of saving missing bytes.
-        guard attachments == workspaceAttachments.attachments else { return nil }
-        return workspaceAttachments.records
+        guard workspaceModel.attachments == workspaceModel.attachmentSet.attachments else { return nil }
+        return workspaceModel.attachmentSet.records
     }
 }

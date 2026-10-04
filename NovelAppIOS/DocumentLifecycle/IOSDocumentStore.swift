@@ -182,7 +182,7 @@ final class IOSDocumentStore {
     var documentURL: URL
     var startupState: IOSStartupState = .loading
     var showsDocumentTransitionOverlay: Bool {
-        isDocumentTransitionInProgress && !isNavigationDepartureInProgress && !isRemoteAdoptionInProgress
+        workspaceModel.isDocumentTransitionInProgress && !isNavigationDepartureInProgress && !isRemoteAdoptionInProgress
     }
 
     var isRemoteAdoptionInProgress = false
@@ -216,13 +216,13 @@ final class IOSDocumentStore {
     #endif
 
     var snapshotSyncV2DisplayedConflictSelection: IOSSnapshotSyncV2ConflictSelection? {
-        guard let workID = syncV2ActiveWorkID,
+        guard let workID = workspaceModel.activeWorkID,
               let session = currentDocumentSessionToken,
-              let conflict = snapshotSyncConflict else { return nil }
+              let conflict = workspaceModel.syncConflict else { return nil }
         return IOSSnapshotSyncV2ConflictSelection(
             workID: workID,
             session: session,
-            editGeneration: localEditGeneration,
+            editGeneration: workspaceModel.editGeneration,
             accountScope: snapshotSyncV2AccountScope,
             conflict: conflict
         )
@@ -232,9 +232,9 @@ final class IOSDocumentStore {
         let serverInstanceID: String?
         #if FUMINIWA_TEST_COMPOSITION
         serverInstanceID = testServerInstanceIDOverride
-            ?? authSession?.serverInstanceID.uuidString.lowercased()
+            ?? workspaceModel.authSession?.serverInstanceID.uuidString.lowercased()
         #else
-        serverInstanceID = authSession?.serverInstanceID.uuidString.lowercased()
+        serverInstanceID = workspaceModel.authSession?.serverInstanceID.uuidString.lowercased()
         #endif
         return workspaceModel.accountScope(serverInstanceID: serverInstanceID)
     }
@@ -338,7 +338,7 @@ final class IOSDocumentStore {
         timing: timing,
         currentDocument: { [weak self] in
             guard let self, startupState == .ready else { return nil }
-            return document
+            return workspaceModel.document
         },
         saveOperation: { [weak self] document in
             guard let self else { throw CancellationError() }
@@ -346,10 +346,10 @@ final class IOSDocumentStore {
         },
         saveEventHandler: WorkspaceSaveEventProjection.handler(host: self) { [weak self] event in
             switch event {
-            case .dirty: self?.saveState = .dirty
-            case .saving: self?.saveState = .saving
-            case .saved: self?.saveState = .saved
-            case .failed: self?.saveState = .failed
+            case .dirty: self?.workspaceModel.saveState = .dirty
+            case .saving: self?.workspaceModel.saveState = .saving
+            case .saved: self?.workspaceModel.saveState = .saved
+            case .failed: self?.workspaceModel.saveState = .failed
             }
         }
     )
@@ -402,7 +402,7 @@ final class IOSDocumentStore {
         // A normal v2 work has no filesystem identity; WorkID + SQLite is the
         // sole durable identity and no per-work directory is created here.
         documentURL = workingCopy.root.standardizedFileURL
-        authUIState = auth.uiState
+        workspaceModel.authUIState = auth.uiState
         if workingCopy.location == nil {
             failStartupForDeviceSyncSafety()
         }

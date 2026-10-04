@@ -6,15 +6,15 @@ import NovelWorkspaceUI
 
 extension IOSDocumentStore: WorkspaceFeedbackHost {
     var assistantFeedback: [AssistantFeedback] {
-        attachments.compactMap { attachment in
-            guard let bytes = workspaceAttachments[attachment.fileName]?.bytes else { return nil }
+        workspaceModel.attachments.compactMap { attachment in
+            guard let bytes = workspaceModel.attachmentSet[attachment.fileName]?.bytes else { return nil }
             return AssistantFeedback.decode(fileName: attachment.fileName, bytes: bytes)
         }.sorted { $0.createdAt == $1.createdAt ? $0.id.uuidString < $1.id.uuidString : $0.createdAt > $1.createdAt }
     }
 
     var referenceAttachments: [Attachment] {
         let feedbackNames = Set(assistantFeedback.map(\.fileName))
-        return attachments.filter { !feedbackNames.contains($0.fileName) && !(ThumbnailOwner(fileName: $0.fileName)?.exists(in: document) ?? false) }
+        return workspaceModel.attachments.filter { !feedbackNames.contains($0.fileName) && !(ThumbnailOwner(fileName: $0.fileName)?.exists(in: workspaceModel.document) ?? false) }
     }
 
     func saveAssistantFeedback(_ feedback: AssistantFeedback, session: WorkspaceSessionToken,
@@ -38,7 +38,7 @@ extension IOSDocumentStore: WorkspaceFeedbackHost {
                                  account: WorkspaceAccountScope) async -> Bool {
         guard currentDocumentSessionToken == session, matchesSyncAccount(account),
               assistantFeedback.contains(feedback),
-              let attachment = attachments.first(where: { $0.fileName == feedback.fileName }) else { return false }
+              let attachment = workspaceModel.attachments.first(where: { $0.fileName == feedback.fileName }) else { return false }
         return await deleteAttachment(attachment, expectedSession: session, expectedAccountScope: account)
     }
 }

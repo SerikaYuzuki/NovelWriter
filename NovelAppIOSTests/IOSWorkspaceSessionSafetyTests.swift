@@ -54,8 +54,8 @@ struct IOSWorkspaceSessionSafetyTests {
         await store.bootstrap()
         #expect(await store.makeNewDocument())
         let oldSession = try #require(store.currentDocumentSessionToken)
-        let chapterID = try #require(store.selectedChapterID)
-        let episodeID = try #require(store.selectedEpisodeID)
+        let chapterID = try #require(store.workspaceModel.selectedChapterID)
+        let episodeID = try #require(store.workspaceModel.selectedEpisodeID)
         #expect(await store.saveNow())
 
         #expect(await store.makeNewDocument())
@@ -67,7 +67,7 @@ struct IOSWorkspaceSessionSafetyTests {
         let harness = try await makeEditorHarness(store: store)
         defer { harness.cleanup() }
         beginMarkedText("新しいAの変換中", in: harness.textView)
-        let modelTextBeforeDeparture = store.document.episode(episodeID)?.episode.content
+        let modelTextBeforeDeparture = store.workspaceModel.document.episode(episodeID)?.episode.content
 
         let didIgnore = IOSWorkspaceEditorSynchronizer.synchronize(
             store: store,
@@ -80,7 +80,7 @@ struct IOSWorkspaceSessionSafetyTests {
 
         #expect(didIgnore)
         #expect(harness.textView.markedTextRange != nil)
-        #expect(store.document.episode(episodeID)?.episode.content == modelTextBeforeDeparture)
+        #expect(store.workspaceModel.document.episode(episodeID)?.episode.content == modelTextBeforeDeparture)
         #expect(store.currentDocumentSessionToken == newSession)
     }
 
@@ -94,11 +94,11 @@ struct IOSWorkspaceSessionSafetyTests {
         )
         await store.bootstrap()
         #expect(await store.makeNewDocument())
-        let chapterID = try #require(store.selectedChapterID)
-        let episodeID = try #require(store.selectedEpisodeID)
+        let chapterID = try #require(store.workspaceModel.selectedChapterID)
+        let episodeID = try #require(store.workspaceModel.selectedEpisodeID)
         let oldToken = try #require(store.currentEpisodeEditingToken)
 
-        store.document.updateEpisodeContent("新しいremote本文", for: episodeID, in: chapterID)
+        store.workspaceModel.document.updateEpisodeContent("新しいremote本文", for: episodeID, in: chapterID)
         store.advanceEditorContentGeneration()
         store.updateEpisodeContent(
             "旧surfaceの遅延本文",
@@ -107,7 +107,7 @@ struct IOSWorkspaceSessionSafetyTests {
             expectedEditingToken: oldToken
         )
 
-        #expect(store.document.episode(episodeID)?.episode.content == "新しいremote本文")
+        #expect(store.workspaceModel.document.episode(episodeID)?.episode.content == "新しいremote本文")
         #expect(store.currentEpisodeEditingToken != oldToken)
     }
 
@@ -119,8 +119,8 @@ struct IOSWorkspaceSessionSafetyTests {
         await store.bootstrap()
         #expect(await store.makeNewDocument())
         let session = try #require(store.currentDocumentSessionToken)
-        let chapterID = try #require(store.selectedChapterID)
-        let episodeID = try #require(store.selectedEpisodeID)
+        let chapterID = try #require(store.workspaceModel.selectedChapterID)
+        let episodeID = try #require(store.workspaceModel.selectedEpisodeID)
         let scope = store.snapshotSyncV2AccountScope
         store.updateEpisodeContent("本文を保持", chapterID: chapterID, episodeID: episodeID)
         let token = store.currentEpisodeEditingToken
@@ -146,7 +146,7 @@ struct IOSWorkspaceSessionSafetyTests {
     }
 
     private func makeEditorHarness(store: IOSDocumentStore) async throws -> SessionEditorHarness {
-        let host = UIHostingController(rootView: IOSEditorPane(store: store, userDefaults: store.userDefaults))
+        let host = UIHostingController(rootView: IOSEditorPane(store: store, userDefaults: store.userDefaults).environment(store.workspaceModel))
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 430, height: 932))
         window.rootViewController = host
         host.view.frame = window.bounds

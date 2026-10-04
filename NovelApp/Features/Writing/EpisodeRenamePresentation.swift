@@ -13,7 +13,7 @@ struct EpisodeRenameRequest {
     init(episode: Episode, chapterID: ChapterID, appState: AppState) {
         episodeID = episode.id
         self.chapterID = chapterID
-        session = appState.documentSessionToken
+        session = appState.workspaceModel.documentSessionToken
         account = appState.snapshotSyncV2AccountScopeToken
         title = episode.title
     }
@@ -22,7 +22,7 @@ struct EpisodeRenameRequest {
     func apply(to appState: AppState) {
         let normalizedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalizedTitle.isEmpty,
-              appState.documentSessionToken == session,
+              appState.workspaceModel.documentSessionToken == session,
               appState.snapshotSyncV2AccountScopeToken == account else { return }
         appState.updateEpisodeTitle(normalizedTitle, for: episodeID, in: chapterID)
     }

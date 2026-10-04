@@ -1,4 +1,5 @@
 import NovelSyncV2
+import NovelSyncV2Application
 import NovelWorkspace
 import SwiftUI
 

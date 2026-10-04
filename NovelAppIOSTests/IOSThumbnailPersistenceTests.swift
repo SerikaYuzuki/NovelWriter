@@ -19,12 +19,12 @@ struct IOSThumbnailPersistenceTests {
         #expect(await store.makeNewDocument())
         let session = try #require(store.currentDocumentSessionToken)
         let application = try #require(store.snapshotSyncV2Application)
-        let work = try #require(store.syncV2ActiveWorkID)
+        let work = try #require(store.workspaceModel.activeWorkID)
         let account = store.snapshotSyncV2AccountScope
         let character = Character(name: "合成人物"), note = WorldNote(title: "合成世界", content: "合成内容")
-        store.document.characters = [character]
-        store.document.worldNotes = [note]
-        let cover = ThumbnailOwner(.work, store.document.id)
+        store.workspaceModel.document.characters = [character]
+        store.workspaceModel.document.worldNotes = [note]
+        let cover = ThumbnailOwner(.work, store.workspaceModel.document.id)
         let avatar = ThumbnailOwner(.character, character.id.rawValue)
         let world = ThumbnailOwner(.worldNote, note.id.rawValue)
         let orphan = ThumbnailOwner(.worldNote, UUID())
@@ -35,7 +35,7 @@ struct IOSThumbnailPersistenceTests {
         #expect(store.referenceAttachments.isEmpty)
         let current = try #require(store.currentV2Attachments())
         #expect(store.adoptV2AttachmentRecords(current + [.init(attachmentId: UUID(), fileName: orphan.fileName, bytes: bytes)]))
-        #expect(await store.checkpointSnapshotSyncV2(store.document))
+        #expect(await store.checkpointSnapshotSyncV2(store.workspaceModel.document))
         let host = try #require(store.writingAssistantHost)
         #expect(try host.capture().attachments.isEmpty)
         let before = try await application.openLocal(workID: work)
@@ -49,8 +49,8 @@ struct IOSThumbnailPersistenceTests {
         #expect(after.document?.characters.isEmpty == true)
         #expect(after.document?.worldNotes.isEmpty == true)
         #expect(store.referenceAttachments.contains { $0.fileName == orphan.fileName })
-        let edit = WritingEdit(workId: work.rawValue, documentId: store.document.id,
-                               changes: [.init(path: ["title"], before: .string(store.document.title), after: .string("AIからの合成編集"))])
+        let edit = WritingEdit(workId: work.rawValue, documentId: store.workspaceModel.document.id,
+                               changes: [.init(path: ["title"], before: .string(store.workspaceModel.document.title), after: .string("AIからの合成編集"))])
         try await host.apply(edit, .wholeWork)
         #expect(store.thumbnailData(cover) == bytes)
         #expect(store.thumbnailData(orphan) == bytes)

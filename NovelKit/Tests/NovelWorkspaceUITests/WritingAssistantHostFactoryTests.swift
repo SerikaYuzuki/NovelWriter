@@ -24,6 +24,9 @@ private final class FakeWritingHost: WorkspaceWritingHost {
 
     let userDefaults = UserDefaults()
     let assistantRequestCenter = AssistantRequestCenter()
+    lazy var workspaceModel = WorkspaceModel(document: document,
+                                             session: .init(generation: 0, documentID: document.id, workID: .init(UUID())),
+                                             saveState: .unsaved, assistantRequestCenter: assistantRequestCenter)
     let writingSyncScheduler = WritingSyncScheduler()
     let documentOperationGate = DocumentOperationGate()
     let editorCommandSession = EditorCommandSession()

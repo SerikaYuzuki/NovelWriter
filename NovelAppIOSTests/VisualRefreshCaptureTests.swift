@@ -23,22 +23,22 @@ struct IOSVisualRefreshCaptureTests {
         let character = NovelCore.Character(name: "白石 しおり", kana: "しらいし しおり", memo: "古い手紙を集めている。",
                                             colorHex: "#5077B0", role: "主人公", firstPerson: "私", personality: "静かだが好奇心は強い。")
         let note = WorldNote(title: "海辺の図書室", content: "波の音が聞こえる、小さな図書室。\n閉館後も窓辺には明かりが残る。")
-        store.document.title = "01 海辺の便り"
-        store.document.synopsis = "古い家に届いた一通の手紙から、忘れていた季節の記憶が動き始める。"
-        store.document.chapters[0].episodes[0].content = "雨が上がると、庭の葉が光っていた。"
-        store.document.characters = [character, .init(name: "風間 蓮", kana: "かざま れん", colorHex: "#5B9160", role: "司書")]
-        store.document.worldNotes = [note, .init(title: "潮風祭", content: "夏の終わりに開かれる祭り。")]
-        store.document.plotCards = [
+        store.workspaceModel.document.title = "01 海辺の便り"
+        store.workspaceModel.document.synopsis = "古い家に届いた一通の手紙から、忘れていた季節の記憶が動き始める。"
+        store.workspaceModel.document.chapters[0].episodes[0].content = "雨が上がると、庭の葉が光っていた。"
+        store.workspaceModel.document.characters = [character, .init(name: "風間 蓮", kana: "かざま れん", colorHex: "#5B9160", role: "司書")]
+        store.workspaceModel.document.worldNotes = [note, .init(title: "潮風祭", content: "夏の終わりに開かれる祭り。")]
+        store.workspaceModel.document.plotCards = [
             .init(title: "届いた手紙", memo: "差出人のない手紙が届く。\nしおりは図書室へ向かう。"),
             .init(title: "雨の図書室", memo: "窓辺で、見覚えのある筆跡を見つける。"),
             .init(title: "最後の便り", memo: "季節が変わる前に、返事を書く。")
         ]
-        store.document.flags = [.init(title: "青い封筒", note: "引き出しの奥に残された封筒。"),
-                                .init(title: "窓辺の合図", note: "灯りの意味が分かる。", isResolved: true)]
+        store.workspaceModel.document.flags = [.init(title: "青い封筒", note: "引き出しの奥に残された封筒。"),
+                                               .init(title: "窓辺の合図", note: "灯りの意味が分かる。", isResolved: true)]
         let image = try #require(UIImage(named: "FuminiwaBookSprout"))
         let bytes = try #require(image.jpegData(compressionQuality: 0.8))
         let session = try #require(store.currentDocumentSessionToken)
-        for owner in [ThumbnailOwner(.work, store.document.id), ThumbnailOwner(.character, character.id.rawValue), ThumbnailOwner(.worldNote, note.id.rawValue)] {
+        for owner in [ThumbnailOwner(.work, store.workspaceModel.document.id), ThumbnailOwner(.character, character.id.rawValue), ThumbnailOwner(.worldNote, note.id.rawValue)] {
             let encoded = try ThumbnailEncoder.encode(bytes, owner: owner)
             #expect(await store.setThumbnail(encoded, owner: owner, session: session, account: store.snapshotSyncV2AccountScope))
         }
@@ -49,17 +49,19 @@ struct IOSVisualRefreshCaptureTests {
                 let suffix = "\(dark ? "dark" : "light")-\(large ? "ax1" : "default")"
                 let screens: [(String, AnyView)] = [
                     ("work-home", AnyView(NavigationStack { IOSProjectHomeView(store: store, openWriting: {}, openProjectInfo: {}, openPlot: {},
-                                                                               openCharacters: {}, openWorldbuilding: {}, openFeedback: {}, openReferences: {}, openSettings: {}) })),
-                    ("work-info", AnyView(NavigationStack { IOSProjectInfoView(store: store) })),
-                    ("characters-list", AnyView(NavigationStack { IOSCharacterFeatureView(store: store) })),
-                    ("character-detail", AnyView(NavigationStack { IOSCharacterDetailView(store: store, characterID: character.id, expectedSession: session) })),
-                    ("world-list", AnyView(NavigationStack { IOSWorldbuildingFeatureView(store: store) })),
-                    ("world-detail", AnyView(NavigationStack { IOSWorldNoteDetailView(store: store, noteID: note.id, expectedSession: session) })),
-                    ("plot-iphone-flags", AnyView(NavigationStack { IOSPlotFeatureView(store: store) }.environment(\.horizontalSizeClass, .compact))),
-                    ("plot-ipad-flags", AnyView(NavigationStack { IOSPlotFeatureView(store: store) }.environment(\.horizontalSizeClass, .regular))),
+                                                                               openCharacters: {}, openWorldbuilding: {}, openFeedback: {}, openReferences: {}, openSettings: {})
+                            .environment(store.workspaceModel)
+                        })),
+                    ("work-info", AnyView(NavigationStack { IOSProjectInfoView(store: store).environment(store.workspaceModel) })),
+                    ("characters-list", AnyView(NavigationStack { IOSCharacterFeatureView(store: store).environment(store.workspaceModel) })),
+                    ("character-detail", AnyView(NavigationStack { IOSCharacterDetailView(store: store, characterID: character.id, expectedSession: session).environment(store.workspaceModel) })),
+                    ("world-list", AnyView(NavigationStack { IOSWorldbuildingFeatureView(store: store).environment(store.workspaceModel) })),
+                    ("world-detail", AnyView(NavigationStack { IOSWorldNoteDetailView(store: store, noteID: note.id, expectedSession: session).environment(store.workspaceModel) })),
+                    ("plot-iphone-flags", AnyView(NavigationStack { IOSPlotFeatureView(store: store).environment(store.workspaceModel) }.environment(\.horizontalSizeClass, .compact))),
+                    ("plot-ipad-flags", AnyView(NavigationStack { IOSPlotFeatureView(store: store).environment(store.workspaceModel) }.environment(\.horizontalSizeClass, .regular))),
                     ("crop-circle", AnyView(ThumbnailCropSheet(data: bytes, owner: ThumbnailOwner(.character, character.id.rawValue), onSave: { _ in }))),
                     ("crop-square", AnyView(ThumbnailCropSheet(data: bytes, owner: ThumbnailOwner(.worldNote, note.id.rawValue), onSave: { _ in }))),
-                    ("crop-cover", AnyView(ThumbnailCropSheet(data: bytes, owner: ThumbnailOwner(.work, store.document.id), onSave: { _ in })))
+                    ("crop-cover", AnyView(ThumbnailCropSheet(data: bytes, owner: ThumbnailOwner(.work, store.workspaceModel.document.id), onSave: { _ in })))
                 ]
                 for (name, view) in screens {
                     try await capture(view.preferredColorScheme(dark ? .dark : .light)
@@ -75,10 +77,10 @@ struct IOSVisualRefreshCaptureTests {
     }
 
     private func captureShelf(store: IOSDocumentStore, defaults: UserDefaults, directory: URL, dark: Bool, large: Bool) async throws {
-        let work = try #require(store.syncV2ActiveWorkID)
+        let work = try #require(store.workspaceModel.activeWorkID)
         let importing = WorkID(UUID())
         let failed = WorkID(UUID())
-        store.syncV2LibraryItems = [
+        store.workspaceModel.libraryRows = [
             .init(workID: work, title: "01 海辺の便り", availability: .localOnly, accountState: .unbound),
             .init(workID: WorkID(UUID()), title: "02 季節の記録", availability: .localOnly, accountState: .unbound),
             .init(workID: importing, title: "03 はじまりの庭", availability: .remoteOnly, accountState: .active),
@@ -86,11 +88,11 @@ struct IOSVisualRefreshCaptureTests {
         ]
         store.snapshotSyncV2RemoteOnlyOpeningWorkID = importing
         store.snapshotSyncV2RemoteOnlyOpenStartedAt = Date().addingTimeInterval(-16)
-        store.libraryImportPhases[importing] = ImportPhase(receivedBytes: 8_200_000, totalBytes: 19_000_000)
-        store.libraryImportFailures[failed] = .retryable(.lostResponse)
+        store.workspaceModel.libraryImportPhases[importing] = ImportPhase(receivedBytes: 8_200_000, totalBytes: 19_000_000)
+        store.workspaceModel.libraryImportFailures[failed] = .retryable(.lostResponse)
         for mode in [ShelfDisplay.grid, .list] {
             defaults.set(mode.rawValue, forKey: "library.display")
-            let root = NavigationStack { IOSLibraryView(store: store, openWork: { _ in }, makeNewDocument: {}, observesLibrary: false) }
+            let root = NavigationStack { IOSLibraryView(store: store, openWork: { _ in }, makeNewDocument: {}, observesLibrary: false).environment(store.workspaceModel) }
                 .defaultAppStorage(defaults).preferredColorScheme(dark ? .dark : .light)
                 .environment(\.dynamicTypeSize, large ? .accessibility1 : .large).tint(FuminiwaColor.accent.color)
             let suffix = "\(dark ? "dark" : "light")-\(large ? "ax1" : "default")"
@@ -100,13 +102,13 @@ struct IOSVisualRefreshCaptureTests {
         store.snapshotSyncV2RemoteOnlyOpeningWorkID = nil
         for mode in [ShelfDisplay.grid, .list] {
             defaults.set(mode.rawValue, forKey: "library.display")
-            let root = NavigationStack { IOSLibraryView(store: store, openWork: { _ in }, makeNewDocument: {}, observesLibrary: false) }
+            let root = NavigationStack { IOSLibraryView(store: store, openWork: { _ in }, makeNewDocument: {}, observesLibrary: false).environment(store.workspaceModel) }
                 .defaultAppStorage(defaults).preferredColorScheme(dark ? .dark : .light)
                 .environment(\.dynamicTypeSize, large ? .accessibility1 : .large).tint(FuminiwaColor.accent.color)
             try await capture(root, size: CGSize(width: 440, height: 1200), dark: dark,
                               url: directory.appendingPathComponent("ios-shelf-\(mode.rawValue)-retry-enabled-\(dark ? "dark" : "light")-\(large ? "ax1" : "default").png"))
         }
-        store.libraryImportFailures = [:]
+        store.workspaceModel.libraryImportFailures = [:]
     }
 
     private func scrollViews(in view: UIView) -> [UIScrollView] {

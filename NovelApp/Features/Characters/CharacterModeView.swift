@@ -7,6 +7,7 @@ import NovelWorkspace
 import SwiftUI
 
 struct CharacterListView: View {
+    @Environment(WorkspaceModel.self) private var workspace
     @Environment(AppState.self) private var appState
 
     @State private var characterPendingDeletion: SessionBoundValue<NovelCore.Character>?
@@ -29,7 +30,7 @@ struct CharacterListView: View {
             }
         }
         .overlay {
-            if appState.document.characters.isEmpty {
+            if workspace.document.characters.isEmpty {
                 ContentUnavailableView {
                     Label("登場人物がありません", systemImage: "person.2")
                 } actions: {
@@ -43,7 +44,7 @@ struct CharacterListView: View {
             guard let character = appState.selectedCharacter else { return }
             characterPendingDeletion = SessionBoundValue(
                 value: character,
-                session: appState.documentSessionToken
+                session: workspace.documentSessionToken
             )
         }
         .confirmationDialog(
@@ -61,8 +62,8 @@ struct CharacterListView: View {
     }
 
     private var sessionBoundCharacters: [SessionBoundValue<NovelCore.Character>] {
-        let session = appState.documentSessionToken
-        return appState.document.characters.map {
+        let session = workspace.documentSessionToken
+        return workspace.document.characters.map {
             SessionBoundValue(value: $0, session: session)
         }
     }
@@ -87,6 +88,7 @@ struct CharacterListView: View {
 }
 
 struct CharacterDetailView: View {
+    @Environment(WorkspaceModel.self) private var workspace
     @Environment(AppState.self) private var appState
 
     let onAppearanceJump: (CharacterAppearance) -> Void
@@ -96,7 +98,7 @@ struct CharacterDetailView: View {
             ContentUnavailableView {
                 Label("登場人物が選択されていません", systemImage: "person")
             } description: {
-                if !appState.document.characters.isEmpty {
+                if !workspace.document.characters.isEmpty {
                     Text("左の一覧から登場人物を選択してください。")
                 }
             }
@@ -117,6 +119,7 @@ struct CharacterModeView: View {
 }
 
 private struct CharacterSheetView: View {
+    @Environment(WorkspaceModel.self) private var workspace
     @Environment(AppState.self) private var appState
 
     let onAppearanceJump: (CharacterAppearance) -> Void
@@ -187,12 +190,12 @@ private struct CharacterSheetView: View {
             .frame(maxWidth: 920, alignment: .leading)
         }
         .background(FuminiwaColor.paper.color)
-        .onAppear { appearanceSession.setVisible(true, character: appState.selectedCharacter, document: appState.document) }
-        .onChange(of: appState.documentChangeRevision) { _, _ in refreshAppearances() }
+        .onAppear { appearanceSession.setVisible(true, character: appState.selectedCharacter, document: workspace.document) }
+        .onChange(of: workspace.editGeneration) { _, _ in refreshAppearances() }
         .onChange(of: appState.selectedCharacter) { _, _ in refreshAppearances() }
         .onChange(of: appState.workSearchScope) { _, _ in refreshAppearances() }
         .onDisappear {
-            appearanceSession.setVisible(false, character: appState.selectedCharacter, document: appState.document)
+            appearanceSession.setVisible(false, character: appState.selectedCharacter, document: workspace.document)
             appState.commitCharacterEditing()
         }
     }
@@ -334,7 +337,7 @@ private struct CharacterSheetView: View {
     }
 
     private func refreshAppearances() {
-        appearanceSession.refresh(character: appState.selectedCharacter, document: appState.document)
+        appearanceSession.refresh(character: appState.selectedCharacter, document: workspace.document)
     }
 }
 

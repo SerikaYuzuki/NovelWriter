@@ -35,18 +35,18 @@ struct CheckpointCoordinatorMacTests {
         if change == "work" {
             #expect(state.installV2Document(.newDocument(title: "新作品"), workID: WorkID(UUID()), createdAt: Date()))
         } else {
-            state.authSession = makeMacV2Session(accountID: "next-account", fence: "next-fence")
+            state.workspaceModel.authSession = makeMacV2Session(accountID: "next-account", fence: "next-fence")
             state.snapshotSyncV2AccountScopeGeneration &+= 1
         }
-        state.saveState = .unsaved
+        state.workspaceModel.saveState = .unsaved
         state.operationMessage = "新しい画面"
-        let projection = state.snapshotSyncV2UIState
-        let conflict = state.snapshotSyncConflict
+        let projection = state.workspaceModel.syncUIState
+        let conflict = state.workspaceModel.syncConflict
         pause.release()
         #expect(await !task.value)
-        #expect(state.saveState == .unsaved)
-        #expect(state.snapshotSyncV2UIState == projection)
-        #expect(state.snapshotSyncConflict == conflict)
+        #expect(state.workspaceModel.saveState == .unsaved)
+        #expect(state.workspaceModel.syncUIState == projection)
+        #expect(state.workspaceModel.syncConflict == conflict)
         #expect(state.operationMessage == "新しい画面")
         // The stale UI completion does not undo the old work's SQLite commit.
         #expect(try await application.openLocal(workID: workID).document == document)

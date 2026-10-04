@@ -14,9 +14,9 @@ extension WorkbenchVisualTests {
         )
         let episode = Episode(title: "第一話", content: "サイドバー切替の検証用本文です。")
         let chapter = Chapter(title: "第一章", episodes: [episode])
-        state.document = NovelDocument(title: "サイドバー検証", chapters: [chapter], flags: [Flag(title: "未回収", note: "")])
-        state.selectedChapterID = chapter.id
-        state.selectedEpisodeID = episode.id
+        state.workspaceModel.document = NovelDocument(title: "サイドバー検証", chapters: [chapter], flags: [Flag(title: "未回収", note: "")])
+        state.workspaceModel.selectedChapterID = chapter.id
+        state.workspaceModel.selectedEpisodeID = episode.id
         let window = makeWindow(state: state)
         let host = try #require(window.contentView)
         window.makeKeyAndOrderFront(nil)
@@ -74,7 +74,7 @@ extension WorkbenchVisualTests {
     private func makeWindow(state: AppState) -> NSWindow {
         let root = NovelWorkbenchView()
             .preferredColorScheme(.light)
-            .environment(state)
+            .environment(state).environment(state.workspaceModel)
             .environment(EditorSettings(userDefaults: state.userDefaults))
             .environment(EditorSearchSession())
             .environment(state.editorCommandSession)

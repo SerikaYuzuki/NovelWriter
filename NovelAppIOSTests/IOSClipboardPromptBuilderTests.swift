@@ -26,7 +26,7 @@ struct IOSClipboardPromptBuilderTests {
         #expect(await store.configureSnapshotSyncV2())
         await store.bootstrap()
         #expect(await store.makeNewDocument())
-        let episodeID = try #require(store.selectedEpisodeID)
+        let episodeID = try #require(store.workspaceModel.selectedEpisodeID)
 
         store.copySelectionManuscript(
             text: " \n　",
@@ -58,7 +58,7 @@ struct IOSClipboardPromptBuilderTests {
         #expect(await store.configureSnapshotSyncV2())
         await store.bootstrap()
         #expect(await store.makeNewDocument())
-        let episodeID = try #require(store.selectedEpisodeID)
+        let episodeID = try #require(store.workspaceModel.selectedEpisodeID)
 
         store.copySelectionManuscript(
             text: "コピー対象",

@@ -17,8 +17,8 @@ struct IOSWorkSearchIntegrationTests {
         let store = IOSDocumentStore(userDefaults: defaults, libraryRoot: root)
         await store.bootstrap()
         #expect(await store.makeNewDocument())
-        let chapter = try #require(store.selectedChapterID), episode = try #require(store.selectedEpisodeID)
-        store.document.updateEpisodeContent("猫猫", for: episode, in: chapter)
+        let chapter = try #require(store.workspaceModel.selectedChapterID), episode = try #require(store.workspaceModel.selectedEpisodeID)
+        store.workspaceModel.document.updateEpisodeContent("猫猫", for: episode, in: chapter)
         store.markDocumentChanged()
         #expect(await store.saveNow())
         store.workSearch.query = "猫"
@@ -43,7 +43,7 @@ struct IOSWorkSearchIntegrationTests {
                 expectedText: String(repeating: "猫", count: 1 + index), replacement: content
             ))
             try await waitForWorkSearchState {
-                store.document.episode(episode)?.episode.content == content
+                store.workspaceModel.document.episode(episode)?.episode.content == content
             }
             #expect(store.workSearch.total == 2)
             #expect(store.workSearch.isStale)
@@ -63,28 +63,28 @@ struct IOSWorkSearchIntegrationTests {
         let store = IOSDocumentStore(userDefaults: defaults, libraryRoot: root)
         await store.bootstrap()
         #expect(await store.makeNewDocument())
-        let work = try #require(store.syncV2ActiveWorkID), chapter = try #require(store.selectedChapterID),
-            episode = try #require(store.selectedEpisodeID)
-        store.document.updateEpisodeContent("猫猫", for: episode, in: chapter)
-        store.document.chapters[0].episodes.append(Episode(title: "第2話", content: "猫"))
+        let work = try #require(store.workspaceModel.activeWorkID), chapter = try #require(store.workspaceModel.selectedChapterID),
+            episode = try #require(store.workspaceModel.selectedEpisodeID)
+        store.workspaceModel.document.updateEpisodeContent("猫猫", for: episode, in: chapter)
+        store.workspaceModel.document.chapters[0].episodes.append(Episode(title: "第2話", content: "猫"))
         store.markDocumentChanged()
         #expect(await store.saveNow())
-        let editor = UIHostingController(rootView: IOSEditorPane(store: store, userDefaults: defaults))
+        let editor = UIHostingController(rootView: IOSEditorPane(store: store, userDefaults: defaults).environment(store.workspaceModel))
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 430, height: 932))
         window.rootViewController = editor; editor.view.frame = window.bounds; window.makeKeyAndVisible()
         defer { window.isHidden = true; window.rootViewController = nil }
         try await Task.sleep(for: .milliseconds(250))
         editor.view.layoutIfNeeded()
         #expect(store.editorCommandSession.hasActiveEditorSurface)
-        let generation = store.editorContentGeneration
+        let generation = store.workspaceModel.editorContentGeneration
         let search = store.workSearch
         search.query = "猫"; search.replacement = "子猫"
-        search.refresh(document: store.document, scope: store.workSearchScope)
+        search.refresh(document: store.workspaceModel.document, scope: store.workSearchScope)
         try await Task.sleep(for: .milliseconds(450))
         #expect(await search.replace(using: store.workReplacementHost))
-        #expect(store.editorContentGeneration == generation)
+        #expect(store.workspaceModel.editorContentGeneration == generation)
         #expect(store.editorCommandSession.captureActiveCommittedText() == .captured("子猫子猫"))
-        #expect(store.document.chapters[0].episodes.map { $0.content } == ["子猫子猫", "子猫"])
+        #expect(store.workspaceModel.document.chapters[0].episodes.map { $0.content } == ["子猫子猫", "子猫"])
         #expect(store.writingProgress.days(for: work.rawValue).isEmpty)
         #expect(store.writingProgress.total == 6)
         let writing = try #require(store.writingAssistantHost)
@@ -98,15 +98,15 @@ struct IOSWorkSearchIntegrationTests {
         }
         let application = try #require(store.snapshotSyncV2Application)
         #expect(try await application.historyPage(workID: work).items.contains { $0.reason == "explicit" })
-        #expect(try await application.openLocal(workID: work).document == store.document)
-        search.refresh(document: store.document, scope: store.workSearchScope)
+        #expect(try await application.openLocal(workID: work).document == store.workspaceModel.document)
+        search.refresh(document: store.workspaceModel.document, scope: store.workSearchScope)
         try await Task.sleep(for: .milliseconds(450))
-        let beforeFailure = store.document, originalHost = store.workReplacementHost
+        let beforeFailure = store.workspaceModel.document, originalHost = store.workReplacementHost
         let failingSnapshot = WorkReplacementHost(scope: originalHost.scope, validate: originalHost.validate,
                                                   document: originalHost.document, boundary: originalHost.boundary,
                                                   snapshot: { false }, apply: originalHost.apply)
         #expect(await !(search.replace(using: failingSnapshot)))
-        #expect(store.document == beforeFailure)
+        #expect(store.workspaceModel.document == beforeFailure)
         let accountHost = store.workReplacementHost
         store.workspaceModel.accountGeneration &+= 1
         #expect(!accountHost.validate())
@@ -114,7 +114,7 @@ struct IOSWorkSearchIntegrationTests {
         store.advanceDocumentSessionGeneration()
         #expect(!host.validate())
         let scope = store.workSearchScope
-        let target = store.document.chapters[0].episodes[1]
+        let target = store.workspaceModel.document.chapters[0].episodes[1]
         #expect(await store.selectWorkTextMatch(chapterID: chapter, episodeID: target.id, source: target.content,
                                                 range: NSRange(location: 0, length: 1), expectedScope: scope))
         #expect(store.currentWorkTextSelectionRequest?.range == NSRange(location: 0, length: 1))
@@ -135,9 +135,9 @@ private struct SearchVisibilityHost: View {
     @Bindable var probe: SearchVisibilityProbe
     var body: some View {
         NavigationStack(path: $probe.path) {
-            IOSWorkSearchView(store: store)
+            IOSWorkSearchView(store: store).environment(store.workspaceModel)
                 .navigationDestination(for: Bool.self) { _ in
-                    IOSEditorPane(store: store, userDefaults: store.userDefaults)
+                    IOSEditorPane(store: store, userDefaults: store.userDefaults).environment(store.workspaceModel)
                 }
         }
     }

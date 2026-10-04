@@ -58,6 +58,7 @@ struct FuminiwaIOSApp: App {
     var body: some Scene {
         WindowGroup {
             IOSRootView(store: store)
+                .environment(store.workspaceModel)
                 .defaultAppStorage(store.userDefaults)
                 .tint(.accentColor)
                 .preferredColorScheme(

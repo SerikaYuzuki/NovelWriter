@@ -53,10 +53,10 @@ struct SaveAndSyncTests {
         state.installV2Document(document, workID: workID, createdAt: createdAt)
         state.snapshotSyncCurrentWorkAccountState = isBound ? .active : .unbound
         if isBound {
-            state.authSession = makeMacV2Session(accountID: "test-account", fence: "test-fence")
-            state.authUIState = .signedIn(accountID: "test-account")
+            state.workspaceModel.authSession = makeMacV2Session(accountID: "test-account", fence: "test-fence")
+            state.workspaceModel.authUIState = .signedIn(accountID: "test-account")
         }
-        state.saveState = .saved
+        state.workspaceModel.saveState = .saved
         let observation = Task { await state.observeSnapshotSyncV2Status() }
         defer { observation.cancel() }
         let expectedSnapshotID = expectedRemoteSnapshotID
@@ -108,25 +108,25 @@ struct SaveAndSyncTests {
         state.installV2Document(document, workID: workID, createdAt: createdAt)
         state.snapshotSyncCurrentWorkAccountState = .unbound
         if signedIn {
-            state.authSession = makeMacV2Session(accountID: "test-account", fence: "test-fence")
-            state.authUIState = .signedIn(accountID: "test-account")
+            state.workspaceModel.authSession = makeMacV2Session(accountID: "test-account", fence: "test-fence")
+            state.workspaceModel.authUIState = .signedIn(accountID: "test-account")
         }
         let presentation = ExplicitSyncPresentation()
         for revision in 1 ... 3 {
-            state.document.title = "保存確認\(revision)"
+            state.workspaceModel.document.title = "保存確認\(revision)"
             state.markDocumentDirty()
             presentation.requestSync(appState: state)
             #expect(!presentation.showingSetup)
-            try await eventuallyMac { state.saveState == .saved }
+            try await eventuallyMac { state.workspaceModel.saveState == .saved }
             #expect(state.currentSnapshotSyncV2WorkID == workID)
-            #expect(try await store.open(workID: workID, scope: .unbound).document?.title == state.document.title)
+            #expect(try await store.open(workID: workID, scope: .unbound).document?.title == state.workspaceModel.document.title)
             #expect(try await app.library().items.count == 1)
         }
         let restarted = AppState(dependencies: AppDependencies(userDefaults: defaults))
         restarted.snapshotSyncV2Application = app
         await restarted.bootstrap()
         #expect(restarted.currentSnapshotSyncV2WorkID == workID)
-        #expect(restarted.document.title == "保存確認3")
+        #expect(restarted.workspaceModel.document.title == "保存確認3")
         #expect(try await app.library().items.count == 1)
         #expect(await config.remote.recordedOperations().isEmpty)
         await store.close()

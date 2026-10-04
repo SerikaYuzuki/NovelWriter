@@ -18,8 +18,8 @@ extension AppState: WorkspaceLibraryHost {
     }
 
     func permitsLibraryMutation(_: WorkspaceLibraryMutation, workID: WorkID) -> Bool {
-        !isDocumentTransitionInProgress && !isTerminationPending && interactiveAuthOperationCount == 0
-            && (syncV2KeepBothPendingWorkID == nil || workID != currentSnapshotSyncV2WorkID)
+        !workspaceModel.isDocumentTransitionInProgress && !isTerminationPending && interactiveAuthOperationCount == 0
+            && (workspaceModel.keepBothPendingWorkID == nil || workID != currentSnapshotSyncV2WorkID)
     }
 
     func libraryMutationBoundary(
@@ -31,12 +31,12 @@ extension AppState: WorkspaceLibraryHost {
                   permitsLibraryMutation(mutation, workID: workID),
                   editorCommandSession.prepareForDocumentTransition() else { return false }
             defer { editorCommandSession.resumeAfterDocumentTransition() }
-            isDocumentTransitionInProgress = true
-            defer { isDocumentTransitionInProgress = false }
+            workspaceModel.isDocumentTransitionInProgress = true
+            defer { workspaceModel.isDocumentTransitionInProgress = false }
             do {
                 switch mutation {
                 case .rename:
-                    if saveState != .saved {
+                    if workspaceModel.saveState != .saved {
                         guard await saveNow() else { return false }
                     }
                     try await saveCoordinator.performExclusive { try await operation() }
@@ -69,39 +69,39 @@ extension AppState: WorkspaceLibraryHost {
     }
 
     func removeDeletedLibraryWork(_ workID: WorkID) {
-        snapshotSyncRemoteCatalogItems.removeAll { $0.workID == workID }
+        workspaceModel.remoteCatalogItems.removeAll { $0.workID == workID }
         snapshotSyncLibraryWorks.removeAll { $0.workID == workID }
     }
 
     func willSendLibraryDeletion(_ workID: WorkID) {
-        assistantRequestCenter.cancel(work: workID.rawValue)
+        workspaceModel.assistantRequestCenter.cancel(work: workID.rawValue)
     }
 
     func retireLibraryWork(_ workID: WorkID) {
         if currentSnapshotSyncV2WorkID == workID {
-            document = NovelDocument.newDocument()
-            snapshotSyncV2ActiveWorkID = nil
+            workspaceModel.document = NovelDocument.newDocument()
+            workspaceModel.activeWorkID = nil
             snapshotSyncV2Session = nil
             snapshotSyncV2Attachments = []
             snapshotSyncV2Resources = []
             snapshotSyncV2PortableCreatedAt = nil
-            attachments = []
+            workspaceModel.attachments = []
             attachmentPreviewURLs.removeAll()
-            selectedChapterID = nil
-            selectedEpisodeID = nil
+            workspaceModel.selectedChapterID = nil
+            workspaceModel.selectedEpisodeID = nil
             selectedCharacterID = nil
             selectedPlotCardID = nil
             selectedFlagID = nil
             selectedWorldNoteID = nil
-            editorContentGeneration &+= 1
-            documentSessionToken = WorkspaceSessionToken(
-                generation: editorContentGeneration,
-                documentID: document.id,
+            workspaceModel.editorContentGeneration &+= 1
+            workspaceModel.documentSessionToken = WorkspaceSessionToken(
+                generation: workspaceModel.editorContentGeneration,
+                documentID: workspaceModel.document.id,
                 workID: WorkID(UUID())
             )
-            snapshotSyncHistory = []
-            snapshotSyncV2UIState = nil
-            saveState = .saved
+            workspaceModel.historyItems = []
+            workspaceModel.syncUIState = nil
+            workspaceModel.saveState = .saved
             userDefaults.removeObject(forKey: "fuminiwa.v2.activeWorkID")
             userDefaults.set(true, forKey: "fuminiwa.v2.startInLibrary")
             startupState = .documentSelection(.init(

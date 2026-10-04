@@ -9,20 +9,20 @@ extension IOSDocumentStore {
     func restoreSnapshotSyncV2(snapshotID raw: String) async -> Bool {
         guard !isSyncV2AccountTransitionActive,
               let app = snapshotSyncV2Application,
-              let workID = syncV2ActiveWorkID,
+              let workID = workspaceModel.activeWorkID,
               let expectedSession = currentDocumentSessionToken,
               let snapshotID = try? SnapshotID(rawValue: raw) else { return false }
         let account = snapshotSyncV2AccountScope
         return await documentOperationGate.perform { [weak self] in
             guard let self, !isSyncV2AccountTransitionActive,
-                  !isDocumentTransitionInProgress, syncV2KeepBothPendingWorkID == nil,
+                  !workspaceModel.isDocumentTransitionInProgress, workspaceModel.keepBothPendingWorkID == nil,
                   currentDocumentSessionToken == expectedSession,
                   matchesSyncAccount(account),
                   editorCommandSession.prepareForDocumentTransition() else { return false }
-            isDocumentTransitionInProgress = true
+            workspaceModel.isDocumentTransitionInProgress = true
             defer {
                 editorCommandSession.resumeAfterDocumentTransition()
-                isDocumentTransitionInProgress = false
+                workspaceModel.isDocumentTransitionInProgress = false
             }
             do {
                 return try await ConflictCoordinator(application: app).restoreAtPreparedBoundary(
@@ -49,20 +49,20 @@ extension IOSDocumentStore {
         using choice: SyncV2ConflictChoice,
         expectedSelection: IOSSnapshotSyncV2ConflictSelection
     ) async -> Bool {
-        guard !isSyncV2RemoteAccountTransitionActive, !isSnapshotSyncInFlight,
-              syncV2KeepBothPendingWorkID == nil,
+        guard !isSyncV2RemoteAccountTransitionActive, !workspaceModel.isSyncInFlight,
+              workspaceModel.keepBothPendingWorkID == nil,
               let app = snapshotSyncV2Application, startupState == .ready else { return false }
-        isSnapshotSyncInFlight = true
-        defer { isSnapshotSyncInFlight = false }
+        workspaceModel.isSyncInFlight = true
+        defer { workspaceModel.isSyncInFlight = false }
         return await documentOperationGate.perform { [weak self] in
             guard let self, !isSyncV2RemoteAccountTransitionActive,
-                  !isDocumentTransitionInProgress,
+                  !workspaceModel.isDocumentTransitionInProgress,
                   snapshotSyncV2DisplayedConflictSelection == expectedSelection,
                   editorCommandSession.prepareForDocumentTransition() else { return false }
-            isDocumentTransitionInProgress = true
+            workspaceModel.isDocumentTransitionInProgress = true
             defer {
                 editorCommandSession.resumeAfterDocumentTransition()
-                isDocumentTransitionInProgress = false
+                workspaceModel.isDocumentTransitionInProgress = false
             }
             let context = WorkspaceOperationContext(
                 workID: expectedSelection.workID, session: expectedSelection.session,
@@ -74,13 +74,13 @@ extension IOSDocumentStore {
                         && self.currentDocumentSessionToken == expectedSelection.session
                         && self.matchesSyncAccount(expectedSelection.accountScope)
                 }, isSaved: { self.conflictEditorIsSaved() },
-                displayedState: { self.snapshotSyncState },
+                displayedState: { self.workspaceModel.syncUIState },
                 freeze: { id in
-                    self.syncV2KeepBothPendingWorkID = id
+                    self.workspaceModel.keepBothPendingWorkID = id
                     if id == nil {
                         self.clearKeepBothHandoff()
                     }
-                }, retainHandoff: { self.syncV2KeepBothHandoff = $0 },
+                }, retainHandoff: { self.workspaceModel.keepBothHandoff = $0 },
                 installClone: { opened, _ in
                     await self.installKeepBothOpenedWork(opened, context: context)
                 }, project: { self.applySnapshotSyncV2State($0) },
@@ -100,15 +100,15 @@ extension IOSDocumentStore {
                     host: self, selection: WorkspaceConflictSelection(context: context, conflict: expectedSelection.conflict),
                     choice: choice, port: port
                 )
-                if !resolved, syncV2KeepBothPendingWorkID != nil,
-                   syncV2ActiveWorkID == expectedSelection.workID,
+                if !resolved, workspaceModel.keepBothPendingWorkID != nil,
+                   workspaceModel.activeWorkID == expectedSelection.workID,
                    matchesSyncAccount(expectedSelection.accountScope) {
                     operationErrorMessage = "両方を保持する作品を安全に開けませんでした。元の作品への書込みを保留しています。"
                 }
                 return resolved
             } catch {
                 snapshotSyncOutcome = .failure(.fatal(.invalidLocalState))
-                if syncV2KeepBothPendingWorkID != nil {
+                if workspaceModel.keepBothPendingWorkID != nil {
                     operationErrorMessage = "両方を保持する作品を安全に開けませんでした。元の作品への書込みを保留しています。"
                 }
                 return false
@@ -120,8 +120,8 @@ extension IOSDocumentStore {
         // Choice is local prepare only, never an implicit checkpoint.
         switch editorCommandSession.captureActiveCommittedText() {
         case let .captured(text):
-            guard let episodeID = selectedEpisodeID,
-                  document.episode(episodeID)?.episode.content == text else {
+            guard let episodeID = workspaceModel.selectedEpisodeID,
+                  workspaceModel.document.episode(episodeID)?.episode.content == text else {
                 operationErrorMessage = "未保存の変更があります。保存後に競合を再選択してください。"
                 return false
             }
@@ -130,7 +130,7 @@ extension IOSDocumentStore {
             return false
         case .notActive: break
         }
-        guard saveState == .saved else {
+        guard workspaceModel.saveState == .saved else {
             operationErrorMessage = "未保存の変更があります。保存後に競合を再選択してください。"
             return false
         }

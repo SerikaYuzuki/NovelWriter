@@ -23,14 +23,14 @@ extension AppState {
     var snapshotSyncV2ConflictSelection: SnapshotSyncV2ConflictSelection? {
         guard let workID = currentSnapshotSyncV2WorkID,
               let snapshotSession = snapshotSyncV2Session,
-              let conflict = snapshotSyncConflict,
+              let conflict = workspaceModel.syncConflict,
               snapshotSession.workID == workID else { return nil }
         return SnapshotSyncV2ConflictSelection(
             workID: workID,
-            documentSession: documentSessionToken,
+            documentSession: workspaceModel.documentSessionToken,
             snapshotSession: snapshotSession,
             accountScope: snapshotSyncV2AccountScopeToken,
-            editGeneration: documentChangeRevision,
+            editGeneration: workspaceModel.editGeneration,
             conflict: conflict
         )
     }
@@ -72,8 +72,8 @@ extension AppState {
             snapshotSession: sourceSelection.snapshotSession
         ),
             matchesSnapshotSyncV2AccountScope(sourceSelection.accountScope),
-            documentChangeRevision == sourceSelection.editGeneration,
-            syncV2KeepBothPendingWorkID == opened.workID,
+            workspaceModel.editGeneration == sourceSelection.editGeneration,
+            workspaceModel.keepBothPendingWorkID == opened.workID,
             installV2Document(
                 clone,
                 workID: opened.workID,
@@ -98,7 +98,7 @@ extension AppState {
         using choice: SyncV2ConflictChoice,
         selection: SnapshotSyncV2ConflictSelection
     ) async -> Bool {
-        guard permitsDocumentTransitionOperation, syncV2KeepBothPendingWorkID == nil,
+        guard permitsDocumentTransitionOperation, workspaceModel.keepBothPendingWorkID == nil,
               let application = snapshotSyncV2Application else { return false }
         return await documentOperationGate.perform { [weak self] in
             guard let self,
@@ -106,8 +106,8 @@ extension AppState {
                   snapshotSyncV2ConflictSelection == selection,
                   editorCommandSession.prepareForDocumentTransition() else { return false }
             defer { editorCommandSession.resumeAfterDocumentTransition() }
-            isDocumentTransitionInProgress = true
-            defer { isDocumentTransitionInProgress = false }
+            workspaceModel.isDocumentTransitionInProgress = true
+            defer { workspaceModel.isDocumentTransitionInProgress = false }
             let context = WorkspaceOperationContext(
                 workID: selection.workID, session: selection.documentSession,
                 account: selection.accountScope, editGeneration: selection.editGeneration
@@ -119,19 +119,19 @@ extension AppState {
                         snapshotSession: selection.snapshotSession
                     ) && self.matchesSnapshotSyncV2AccountScope(selection.accountScope)
                 }, isSaved: {
-                    let saved = self.saveState == .saved && self.hasCommittedEditorTextMatchingSelectedEpisode()
+                    let saved = self.workspaceModel.saveState == .saved && self.hasCommittedEditorTextMatchingSelectedEpisode()
                     if !saved {
                         self.operationMessage = "この端末に保存してから、競合の版を選んでください。"
                     }
                     return saved
-                }, displayedState: { self.snapshotSyncV2UIState },
+                }, displayedState: { self.workspaceModel.syncUIState },
                 freeze: { id in
-                    self.syncV2KeepBothPendingWorkID = id
+                    self.workspaceModel.keepBothPendingWorkID = id
                     if id == nil {
                         self.clearKeepBothHandoff()
                     }
                 }, retainHandoff: { handoff in
-                    self.syncV2KeepBothHandoff = handoff
+                    self.workspaceModel.keepBothHandoff = handoff
                     self.syncV2KeepBothSourceSelection = selection
                 },
                 installClone: { opened, action in
@@ -153,14 +153,14 @@ extension AppState {
                     host: self, selection: WorkspaceConflictSelection(context: context, conflict: selection.conflict),
                     choice: choice, port: port
                 )
-                if !resolved, syncV2KeepBothPendingWorkID != nil,
+                if !resolved, workspaceModel.keepBothPendingWorkID != nil,
                    currentSnapshotSyncV2WorkID == selection.workID,
                    matchesSnapshotSyncV2AccountScope(selection.accountScope) {
                     operationMessage = "競合の複製を安全に開けませんでした。元の作品への書込みを保留しています。"
                 }
                 return resolved
             } catch {
-                if syncV2KeepBothPendingWorkID != nil {
+                if workspaceModel.keepBothPendingWorkID != nil {
                     operationMessage = "競合の複製を安全に開けませんでした。元の作品への書込みを保留しています。"
                 }
                 return false
@@ -180,7 +180,7 @@ extension AppState {
         // ready Inbox. Keep its owner alive through the safe-adoption awaits;
         // document/account transitions retire it explicitly.
         guard snapshotSyncAutoAdoptionTask == nil else { return }
-        let expectedSession = documentSessionToken
+        let expectedSession = workspaceModel.documentSessionToken
         let accountScope = expectedAccountScope ?? snapshotSyncV2AccountScopeToken
         let operationToken = syncSessionController.beginReprojection()
         snapshotSyncAutoAdoptionTask = Task { @MainActor [weak self] in
@@ -195,13 +195,13 @@ extension AppState {
                 isCurrent: {
                     self.snapshotSyncV2AutoAdoptionToken == operationToken
                         && self.matchesSnapshotSyncV2AccountScope(accountScope)
-                        && self.documentSessionToken == expectedSession
+                        && self.workspaceModel.documentSessionToken == expectedSession
                         && self.startupState.isReady && self.snapshotSyncV2Application === application
                 }, receive: { state in
                     guard let state else { return false }
                     switch state.remoteProgress {
                     case .readyForSafeAdoption:
-                        guard self.saveState == .saved, self.hasCommittedEditorTextMatchingSelectedEpisode() else { return false }
+                        guard self.workspaceModel.saveState == .saved, self.hasCommittedEditorTextMatchingSelectedEpisode() else { return false }
                         _ = await self.applySnapshotSyncV2ServerVersion(expectedAccountScope: accountScope, automatically: true)
                         return false
                     case .failed, .fenceChanged, .parkedDifferentAccount,
@@ -234,7 +234,7 @@ extension AppState {
         guard let workID = currentSnapshotSyncV2WorkID,
               let expectedSnapshotSession = snapshotSyncV2Session,
               matchesSnapshotSyncV2AccountScope(expectedAccountScope) else { return false }
-        let expectedDocumentSession = documentSessionToken
+        let expectedDocumentSession = workspaceModel.documentSessionToken
         guard let application = snapshotSyncV2Application,
               snapshotSyncV2DocumentGate != nil,
               expectedSnapshotSession.workID == workID else { return false }
@@ -250,8 +250,8 @@ extension AppState {
                   hasCommittedEditorTextMatchingSelectedEpisode(),
                   editorCommandSession.prepareForDocumentTransition() else { return false }
             defer { editorCommandSession.resumeAfterDocumentTransition() }
-            isDocumentTransitionInProgress = true
-            defer { isDocumentTransitionInProgress = false }
+            workspaceModel.isDocumentTransitionInProgress = true
+            defer { workspaceModel.isDocumentTransitionInProgress = false }
             return await adoptSnapshotSyncV2AtPreparedBoundary(
                 application: application,
                 expectedDocumentSession: expectedDocumentSession,
@@ -287,16 +287,16 @@ extension AppState {
                 self.matchesSnapshotSyncV2Identity(workID: workID, documentSession: expectedDocumentSession,
                                                    snapshotSession: expectedSnapshotSession)
                     && self.matchesSnapshotSyncV2AccountScope(expectedAccountScope)
-                    && self.saveState == .saved && self.hasCommittedEditorTextMatchingSelectedEpisode()
+                    && self.workspaceModel.saveState == .saved && self.hasCommittedEditorTextMatchingSelectedEpisode()
             },
             session: { _ in session },
             arm: { session, pending, _ in
                 try await platformGate.arm(
                     session: session, expectedLocalVersion: pending.expectedLocalVersion,
                     proof: SyncV2SafeBoundaryProof(
-                        editorGeneration: self.editorContentGeneration,
+                        editorGeneration: self.workspaceModel.editorContentGeneration,
                         hasMarkedText: self.activeCommittedTextCapture() == .compositionInProgress,
-                        hasUnsavedChanges: self.saveState != .saved, pendingIntentCleared: true
+                        hasUnsavedChanges: self.workspaceModel.saveState != .saved, pendingIntentCleared: true
                     )
                 )
             }, disarm: { await platformGate.disarm(session: $0) },
@@ -304,7 +304,7 @@ extension AppState {
             finishAttempt: { pending, failed in
                 // Mac retries invalidated/cancelled boundaries, but retains actual failures.
                 if automatically, !failed {
-                    self.automaticAdoptionAttempts[expectedAccountScope]?[workID]?.remove(pending.inboxID)
+                    self.workspaceModel.automaticAdoptionAttempts[expectedAccountScope]?[workID]?.remove(pending.inboxID)
                 }
             }, install: { opened in
                 let installed = await self.installSnapshotSyncV2ServerAdoption(
@@ -339,8 +339,8 @@ extension AppState {
         expectedAccountScope: WorkspaceAccountScope
     ) async -> Bool {
         guard let adopted = opened.document else { return false }
-        let retainedEpisode = selectedEpisodeID.flatMap { adopted.episode($0) }
-        let retainedChapter = adopted.chapters.first { $0.id == selectedChapterID }
+        let retainedEpisode = workspaceModel.selectedEpisodeID.flatMap { adopted.episode($0) }
+        let retainedChapter = adopted.chapters.first { $0.id == workspaceModel.selectedChapterID }
         let workID = expectedSnapshotSession.workID
         let newSession = await application.beginSession(workID: opened.workID)
         guard matchesSnapshotSyncV2Identity(
@@ -368,15 +368,15 @@ extension AppState {
         ) else {
             return false
         }
-        selectedChapterID = retainedEpisode?.chapterID ?? retainedChapter?.id ?? adopted.chapters.first?.id
-        selectedEpisodeID = retainedEpisode?.episode.id ?? retainedChapter?.episodes.first?.id ?? adopted.chapters.first?.episodes.first?.id
+        workspaceModel.selectedChapterID = retainedEpisode?.chapterID ?? retainedChapter?.id ?? adopted.chapters.first?.id
+        workspaceModel.selectedEpisodeID = retainedEpisode?.episode.id ?? retainedChapter?.episodes.first?.id ?? adopted.chapters.first?.episodes.first?.id
         snapshotSyncV2Session = newSession
         return true
     }
 
     private func matchesInstalledSnapshotSyncV2Content(_ opened: SyncV2OpenedWork) -> Bool {
         guard let mirror = try? SyncV2PortableMetadata.splitLocalMirrorResources(opened.resources) else { return false }
-        return opened.document == document
+        return opened.document == workspaceModel.document
             && opened.attachments == snapshotSyncV2Attachments
             && mirror.resources == snapshotSyncV2Resources
             && mirror.portableCreatedAt == snapshotSyncV2PortableCreatedAt
@@ -398,9 +398,9 @@ extension AppState {
             return false
         case let .captured(text):
             guard workspaceSelection.section == .structure,
-                  let selectedChapterID,
-                  let selectedEpisodeID,
-                  let selectedEpisode = document.episode(selectedEpisodeID),
+                  let selectedChapterID = workspaceModel.selectedChapterID,
+                  let selectedEpisodeID = workspaceModel.selectedEpisodeID,
+                  let selectedEpisode = workspaceModel.document.episode(selectedEpisodeID),
                   selectedEpisode.chapterID == selectedChapterID else {
                 return false
             }
@@ -416,7 +416,7 @@ extension AppState {
         let expectedAccountScope = snapshotSyncV2AccountScopeToken
         guard permitsDocumentTransitionOperation,
               let application = snapshotSyncV2Application else { return false }
-        let expectedDocumentSession = documentSessionToken
+        let expectedDocumentSession = workspaceModel.documentSessionToken
         return await documentOperationGate.perform { [weak self] in
             guard let self,
                   matchesSnapshotSyncV2Identity(
@@ -428,8 +428,8 @@ extension AppState {
                   permitsDocumentTransitionOperation,
                   editorCommandSession.prepareForDocumentTransition() else { return false }
             defer { editorCommandSession.resumeAfterDocumentTransition() }
-            isDocumentTransitionInProgress = true
-            defer { isDocumentTransitionInProgress = false }
+            workspaceModel.isDocumentTransitionInProgress = true
+            defer { workspaceModel.isDocumentTransitionInProgress = false }
             do {
                 return try await ConflictCoordinator(application: application).restoreAtPreparedBoundary(
                     host: self, workID: workID, snapshotID: snapshotID,

@@ -147,9 +147,9 @@ final class ExportPresenter {
 
     convenience init(appState: AppState) {
         self.init(
-            documentTitleProvider: { appState.document.title },
-            documentProvider: { appState.document },
-            documentSessionProvider: { appState.documentSessionToken },
+            documentTitleProvider: { appState.workspaceModel.document.title },
+            documentProvider: { appState.workspaceModel.document },
+            documentSessionProvider: { appState.workspaceModel.documentSessionToken },
             panelPresenter: MacExportPanelPresenter(),
             executor: BackgroundNovelExportExecutor(),
             packageExporter: { destination, expectedSession in

@@ -20,7 +20,7 @@ struct AssistantFeedbackPersistenceTests {
         let workID = WorkID(UUID())
         state.installV2Document(document, workID: workID, createdAt: Date(timeIntervalSince1970: 1_790_000_000))
         #expect(await state.checkpointSnapshotSyncV2(document))
-        let session = state.documentSessionToken
+        let session = state.workspaceModel.documentSessionToken
         let account = state.snapshotSyncV2AccountScopeToken
         let feedback = AssistantFeedback(id: UUID(), purpose: .impressions, scopeTitle: "第一話",
                                          createdAt: Date(timeIntervalSince1970: 1_790_000_001), markdown: "# 感想\n\n旅立ちの場面が心に残った。")
@@ -40,6 +40,6 @@ struct AssistantFeedbackPersistenceTests {
         #expect(await state.deleteAssistantFeedback(feedback, session: session, account: account))
         #expect(state.assistantFeedback.isEmpty)
         #expect(try await restarted.openLocal(workID: workID).attachments.isEmpty)
-        #expect(state.document == document)
+        #expect(state.workspaceModel.document == document)
     }
 }

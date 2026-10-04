@@ -38,9 +38,9 @@ struct MCPThumbnailHarness {
 
     func owner(_ kind: ThumbnailOwner.Kind = .work) -> ThumbnailOwner {
         switch kind {
-        case .work: ThumbnailOwner(kind, state.document.id)
-        case .character: ThumbnailOwner(kind, state.document.characters[0].id.rawValue)
-        case .worldNote: ThumbnailOwner(kind, state.document.worldNotes[0].id.rawValue)
+        case .work: ThumbnailOwner(kind, state.workspaceModel.document.id)
+        case .character: ThumbnailOwner(kind, state.workspaceModel.document.characters[0].id.rawValue)
+        case .worldNote: ThumbnailOwner(kind, state.workspaceModel.document.worldNotes[0].id.rawValue)
         }
     }
 

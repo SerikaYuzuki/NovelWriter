@@ -22,13 +22,13 @@ extension IOSDocumentStore {
         guard !isSyncV2RemoteAccountTransitionActive,
               let application = snapshotSyncV2Application,
               startupState == .ready,
-              let activeWorkID = syncV2ActiveWorkID,
-              syncV2LibraryItems.first(where: { $0.workID == activeWorkID })?.accountState
+              let activeWorkID = workspaceModel.activeWorkID,
+              workspaceModel.libraryRows.first(where: { $0.workID == activeWorkID })?.accountState
               != .parkedDifferentAccount,
               let expectedSession = expectedSession ?? currentDocumentSessionToken else {
             return false
         }
-        let expectedEditGeneration = expectedEditGeneration ?? localEditGeneration
+        let expectedEditGeneration = expectedEditGeneration ?? workspaceModel.editGeneration
         let expectedAccountScope = expectedAccountScope ?? snapshotSyncV2AccountScope
         let operation = WorkspaceOperationContext(workID: expectedSession.workID, session: expectedSession,
                                                   account: expectedAccountScope, editGeneration: expectedEditGeneration)
@@ -36,8 +36,8 @@ extension IOSDocumentStore {
             guard let self else { return false }
             guard matchesRemoteSyncAccount(expectedAccountScope) else { return false }
             guard currentDocumentSessionToken == expectedSession,
-                  localEditGeneration == expectedEditGeneration,
-                  saveState == .saved else {
+                  workspaceModel.editGeneration == expectedEditGeneration,
+                  workspaceModel.saveState == .saved else {
                 operationErrorMessage = "未保存の変更があります。端末へ適用する前に保存してください。"
                 return false
             }
@@ -52,16 +52,16 @@ extension IOSDocumentStore {
                     let port = WorkspaceAdoptionPort(
                         isCurrent: {
                             !self.isSyncV2RemoteAccountTransitionActive && self.matchesSyncOperation(operation)
-                                && self.saveState == .saved
+                                && self.workspaceModel.saveState == .saved
                         }, session: { pending in await application.beginSession(workID: pending.workID) },
                         arm: { session, pending, projected in
                             #if !FUMINIWA_TEST_COMPOSITION
                             try await self.snapshotSyncV2DocumentGate.arm(
                                 session: session, expectedLocalVersion: pending.expectedLocalVersion,
                                 proof: SyncV2SafeBoundaryProof(
-                                    editorGeneration: self.editorContentGeneration,
+                                    editorGeneration: self.workspaceModel.editorContentGeneration,
                                     hasMarkedText: self.editorCommandSession.captureActiveCommittedText() == .compositionInProgress,
-                                    hasUnsavedChanges: self.saveState != .saved,
+                                    hasUnsavedChanges: self.workspaceModel.saveState != .saved,
                                     pendingIntentCleared: projected.lastTypedResult == .adoptionPending
                                 )
                             )
@@ -90,8 +90,8 @@ extension IOSDocumentStore {
 
     func claimAutomaticAdoption(_ pending: SyncV2PendingAdoption, account: WorkspaceAccountScope) -> Bool {
         guard !pending.requiresExplicitConfirmation,
-              automaticAdoptionAttempts[account]?[pending.workID]?.contains(pending.inboxID) != true else { return false }
-        automaticAdoptionAttempts[account, default: [:]][pending.workID, default: []].insert(pending.inboxID)
+              workspaceModel.automaticAdoptionAttempts[account]?[pending.workID]?.contains(pending.inboxID) != true else { return false }
+        workspaceModel.automaticAdoptionAttempts[account, default: [:]][pending.workID, default: []].insert(pending.inboxID)
         return true
     }
 
@@ -101,19 +101,19 @@ extension IOSDocumentStore {
     ) -> AutoAdoptionExpectation? {
         guard !isSyncV2RemoteAccountTransitionActive,
               startupState == .ready,
-              syncV2ActiveWorkID == workID,
+              workspaceModel.activeWorkID == workID,
               let session = currentDocumentSessionToken,
-              saveState == .saved,
-              !isDocumentTransitionInProgress,
-              syncV2KeepBothPendingWorkID == nil else { return nil }
-        let editGeneration = localEditGeneration
+              workspaceModel.saveState == .saved,
+              !workspaceModel.isDocumentTransitionInProgress,
+              workspaceModel.keepBothPendingWorkID == nil else { return nil }
+        let editGeneration = workspaceModel.editGeneration
         let accountScope = snapshotSyncV2AccountScope
 
         if validatingEditorSurface {
             switch editorCommandSession.captureActiveCommittedText() {
             case let .captured(text):
-                guard let episodeID = selectedEpisodeID,
-                      document.episode(episodeID)?.episode.content == text else { return nil }
+                guard let episodeID = workspaceModel.selectedEpisodeID,
+                      workspaceModel.document.episode(episodeID)?.episode.content == text else { return nil }
             case .compositionInProgress:
                 return nil
             case .notActive:
@@ -121,12 +121,12 @@ extension IOSDocumentStore {
             }
         }
 
-        guard syncV2ActiveWorkID == workID,
+        guard workspaceModel.activeWorkID == workID,
               !isSyncV2RemoteAccountTransitionActive,
               currentDocumentSessionToken == session,
-              localEditGeneration == editGeneration,
+              workspaceModel.editGeneration == editGeneration,
               matchesSyncAccount(accountScope),
-              saveState == .saved else { return nil }
+              workspaceModel.saveState == .saved else { return nil }
         return AutoAdoptionExpectation(workID: workID, session: session, account: accountScope, editGeneration: editGeneration)
     }
 
@@ -134,7 +134,7 @@ extension IOSDocumentStore {
         _ application: SyncV2Application,
         workID: WorkID
     ) {
-        guard let projected = snapshotSyncState,
+        guard let projected = workspaceModel.syncUIState,
               projected.workID == workID,
               case .readyForSafeAdoption = projected.remoteProgress,
               let expectation = automaticAdoptionExpectation(

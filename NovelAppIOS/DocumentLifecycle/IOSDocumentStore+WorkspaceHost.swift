@@ -1,6 +1,16 @@
+import NovelCore
 import NovelWorkspace
 
 extension IOSDocumentStore: WorkspaceAttachmentHost {
+    /// Required by the shared coordinator port; app call sites use workspaceModel.
+    var document: NovelDocument {
+        get { workspaceModel.document }
+        set {
+            workspaceModel.document = newValue
+            workspaceModel.documentSessionToken.documentID = newValue.id
+        }
+    }
+
     var operationContext: WorkspaceOperationContext {
         WorkspaceOperationContext(
             workID: workspaceModel.activeWorkID, session: currentDocumentSessionToken,
@@ -9,9 +19,9 @@ extension IOSDocumentStore: WorkspaceAttachmentHost {
     }
 
     var permitsLocalMutation: Bool {
-        startupState == .ready && syncV2ActiveWorkID != nil
-            && !isDocumentTransitionInProgress && !syncV2AccountTransitionInProgress
-            && syncV2KeepBothPendingWorkID == nil
+        startupState == .ready && workspaceModel.activeWorkID != nil
+            && !workspaceModel.isDocumentTransitionInProgress && !syncV2AccountTransitionInProgress
+            && workspaceModel.keepBothPendingWorkID == nil
     }
 
     func markChanged(policy: WorkspaceSavePolicy) {

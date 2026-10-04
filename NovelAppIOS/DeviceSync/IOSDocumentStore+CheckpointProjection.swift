@@ -16,7 +16,7 @@ extension IOSDocumentStore {
     /// The local-save boundary alone consumes the durability projection.
     func applyCheckpointSaveState(_ state: SyncUIState) {
         if let localState = WorkspaceSyncProjection(state: state, previous: nil, presentedFailure: nil).localSaveState {
-            saveState = localState
+            workspaceModel.saveState = localState
         }
     }
 }

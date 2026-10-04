@@ -16,15 +16,15 @@ struct DocumentLifecyclePolicyTests {
             ),
             initialStartupState: .ready
         )
-        let session = state.documentSessionToken
+        let session = state.workspaceModel.documentSessionToken
 
         #expect(state.permitsMutation(expectedSession: session))
         state.isTerminationPending = true
         #expect(!state.permitsMutation(expectedSession: session))
         state.isTerminationPending = false
-        state.isDocumentTransitionInProgress = true
+        state.workspaceModel.isDocumentTransitionInProgress = true
         #expect(!state.permitsMutation(expectedSession: session))
-        state.isDocumentTransitionInProgress = false
+        state.workspaceModel.isDocumentTransitionInProgress = false
         #expect(!state.permitsMutation(expectedSession: WorkspaceSessionToken(
             generation: session.generation + 1,
             documentID: session.documentID,
@@ -40,12 +40,12 @@ struct DocumentLifecyclePolicyTests {
             ),
             initialStartupState: .ready
         )
-        let session = state.documentSessionToken
+        let session = state.workspaceModel.documentSessionToken
         state.isTerminationPending = true
         #expect(!state.permitsEditorSynchronization(expectedSession: session))
         state.isTerminationPending = false
         #expect(state.permitsEditorSynchronization(expectedSession: session))
-        state.isDocumentTransitionInProgress = true
+        state.workspaceModel.isDocumentTransitionInProgress = true
         #expect(!state.permitsEditorSynchronization(expectedSession: session))
     }
 

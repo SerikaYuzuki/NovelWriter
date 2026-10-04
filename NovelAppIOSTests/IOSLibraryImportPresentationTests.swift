@@ -18,30 +18,30 @@ struct IOSLibraryImportPresentationTests {
                                      runtimeComposition: .test(configuration))
         await store.bootstrap()
         #expect(await store.makeNewDocument())
-        let original = try #require(store.syncV2ActiveWorkID)
+        let original = try #require(store.workspaceModel.activeWorkID)
         let application = try #require(store.snapshotSyncV2Application)
         let target = WorkID(UUID())
         let document = NovelDocument.newDocument(title: "サンプル作品")
         // Emulate the durable install boundary: the shelf still has a remote row,
         // while application.open can already return the verified local import.
         _ = try await application.checkpoint(workID: target, document: document, reason: .migration, documentCreatedAt: Date())
-        store.syncV2LibraryItems = [.init(workID: target, title: document.title,
-                                          availability: .remoteOnly, accountState: .active)]
+        store.workspaceModel.libraryRows = [.init(workID: target, title: document.title,
+                                                  availability: .remoteOnly, accountState: .active)]
         var navigatedSession: WorkspaceSessionToken?
         #expect(await store.startRemoteOnlySnapshotSyncV2Open(workID: target,
                                                               shouldOpen: { !navigatedAway }, onOpened: { navigatedSession = $0 }))
         let task = try #require(store.snapshotSyncV2RemoteOnlyOpenTask)
         await task.value
         if navigatedAway {
-            #expect(store.syncV2ActiveWorkID == original)
+            #expect(store.workspaceModel.activeWorkID == original)
             #expect(navigatedSession == nil)
             #expect(store.libraryNotice == "『サンプル作品』をこの端末に取り込みました")
         } else {
-            #expect(store.syncV2ActiveWorkID == target)
+            #expect(store.workspaceModel.activeWorkID == target)
             #expect(navigatedSession?.workID == target)
         }
         #expect(store.snapshotSyncV2RemoteOnlyOpeningWorkID == nil)
-        #expect(store.syncV2LibraryItems.contains { $0.workID == target && $0.availability != .remoteOnly })
+        #expect(store.workspaceModel.libraryRows.contains { $0.workID == target && $0.availability != .remoteOnly })
     }
 
     @Test("Leaving and returning to the same route still invalidates an import navigation request")
@@ -66,19 +66,19 @@ extension IOSLibraryImportPresentationTests {
         await store.bootstrap()
         #expect(await store.makeNewDocument())
         let original = store.currentDocumentSessionToken
-        let originalDocument = store.document.id
+        let originalDocument = store.workspaceModel.document.id
         let application = try #require(store.snapshotSyncV2Application)
         let target = WorkID(UUID())
         _ = try await application.checkpoint(workID: target, document: .newDocument(title: "取得した作品"),
                                              reason: .migration, documentCreatedAt: Date())
-        store.syncV2LibraryItems = [.init(workID: target, title: "取得した作品", availability: .remoteOnly, accountState: .active)]
+        store.workspaceModel.libraryRows = [.init(workID: target, title: "取得した作品", availability: .remoteOnly, accountState: .active)]
         store.takeOntoDevice(workID: target, title: "取得した作品")
         let task = try #require(store.libraryPrefetchTask)
         await task.value
         #expect(store.currentDocumentSessionToken == original)
-        #expect(store.document.id == originalDocument)
+        #expect(store.workspaceModel.document.id == originalDocument)
         #expect(store.libraryPrefetchTask == nil)
-        #expect(store.syncV2LibraryItems.contains { $0.workID == target && $0.availability != .remoteOnly })
+        #expect(store.workspaceModel.libraryRows.contains { $0.workID == target && $0.availability != .remoteOnly })
     }
 }
 
@@ -91,13 +91,13 @@ extension IOSLibraryImportPresentationTests {
                                      runtimeComposition: .test(configuration))
         await store.bootstrap()
         #expect(await store.makeNewDocument())
-        let original = store.document
-        let workID = try #require(store.syncV2ActiveWorkID)
+        let original = store.workspaceModel.document
+        let workID = try #require(store.workspaceModel.activeWorkID)
         #expect(await !store.openSnapshotSyncV2(workID: UUID()))
         #expect(store.operationErrorMessage?.isEmpty == false)
         #expect(store.snapshotSyncV2RemoteOnlyOpenFailure != nil)
-        #expect(store.document == original)
-        #expect(store.syncV2ActiveWorkID == workID)
+        #expect(store.workspaceModel.document == original)
+        #expect(store.workspaceModel.activeWorkID == workID)
         #expect(await store.openSnapshotSyncV2(workID: workID.rawValue))
         #expect(store.snapshotSyncV2RemoteOnlyOpenFailure == nil)
     }

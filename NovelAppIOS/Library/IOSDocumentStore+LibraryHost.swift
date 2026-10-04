@@ -18,7 +18,7 @@ extension IOSDocumentStore: WorkspaceLibraryHost {
     }
 
     func permitsLibraryMutation(_ mutation: WorkspaceLibraryMutation, workID: WorkID) -> Bool {
-        guard syncV2KeepBothPendingWorkID == nil || workID != syncV2ActiveWorkID else { return false }
+        guard workspaceModel.keepBothPendingWorkID == nil || workID != workspaceModel.activeWorkID else { return false }
         return switch mutation {
         case .rename: !isSyncV2AccountTransitionActive
         case .deletion: libraryDeletionDisabledReason(for: workID) == nil
@@ -47,43 +47,44 @@ extension IOSDocumentStore: WorkspaceLibraryHost {
     }
 
     func removeDeletedLibraryWork(_ workID: WorkID) {
-        syncV2RemoteCatalogItems.removeAll { $0.workID == workID }
+        workspaceModel.remoteCatalogItems.removeAll { $0.workID == workID }
     }
 
     func willSendLibraryDeletion(_ workID: WorkID) {
-        assistantRequestCenter.cancel(work: workID.rawValue)
+        workspaceModel.assistantRequestCenter.cancel(work: workID.rawValue)
     }
 
     func retireLibraryWork(_ workID: WorkID) {
-        if syncV2ActiveWorkID == workID {
+        if workspaceModel.activeWorkID == workID {
             retireDeletedWork()
         }
     }
 
     private func retireDeletedWork() {
         startupState = .library
-        syncV2ActiveWorkID = nil
+        workspaceModel.activeWorkID = nil
         clearKeepBothHandoff()
-        document = NovelDocument.newDocument()
+        workspaceModel.document = NovelDocument.newDocument()
+        workspaceModel.documentSessionToken.documentID = workspaceModel.document.id
         documentURL = libraryRoot
         replaceAttachments([])
-        workspaceAttachments = WorkspaceAttachmentSet()
+        workspaceModel.attachmentSet = WorkspaceAttachmentSet()
         syncV2PortableResources = []
         syncV2PortableCreatedAt = nil
-        selectedChapterID = nil
-        selectedEpisodeID = nil
-        syncV2HistoryItems = []
+        workspaceModel.selectedChapterID = nil
+        workspaceModel.selectedEpisodeID = nil
+        workspaceModel.historyItems = []
         syncV2HistoryWorkID = nil
         syncV2HistoryCursor = nil
         syncV2HistoryLocalAvailability = .unavailable
         syncV2HistoryOnlineAvailability = .unavailable
         syncV2HistoryOnlineFailure = nil
-        snapshotSyncConflict = nil
-        snapshotSyncState = nil
+        workspaceModel.syncConflict = nil
+        workspaceModel.syncUIState = nil
         snapshotSyncOutcome = nil
         advanceDocumentSessionGeneration()
         advanceEditorContentGeneration()
-        saveState = .saved
+        workspaceModel.saveState = .saved
         userDefaults.removeObject(forKey: Self.lastWorkIDKey)
     }
 }

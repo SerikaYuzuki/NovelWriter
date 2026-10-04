@@ -6,6 +6,7 @@ import NovelWorkspaceUI
 import SwiftUI
 
 struct IOSLibraryView: View {
+    @Environment(WorkspaceModel.self) private var workspace
     let store: IOSDocumentStore
     let openWork: (WorkID) -> Void
     let makeNewDocument: () -> Void
@@ -103,7 +104,7 @@ struct IOSLibraryView: View {
         #if FUMINIWA_TEST_COMPOSITION
             .task {
                 if ProcessInfo.processInfo.arguments.contains("--library-preview=import-cancel") {
-                    pendingImportOpen = store.syncV2LibraryItems.last?.workID
+                    pendingImportOpen = workspace.libraryRows.last?.workID
                 }
             }
         #endif
@@ -198,17 +199,17 @@ struct IOSLibraryView: View {
     }
 
     @ViewBuilder private var libraryNotices: some View {
-        if let failure = store.syncV2RemoteCatalogError ?? store.libraryFailure {
+        if let failure = store.syncV2RemoteCatalogError ?? workspace.libraryFailure {
             StatusLabel(SyncV2LibraryPresentation.isOffline(failure)
                 ? SyncV2LibraryPresentation.offlineNotice : remoteOnlyOpenErrorMessage(failure),
                 systemImage: SyncV2LibraryPresentation.isOffline(failure) ? "wifi.slash" : "exclamationmark.circle",
                 tone: SyncV2LibraryPresentation.isOffline(failure) ? .offline : .danger)
                 .font(FuminiwaType.rowSecondary)
         }
-        if store.syncV2LibraryItems.isEmpty {
-            if store.libraryIsLoading || store.syncV2RemoteCatalogIsLoading {
+        if workspace.libraryRows.isEmpty {
+            if workspace.libraryIsLoading || store.syncV2RemoteCatalogIsLoading {
                 ContentUnavailableView(LibraryText.loading, systemImage: "arrow.clockwise")
-            } else if let failure = store.syncV2RemoteCatalogError ?? store.libraryFailure {
+            } else if let failure = store.syncV2RemoteCatalogError ?? workspace.libraryFailure {
                 ContentUnavailableView(SyncV2LibraryPresentation.isOffline(failure) ? LibraryText.offline : LibraryText.loadFailed,
                                        systemImage: SyncV2LibraryPresentation.isOffline(failure) ? "wifi.slash" : "exclamationmark.circle",
                                        description: Text(LibraryText.retryIOS))
@@ -217,14 +218,14 @@ struct IOSLibraryView: View {
                                        description: Text(LibraryText.emptyIOS))
             }
         }
-        if !searchText.isEmpty, !store.syncV2LibraryItems.contains(where: { $0.title.localizedStandardContains(searchText) }) {
+        if !searchText.isEmpty, !workspace.libraryRows.contains(where: { $0.title.localizedStandardContains(searchText) }) {
             Text(LibraryText.noSearchResultsNotice)
                 .foregroundStyle(.secondary)
         }
     }
 
     @ViewBuilder private var loadMoreButton: some View {
-        if store.syncV2RemoteCatalogCursor != nil {
+        if workspace.remoteCatalogCursor != nil {
             Button(LibraryText.loadMore) {
                 Task { _ = await store.loadMoreRemoteCatalog() }
             }
@@ -233,20 +234,20 @@ struct IOSLibraryView: View {
     }
 
     @ViewBuilder private var accountRows: some View {
-        if store.authUIState == .signedOut {
+        if workspace.authUIState == .signedOut {
             Button("Appleでサインイン") {
                 Task { await store.signInWithApple() }
             }
             Button("Googleでサインイン") { Task { await store.signInWithGoogle() } }
-        } else if case .signedIn = store.authUIState {
+        } else if case .signedIn = workspace.authUIState {
             Label("サインイン済み", systemImage: "person.crop.circle.badge.checkmark")
             Button("サインアウト") { Task { await store.signOutFromFuminiwa() } }
-        } else if store.authUIState == .signingIn {
+        } else if workspace.authUIState == .signingIn {
             ProgressView("サインイン中…")
-        } else if store.authUIState == .unavailable {
+        } else if workspace.authUIState == .unavailable {
             Label("アカウント同期は未設定", systemImage: "person.crop.circle.badge.exclamationmark")
                 .foregroundStyle(.secondary)
-        } else if case .failed = store.authUIState {
+        } else if case .failed = workspace.authUIState {
             Button("Appleで再試行") {
                 Task { await store.signInWithApple() }
             }
@@ -255,7 +256,7 @@ struct IOSLibraryView: View {
     }
 
     private var workRows: some View {
-        ForEach(store.syncV2LibraryItems.filter { searchText.isEmpty || $0.title.localizedStandardContains(searchText) }, id: \.workID) { item in
+        ForEach(workspace.libraryRows.filter { searchText.isEmpty || $0.title.localizedStandardContains(searchText) }, id: \.workID) { item in
             VStack(alignment: .leading, spacing: Spacing.small) {
                 IOSLibraryImportRow(store: store, item: item, isRenaming: renamingIDs.contains(item.workID),
                                     open: { requestOpen(item.workID) }, rename: {
@@ -264,8 +265,8 @@ struct IOSLibraryView: View {
                                         renameAccountScope = store.snapshotSyncV2AccountScope
                                         pendingRename = item
                                     }, isGrid: usesGrid, delete: { requestDeletion(item) })
-                if case .signedIn = store.authUIState, item.accountState == .unbound,
-                   item.workID == store.syncV2ActiveWorkID {
+                if case .signedIn = workspace.authUIState, item.accountState == .unbound,
+                   item.workID == workspace.activeWorkID {
                     Button("この作品をこのアカウントへ追加して同期") {
                         Task { _ = await store.cloneActiveWorkIntoSignedInAccount() }
                     }

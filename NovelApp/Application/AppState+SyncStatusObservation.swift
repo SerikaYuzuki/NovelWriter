@@ -8,7 +8,7 @@ extension AppState {
         guard startupState.isReady,
               let application = snapshotSyncV2Application,
               let workID = currentSnapshotSyncV2WorkID else { return }
-        let session = documentSessionToken
+        let session = workspaceModel.documentSessionToken
         let account = snapshotSyncV2AccountScopeToken
         await application.observeForegroundSynchronization(workID: workID) { [weak self] in
             await self?.refreshAutomaticSnapshotSyncV2(session: session, account: account)
@@ -18,7 +18,7 @@ extension AppState {
     private func refreshAutomaticSnapshotSyncV2(
         session: WorkspaceSessionToken, account: WorkspaceAccountScope
     ) async {
-        guard !Task.isCancelled, documentSessionToken == session,
+        guard !Task.isCancelled, workspaceModel.documentSessionToken == session,
               matchesSnapshotSyncV2AccountScope(account) else { return }
         await refreshSnapshotSyncV2UIState()
     }
@@ -45,22 +45,23 @@ private struct SyncStatusObservationID: Hashable {
 }
 
 struct SnapshotSyncObservationModifier: ViewModifier {
+    @Environment(WorkspaceModel.self) private var workspace
     @Environment(AppState.self) private var appState
     @Environment(\.scenePhase) private var scenePhase
 
     func body(content: Content) -> some View {
         content
             .task(id: SyncStatusObservationID(
-                session: appState.documentSessionToken, account: appState.snapshotSyncV2AccountScopeToken
+                session: workspace.documentSessionToken, account: appState.snapshotSyncV2AccountScopeToken
             )) {
                 await appState.observeSnapshotSyncV2Status()
             }
             .task(id: SyncStatusObservationID(
-                session: appState.documentSessionToken, account: appState.snapshotSyncV2AccountScopeToken,
-                chapter: appState.selectedChapterID, episode: appState.selectedEpisodeID,
-                isActive: scenePhase == .active && !appState.isDocumentTransitionInProgress
+                session: workspace.documentSessionToken, account: appState.snapshotSyncV2AccountScopeToken,
+                chapter: workspace.selectedChapterID, episode: workspace.selectedEpisodeID,
+                isActive: scenePhase == .active && !workspace.isDocumentTransitionInProgress
             )) {
-                if scenePhase == .active, !appState.isDocumentTransitionInProgress {
+                if scenePhase == .active, !workspace.isDocumentTransitionInProgress {
                     await appState.runAutomaticSnapshotSyncV2()
                 }
             }

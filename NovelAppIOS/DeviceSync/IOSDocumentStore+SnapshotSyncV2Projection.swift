@@ -25,10 +25,12 @@ extension IOSDocumentStore {
             snapshotSyncOutcome = .failure(.fatal(.invalidLocalState))
             return false
         }
-        let retainedEpisode = preservingSelection ? selectedEpisodeID.flatMap { value.episode($0) } : nil
-        let retainedChapter = preservingSelection ? value.chapters.first(where: { $0.id == selectedChapterID }) : nil
-        document = value
-        syncV2ActiveWorkID = opened.workID
+        let retainedEpisode = preservingSelection ? workspaceModel.selectedEpisodeID.flatMap { value.episode($0) } : nil
+        let retainedChapter = preservingSelection ? value.chapters.first(where: { $0.id == workspaceModel.selectedChapterID }) : nil
+        workspaceModel.document = value
+        workspaceModel.documentSessionToken.documentID = value.id
+        workspaceModel.activeWorkID = opened.workID
+        workspaceModel.documentSessionToken.workID = opened.workID
         writingProgress.install(value, workID: opened.workID.rawValue)
         documentCreatedAt = opened.documentCreatedAt
         // v2 does not derive identity from a path or create a WorkID folder.
@@ -39,38 +41,38 @@ extension IOSDocumentStore {
         syncV2PortableResources = portableMirror.resources
         userDefaults.set(opened.workID.rawValue.uuidString, forKey: Self.lastWorkIDKey)
         clearKeepBothHandoff()
-        selectedChapterID = retainedEpisode?.chapterID ?? retainedChapter?.id ?? value.chapters.first?.id
-        selectedEpisodeID = retainedEpisode?.episode.id ?? retainedChapter?.episodes.first?.id ?? value.chapters.first?.episodes.first?.id
+        workspaceModel.selectedChapterID = retainedEpisode?.chapterID ?? retainedChapter?.id ?? value.chapters.first?.id
+        workspaceModel.selectedEpisodeID = retainedEpisode?.episode.id ?? retainedChapter?.episodes.first?.id ?? value.chapters.first?.episodes.first?.id
         advanceDocumentSessionGeneration()
         advanceEditorContentGeneration()
         startupState = .ready
-        saveState = .saved
-        if snapshotSyncState?.workID != opened.workID {
+        workspaceModel.saveState = .saved
+        if workspaceModel.syncUIState?.workID != opened.workID {
             applySnapshotSyncV2State(nil)
         }
         return true
     }
 
     func applySnapshotSyncV2State(_ state: SyncUIState?) {
-        guard state == nil || state?.workID == syncV2ActiveWorkID else { return }
+        guard state == nil || state?.workID == workspaceModel.activeWorkID else { return }
         let account = snapshotSyncV2AccountScope
         let projection = WorkspaceSyncProjection(
-            state: state, previous: snapshotSyncState,
-            presentedFailure: state.flatMap { presentedSyncFailures[account]?[$0.workID] }
+            state: state, previous: workspaceModel.syncUIState,
+            presentedFailure: state.flatMap { workspaceModel.presentedSyncFailures[account]?[$0.workID] }
         )
         if projection.announcesHistoryWait {
             AccessibilityNotification.Announcement(SyncV2HistoryFetchState.conflictWaiting).post()
         }
-        snapshotSyncState = state
-        snapshotSyncConflict = state?.conflict
+        workspaceModel.syncUIState = state
+        workspaceModel.syncConflict = state?.conflict
         guard let state else { return }
-        if projection.authenticationRequired, case .signedIn = authUIState {
-            authUIState = .failed("認証の有効期限が切れました。Appleで再サインインしてください。原稿はこの端末に保存されています。")
+        if projection.authenticationRequired, case .signedIn = workspaceModel.authUIState {
+            workspaceModel.authUIState = .failed("認証の有効期限が切れました。Appleで再サインインしてください。原稿はこの端末に保存されています。")
         }
         if let reason = projection.presentedFailure {
-            presentedSyncFailures[account, default: [:]][state.workID] = reason
+            workspaceModel.presentedSyncFailures[account, default: [:]][state.workID] = reason
         } else if projection.clearsPresentedFailure {
-            presentedSyncFailures[account]?[state.workID] = nil
+            workspaceModel.presentedSyncFailures[account]?[state.workID] = nil
         }
         if let message = projection.failureMessage {
             operationErrorMessage = message
@@ -105,7 +107,7 @@ extension IOSDocumentStore {
                 },
                 afterWake: {
                     if let workID {
-                        guard syncV2ActiveWorkID == workID else { return }
+                        guard workspaceModel.activeWorkID == workID else { return }
                         await reprojectAfterResume(
                             application,
                             workID: workID,
@@ -138,7 +140,7 @@ extension IOSDocumentStore {
             isCurrent: {
                 !self.isSyncV2RemoteAccountTransitionActive
                     && self.snapshotSyncV2ReprojectionToken == operationToken
-                    && self.matchesRemoteSyncAccount(expectedAccountScope) && self.syncV2ActiveWorkID == workID
+                    && self.matchesRemoteSyncAccount(expectedAccountScope) && self.workspaceModel.activeWorkID == workID
             }, receive: { state in
                 guard let state else { return false }
                 self.applySnapshotSyncV2State(state)
@@ -189,7 +191,7 @@ extension IOSDocumentStore {
                   operationToken == nil || snapshotSyncV2ReprojectionToken == operationToken else {
                 return
             }
-            if syncV2ActiveWorkID == workID, CheckpointCoordinator.matches(context, host: self) {
+            if workspaceModel.activeWorkID == workID, CheckpointCoordinator.matches(context, host: self) {
                 applySnapshotSyncV2State(state)
             }
         }

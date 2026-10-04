@@ -7,7 +7,7 @@ extension IOSDocumentStore {
     /// Events never install bytes directly: adoption re-enters the document gate.
     func observeSnapshotSyncV2Status() async {
         guard let application = snapshotSyncV2Application,
-              syncV2ActiveWorkID != nil else { return }
+              workspaceModel.activeWorkID != nil else { return }
         await workspaceCheckpointCoordinator(application).observe(
             application: application, host: self,
             isCurrent: { self.snapshotSyncV2Application === application },

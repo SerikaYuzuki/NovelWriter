@@ -21,26 +21,26 @@ struct IOSThumbnailCaptureTests {
         let session = try #require(store.currentDocumentSessionToken)
         let character = Character(name: "灯", kana: "あかり", colorHex: "#5077B0", role: "旅の案内人")
         let note = WorldNote(title: "星見の街", content: "夜になると、橋の上に小さな灯りがともる。")
-        store.document.title = "星を届ける庭"
-        store.document.characters = [character, Character(name: "凪", colorHex: "#5B9160")]
-        store.document.worldNotes = [note, WorldNote(title: "古い地図", content: "合成資料")]
+        store.workspaceModel.document.title = "星を届ける庭"
+        store.workspaceModel.document.characters = [character, Character(name: "凪", colorHex: "#5B9160")]
+        store.workspaceModel.document.worldNotes = [note, WorldNote(title: "古い地図", content: "合成資料")]
         let source = try SyntheticThumbnailImage.data()
-        for owner in [ThumbnailOwner(.work, store.document.id), .init(.character, character.id.rawValue), .init(.worldNote, note.id.rawValue)] {
+        for owner in [ThumbnailOwner(.work, store.workspaceModel.document.id), .init(.character, character.id.rawValue), .init(.worldNote, note.id.rawValue)] {
             let bytes = try ThumbnailEncoder.encode(source, owner: owner)
             #expect(await store.setThumbnail(bytes, owner: owner, session: session, account: store.snapshotSyncV2AccountScope))
         }
         let app = try #require(store.snapshotSyncV2Application)
-        store.syncV2LibraryItems = try await app.library().items
+        store.workspaceModel.libraryRows = try await app.library().items
         let directory = URL(fileURLWithPath: "/tmp/fuminiwa-thumbnails")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         for dark in [false, true] {
             let screens: [(String, AnyView)] = [
-                ("shelf", AnyView(IOSLibraryView(store: store, openWork: { _ in }, makeNewDocument: {}))),
-                ("work-info", AnyView(IOSProjectInfoView(store: store))),
-                ("character-list", AnyView(IOSCharacterFeatureView(store: store))),
-                ("character-detail", AnyView(IOSCharacterDetailView(store: store, characterID: character.id, expectedSession: session))),
-                ("world-list", AnyView(IOSWorldbuildingFeatureView(store: store))),
-                ("world-detail", AnyView(IOSWorldNoteDetailView(store: store, noteID: note.id, expectedSession: session)))
+                ("shelf", AnyView(IOSLibraryView(store: store, openWork: { _ in }, makeNewDocument: {}).environment(store.workspaceModel))),
+                ("work-info", AnyView(IOSProjectInfoView(store: store).environment(store.workspaceModel))),
+                ("character-list", AnyView(IOSCharacterFeatureView(store: store).environment(store.workspaceModel))),
+                ("character-detail", AnyView(IOSCharacterDetailView(store: store, characterID: character.id, expectedSession: session).environment(store.workspaceModel))),
+                ("world-list", AnyView(IOSWorldbuildingFeatureView(store: store).environment(store.workspaceModel))),
+                ("world-detail", AnyView(IOSWorldNoteDetailView(store: store, noteID: note.id, expectedSession: session).environment(store.workspaceModel)))
             ]
             for (name, view) in screens {
                 try await capture(NavigationStack { view }, name: name, dark: dark, directory: directory)

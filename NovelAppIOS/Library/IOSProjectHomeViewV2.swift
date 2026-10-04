@@ -2,9 +2,11 @@ import NovelSyncV2
 import NovelSyncV2Application
 import NovelThumbnail
 import NovelUI
+import NovelWorkspace
 import SwiftUI
 
 struct IOSProjectHomeView: View {
+    @Environment(WorkspaceModel.self) private var workspace
     let store: IOSDocumentStore
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var showsSnapshotHistory = false
@@ -20,14 +22,14 @@ struct IOSProjectHomeView: View {
     var body: some View {
         List {
             Section {
-                WorkInfoSummary(document: store.document, coverData: store.thumbnailData(ThumbnailOwner(.work, store.document.id)), synopsis: store.document.synopsis)
+                WorkInfoSummary(document: workspace.document, coverData: store.thumbnailData(ThumbnailOwner(.work, workspace.document.id)), synopsis: workspace.document.synopsis)
             }
             Section("進み具合") {
                 WritingProgressCard(tracker: store.writingProgress)
             }
             Section("執筆") {
                 Button(action: openWriting) {
-                    Label(store.document.chapters.contains { $0.episodes.contains { !$0.content.isEmpty } } ? "執筆を続ける" : "書き始める", systemImage: "pencil")
+                    Label(workspace.document.chapters.contains { $0.episodes.contains { !$0.content.isEmpty } } ? "執筆を続ける" : "書き始める", systemImage: "pencil")
                         .labelStyle(.titleAndIcon)
                         .frame(maxWidth: .infinity, minHeight: 44)
                 }
@@ -35,9 +37,9 @@ struct IOSProjectHomeView: View {
             }
             Section("作品") {
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), alignment: .top), count: dynamicTypeSize.isAccessibilitySize ? 1 : 2), spacing: Spacing.small) {
-                    feature("人物", symbol: "person.2", count: store.document.characters.count, action: openCharacters)
-                    feature("世界観", symbol: "globe.asia.australia", count: store.document.worldNotes.count, action: openWorldbuilding)
-                    feature("プロット", symbol: "rectangle.stack", count: store.document.plotCards.count, action: openPlot)
+                    feature("人物", symbol: "person.2", count: workspace.document.characters.count, action: openCharacters)
+                    feature("世界観", symbol: "globe.asia.australia", count: workspace.document.worldNotes.count, action: openWorldbuilding)
+                    feature("プロット", symbol: "rectangle.stack", count: workspace.document.plotCards.count, action: openPlot)
                     feature("伏線 未回収", symbol: "flag", count: unresolvedCount, action: openPlot)
                     feature("資料", symbol: "paperclip", count: referenceCount, action: openReferences)
                     feature("作品情報", symbol: "book.closed", detail: "あらすじ・作品設定", action: openProjectInfo)
@@ -47,11 +49,11 @@ struct IOSProjectHomeView: View {
             }
             Section("同期") {
                 IOSExplicitSyncButton(store: store, status: syncStatus)
-                if store.snapshotSyncConflict != nil {
+                if workspace.syncConflict != nil {
                     Button("競合の版を確認") { store.showsConflictSheet = true }
                         .foregroundStyle(FuminiwaColor.warning.color)
                 }
-                if case .readyForSafeAdoption = store.snapshotSyncState?.remoteProgress {
+                if case .readyForSafeAdoption = workspace.syncUIState?.remoteProgress {
                     Button("サーバーに新しい版があります") {
                         Task { _ = await store.adoptPendingSnapshotSyncV2() }
                     }
@@ -77,23 +79,23 @@ struct IOSProjectHomeView: View {
         }
         .scrollContentBackground(.hidden)
         .background(FuminiwaColor.paper.color)
-        .onChange(of: store.document.flags, initial: true) { _, _ in unresolvedCount = store.document.flags.count(where: { !$0.isResolved }) }
-        .onChange(of: store.attachments, initial: true) { _, _ in referenceCount = store.referenceAttachments.count }
+        .onChange(of: workspace.document.flags, initial: true) { _, _ in unresolvedCount = workspace.document.flags.count(where: { !$0.isResolved }) }
+        .onChange(of: workspace.attachments, initial: true) { _, _ in referenceCount = store.referenceAttachments.count }
         .navigationTitle("作品ホーム")
         .sheet(isPresented: $showsSnapshotHistory) {
             NavigationStack { IOSSnapshotHistoryView(store: store) }
         }
-        .onChange(of: store.syncV2ActiveWorkID) { _, _ in showsSnapshotHistory = false }
+        .onChange(of: workspace.activeWorkID) { _, _ in showsSnapshotHistory = false }
         .onChange(of: store.snapshotSyncV2AccountScope) { _, _ in showsSnapshotHistory = false }
     }
 
     private var syncStatus: SyncV2LibraryStatus {
-        let item = store.syncV2LibraryItems.first { $0.workID == store.syncV2ActiveWorkID }
+        let item = workspace.libraryRows.first { $0.workID == workspace.activeWorkID }
         return SyncV2LibraryStatus.resolve(availability: item?.availability ?? .localOnly,
                                            accountState: item?.accountState ?? .unbound,
                                            remoteHeadConfirmed: item?.remoteHeadConfirmed ?? false,
-                                           progress: store.snapshotSyncState?.remoteProgress ?? item?.remoteProgress ?? .idle)
-            .delayed(since: store.snapshotSyncState?.oldestUnreceivedAt, now: Date())
+                                           progress: workspace.syncUIState?.remoteProgress ?? item?.remoteProgress ?? .idle)
+            .delayed(since: workspace.syncUIState?.oldestUnreceivedAt, now: Date())
     }
 
     @State private var unresolvedCount = 0

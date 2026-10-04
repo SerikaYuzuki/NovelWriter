@@ -223,14 +223,14 @@ struct ExportPresenterTests {
             ),
             initialStartupState: .ready
         )
-        let originalSession = appState.documentSessionToken
+        let originalSession = appState.workspaceModel.documentSessionToken
         let panel = StubExportPanel(
             format: .plainText,
             destination: directory.appendingPathComponent("原稿.txt")
         )
         let presenter = ExportPresenter(
-            documentTitleProvider: { appState.document.title },
-            documentProvider: { appState.document },
+            documentTitleProvider: { appState.workspaceModel.document.title },
+            documentProvider: { appState.workspaceModel.document },
             panelPresenter: panel,
             executor: BackgroundNovelExportExecutor()
         )
@@ -239,7 +239,7 @@ struct ExportPresenterTests {
         await presenter.waitForCurrentExport()
 
         #expect(await repository.saveCount() == 0)
-        #expect(appState.documentSessionToken == originalSession)
+        #expect(appState.workspaceModel.documentSessionToken == originalSession)
         #expect(defaults.string(forKey: "fuminiwa.v2.activeWorkID") == nil)
         #expect(FileManager.default.fileExists(atPath: directory.appendingPathComponent("原稿.txt").path))
     }

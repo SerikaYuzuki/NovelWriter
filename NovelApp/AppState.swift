@@ -78,10 +78,10 @@ final class AppState {
 
     var outlinePresentation = OutlinePresentationState()
     var snapshotSyncV2Attachments: [SyncAttachment] {
-        get { workspaceAttachments.records }
+        get { workspaceModel.attachmentSet.records }
         set {
             if let replacement = WorkspaceAttachmentSet(newValue) {
-                workspaceAttachments = replacement
+                workspaceModel.attachmentSet = replacement
             }
         }
     }
@@ -154,18 +154,18 @@ final class AppState {
 
     /// Compatibility names used by old menu wiring are deliberately v2-only.
     var permitsDocumentInteraction: Bool {
-        startupState.isReady && !isDocumentTransitionInProgress && !isTerminationPending
-            && syncV2KeepBothPendingWorkID == nil
+        startupState.isReady && !workspaceModel.isDocumentTransitionInProgress && !isTerminationPending
+            && workspaceModel.keepBothPendingWorkID == nil
     }
 
     var permitsDocumentChoice: Bool {
-        startupState.isReady && !isDocumentTransitionInProgress && !isTerminationPending
-            && syncV2KeepBothPendingWorkID == nil
+        startupState.isReady && !workspaceModel.isDocumentTransitionInProgress && !isTerminationPending
+            && workspaceModel.keepBothPendingWorkID == nil
     }
 
     /// Leaving a frozen source is permitted without making it writable.
     var permitsDocumentDeparture: Bool {
-        startupState.isReady && !isDocumentTransitionInProgress && !isTerminationPending
+        startupState.isReady && !workspaceModel.isDocumentTransitionInProgress && !isTerminationPending
             && interactiveAuthOperationCount == 0
     }
 
@@ -177,7 +177,7 @@ final class AppState {
     }
 
     var canExplicitlySyncCurrentWork: Bool {
-        permitsDocumentTransitionOperation && !isSnapshotSyncInFlight
+        permitsDocumentTransitionOperation && !workspaceModel.isSyncInFlight
     }
 
     var canCloneCurrentWorkIntoActiveAccount: Bool {
@@ -186,12 +186,12 @@ final class AppState {
     }
 
     var selectedChapter: Chapter? {
-        guard let selectedChapterID else { return nil }
-        return document.chapters.first { $0.id == selectedChapterID }
+        guard let selectedChapterID = workspaceModel.selectedChapterID else { return nil }
+        return workspaceModel.document.chapters.first { $0.id == selectedChapterID }
     }
 
     var selectedEpisode: Episode? {
-        guard let selectedEpisodeID else { return nil }
+        guard let selectedEpisodeID = workspaceModel.selectedEpisodeID else { return nil }
         return selectedChapter?.episodes.first { $0.id == selectedEpisodeID }
     }
 
@@ -254,13 +254,13 @@ final class AppState {
             section: ProjectSection(rawValue: normalizedSection) ?? .structure
         )
 
-        authUIState = dependencies.authSessionCoordinator == nil ? .unavailable : .signedOut
+        workspaceModel.authUIState = dependencies.authSessionCoordinator == nil ? .unavailable : .signedOut
 
         saveCoordinator = V2DocumentSaveCoordinator(
             timing: timing,
             currentDocument: { [weak self] in
                 guard let self, startupState.isReady else { return nil }
-                return document
+                return workspaceModel.document
             },
             saveOperation: { [weak self] document in
                 guard let self else { throw CancellationError() }

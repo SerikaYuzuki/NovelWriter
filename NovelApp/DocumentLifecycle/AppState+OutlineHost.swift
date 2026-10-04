@@ -2,12 +2,23 @@ import NovelCore
 import NovelWorkspace
 
 extension AppState: WorkspaceEpisodeTransitionHost {
+    /// Selection requirements shared by outline transitions and manuscript copying.
+    var selectedChapterID: ChapterID? {
+        get { workspaceModel.selectedChapterID }
+        set { workspaceModel.selectedChapterID = newValue }
+    }
+
+    var selectedEpisodeID: EpisodeID? {
+        get { workspaceModel.selectedEpisodeID }
+        set { workspaceModel.selectedEpisodeID = newValue }
+    }
+
     func outlineCommands(_ policy: WorkspaceSavePolicy? = nil, prepared: Bool = false) -> OutlineCommands {
         OutlineCommands(host: self, policy: policy, preparedTransition: prepared)
     }
 
     func outlineSelectionChanged() {
-        plotOutlineSelection = selectedChapterID.map { .chapter($0) } ?? .unassigned
+        plotOutlineSelection = workspaceModel.selectedChapterID.map { .chapter($0) } ?? .unassigned
     }
 
     func outlineChapterRemoved(_ id: ChapterID) {
@@ -27,14 +38,14 @@ extension AppState: WorkspaceEpisodeTransitionHost {
                   current.workID == context.workID, current.account == context.account,
                   self.editorCommandSession.prepareForDocumentTransition() else { return false }
             defer { self.editorCommandSession.resumeAfterDocumentTransition() }
-            self.isDocumentTransitionInProgress = true
-            defer { self.isDocumentTransitionInProgress = false }
+            self.workspaceModel.isDocumentTransitionInProgress = true
+            defer { self.workspaceModel.isDocumentTransitionInProgress = false }
             return await operation()
         }
     }
 
     var permitsEpisodeTransitionCompletion: Bool {
-        startupState.isReady && isDocumentTransitionInProgress && !isTerminationPending && syncV2KeepBothPendingWorkID == nil
+        startupState.isReady && workspaceModel.isDocumentTransitionInProgress && !isTerminationPending && workspaceModel.keepBothPendingWorkID == nil
     }
 
     func prepareEpisodeDeparture() async -> Bool {

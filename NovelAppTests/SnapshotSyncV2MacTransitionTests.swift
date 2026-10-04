@@ -13,16 +13,16 @@ struct SnapshotSyncV2MacTransitionTests {
     func automaticAdoptionRetainsEpisode() async throws {
         let fixture = try await makeMacConflictFixture(remoteBehavior: .failure(.offline), committedCapture: .notActive)
         let selected = try #require(fixture.document.chapters.first?.episodes.last?.id)
-        fixture.state.selectedEpisodeID = selected
+        fixture.state.workspaceModel.selectedEpisodeID = selected
         let inbox = fixture.serverInbox
         await fixture.remote.setCommandHandler { sealed in
             try makeAppliedResolveServerExecution(operation: .command(sealed), inbox: inbox)
         }
         #expect(await fixture.state.resolveSnapshotConflict(using: .useServer))
         try await eventuallyMac {
-            fixture.state.document.title == "サーバー版"
+            fixture.state.workspaceModel.document.title == "サーバー版"
         }
-        #expect(fixture.state.selectedEpisodeID == selected)
+        #expect(fixture.state.workspaceModel.selectedEpisodeID == selected)
         #expect(fixture.state.selectedEpisode?.content == "二話の本文")
         #expect(fixture.state.startupState.isReady)
     }
@@ -44,7 +44,7 @@ struct SnapshotSyncV2MacTransitionTests {
         // The test runtime's vault owns the old binding.  Exercise the same
         // cold-launch reconciliation path as sign-out -> sign-in so the
         // store can park it without guessing a mismatched server UUID.
-        fixture.state.authSession = nil
+        fixture.state.workspaceModel.authSession = nil
         _ = await fixture.state.transitionFuminiwaSession(
             to: makeMacV2Session(accountID: "account-b", fence: "fence-b"),
             authState: .signedIn(accountID: "account-b")
@@ -57,11 +57,11 @@ struct SnapshotSyncV2MacTransitionTests {
         try await eventuallyMac(timeout: .seconds(3), stablePolls: 10) {
             let state = await fixture.application.uiState(workID: fixture.workID)
             return state?.remoteProgress == .idle
-                && fixture.state.authSession?.accountID == "account-b"
+                && fixture.state.workspaceModel.authSession?.accountID == "account-b"
         }
 
-        #expect(fixture.state.document.title == fixture.document.title)
-        #expect(fixture.state.document.chapters.first?.episodes.first?.content == "本文")
+        #expect(fixture.state.workspaceModel.document.title == fixture.document.title)
+        #expect(fixture.state.workspaceModel.document.chapters.first?.episodes.first?.content == "本文")
         let projection = try await fixture.application.library()
         let parked = try #require(projection.items.first { $0.workID == fixture.workID })
         #expect(parked.accountState == .parkedDifferentAccount)
@@ -82,8 +82,8 @@ struct SnapshotSyncV2MacTransitionTests {
                 // Do not re-enter the document gate from the post-apply hook.
                 // This injects the stale account proof immediately before the
                 // editor install CAS and exercises the production guard.
-                stateReference.state?.authSession = newSession
-                stateReference.state?.authUIState = .signedIn(accountID: newSession.accountID)
+                stateReference.state?.workspaceModel.authSession = newSession
+                stateReference.state?.workspaceModel.authUIState = .signedIn(accountID: newSession.accountID)
             }
         )
         stateReference.state = fixture.state
@@ -104,15 +104,15 @@ struct SnapshotSyncV2MacTransitionTests {
             // Staging leaves the conflict visible until the editor-side CAS
             // runs.  The account mutation is the synchronization point here;
             // requiring idle would hide the post-apply fencing assertion.
-            fixture.state.authSession?.accountID == "account-b"
+            fixture.state.workspaceModel.authSession?.accountID == "account-b"
         }
         fixture.state.cancelSnapshotSyncV2BackgroundOperations()
 
         #expect(await fixture.state.applySnapshotSyncV2ServerVersion() == false)
-        try await eventuallyMac { fixture.state.authSession?.accountID == "account-b" }
-        #expect(fixture.state.document.title == fixture.document.title)
-        #expect(fixture.state.document.chapters.first?.episodes.first?.content == "本文")
-        #expect(fixture.state.snapshotSyncV2ActiveWorkID == fixture.workID)
+        try await eventuallyMac { fixture.state.workspaceModel.authSession?.accountID == "account-b" }
+        #expect(fixture.state.workspaceModel.document.title == fixture.document.title)
+        #expect(fixture.state.workspaceModel.document.chapters.first?.episodes.first?.content == "本文")
+        #expect(fixture.state.workspaceModel.activeWorkID == fixture.workID)
     }
 
     @Test("useServerのapplied receiptは一回の選択で安全に採用する")
@@ -160,16 +160,16 @@ struct SnapshotSyncV2MacTransitionTests {
         await fixture.state.resumeSnapshotSyncV2()
 
         try await eventuallyMac(timeout: .seconds(3)) {
-            guard fixture.state.snapshotSyncV2ActiveWorkID == fixture.workID,
-                  fixture.state.document.title == fixture.remoteDocument.title,
+            guard fixture.state.workspaceModel.activeWorkID == fixture.workID,
+                  fixture.state.workspaceModel.document.title == fixture.remoteDocument.title,
                   let state = await fixture.application.uiState(workID: fixture.workID) else {
                 return false
             }
             return state.remoteProgress == .idle && state.conflict == nil
         }
-        #expect(fixture.state.snapshotSyncV2ActiveWorkID == fixture.workID)
-        #expect(fixture.state.document.title == fixture.remoteDocument.title)
-        #expect(fixture.state.document.chapters.first?.episodes.first?.content == "サーバー本文")
+        #expect(fixture.state.workspaceModel.activeWorkID == fixture.workID)
+        #expect(fixture.state.workspaceModel.document.title == fixture.remoteDocument.title)
+        #expect(fixture.state.workspaceModel.document.chapters.first?.episodes.first?.content == "サーバー本文")
         #expect(try await fixture.application.pendingAdoption(workID: fixture.workID) == nil)
 
         let restarted = try await SnapshotSyncV2Runtime.makeApplication(
@@ -205,8 +205,8 @@ struct SnapshotSyncV2MacTransitionTests {
 
         #expect(await fixture.state.resolveSnapshotConflict(using: .useServer))
         #expect(await fixture.state.openLibraryWork(secondWork))
-        #expect(fixture.state.snapshotSyncV2ActiveWorkID == secondWorkID)
-        #expect(fixture.state.document.title == secondDocument.title)
+        #expect(fixture.state.workspaceModel.activeWorkID == secondWorkID)
+        #expect(fixture.state.workspaceModel.document.title == secondDocument.title)
         try await eventuallyMac {
             let operations = await fixture.remote.recordedOperations()
             return operations.contains {
@@ -246,14 +246,14 @@ struct SnapshotSyncV2MacTransitionTests {
                 return false
             }
             guard state.remoteProgress == .readyForSafeAdoption(inboxID: fixture.serverInbox.inboxID),
-                  fixture.state.snapshotSyncV2ActiveWorkID == secondWorkID,
-                  fixture.state.document.title == secondDocument.title else {
+                  fixture.state.workspaceModel.activeWorkID == secondWorkID,
+                  fixture.state.workspaceModel.document.title == secondDocument.title else {
                 return false
             }
             return true
         }
-        #expect(fixture.state.snapshotSyncV2ActiveWorkID == secondWorkID)
-        #expect(fixture.state.document.title == secondDocument.title)
+        #expect(fixture.state.workspaceModel.activeWorkID == secondWorkID)
+        #expect(fixture.state.workspaceModel.document.title == secondDocument.title)
         // A verified server adoption is no longer presented as a fresh choice;
         // the durable conflict remains in SQLite until the safe gate applies it.
         #expect(await fixture.application.uiState(workID: fixture.workID)?.conflict == nil)
@@ -270,8 +270,8 @@ struct SnapshotSyncV2MacTransitionTests {
         )
         #expect(await fixture.state.openLibraryWork(sourceWork))
         try await eventuallyMac(timeout: .seconds(3)) {
-            guard fixture.state.snapshotSyncV2ActiveWorkID == fixture.workID,
-                  fixture.state.document.title == fixture.remoteDocument.title,
+            guard fixture.state.workspaceModel.activeWorkID == fixture.workID,
+                  fixture.state.workspaceModel.document.title == fixture.remoteDocument.title,
                   let state = await fixture.application.uiState(workID: fixture.workID) else {
                 return false
             }
@@ -305,7 +305,7 @@ struct SnapshotSyncV2MacTransitionTests {
 
         let mutation = Task { @MainActor () -> Bool in
             for _ in 0 ..< 100 {
-                if fixture.state.isDocumentTransitionInProgress {
+                if fixture.state.workspaceModel.isDocumentTransitionInProgress {
                     fixture.state.installV2Document(
                         secondDocument,
                         workID: secondWorkID,
@@ -321,8 +321,8 @@ struct SnapshotSyncV2MacTransitionTests {
         let restored = await fixture.state.restoreSnapshotV2(snapshotID: restoreID)
         #expect(await mutation.value)
         #expect(restored == false)
-        #expect(fixture.state.snapshotSyncV2ActiveWorkID == secondWorkID)
-        #expect(fixture.state.document.title == secondDocument.title)
+        #expect(fixture.state.workspaceModel.activeWorkID == secondWorkID)
+        #expect(fixture.state.workspaceModel.document.title == secondDocument.title)
     }
 
     @Test("restore中のaccount切替は旧accountの版をeditorへinstallしない")
@@ -340,9 +340,9 @@ struct SnapshotSyncV2MacTransitionTests {
                 return result
             }
         )
-        let originalDocument = fixture.state.document
+        let originalDocument = fixture.state.workspaceModel.document
         let originalWorkID = try #require(fixture.state.currentSnapshotSyncV2WorkID)
-        let originalSession = fixture.state.documentSessionToken
+        let originalSession = fixture.state.workspaceModel.documentSessionToken
         _ = try await fixture.application.checkpoint(
             workID: originalWorkID,
             document: originalDocument,
@@ -357,7 +357,7 @@ struct SnapshotSyncV2MacTransitionTests {
         fixture.state.saveCoordinator.markDirty()
         let restore = Task { await fixture.state.restoreSnapshotV2(snapshotID: restoreID) }
         await checkpointGate.waitForArrival()
-        #expect(fixture.state.isDocumentTransitionInProgress)
+        #expect(fixture.state.workspaceModel.isDocumentTransitionInProgress)
         let (queued, continuation) = AsyncStream<Void>.makeStream()
         fixture.state.documentOperationDidEnqueue = { continuation.yield(()) }
         defer {
@@ -365,7 +365,7 @@ struct SnapshotSyncV2MacTransitionTests {
             continuation.finish()
         }
         let accountSwitch = Task { @MainActor in
-            fixture.state.authSession = nil
+            fixture.state.workspaceModel.authSession = nil
             await fixture.configuration.vault.replaceAccount(
                 TestAccount(accountID: "account-b", accountFence: "fence-b")
             )
@@ -381,10 +381,10 @@ struct SnapshotSyncV2MacTransitionTests {
         await checkpointGate.release()
         #expect(await restore.value == false)
         #expect(await accountSwitch.value)
-        #expect(fixture.state.authSession?.accountID == "account-b")
-        #expect(fixture.state.snapshotSyncV2ActiveWorkID == originalWorkID)
-        #expect(fixture.state.documentSessionToken != originalSession)
-        #expect(fixture.state.document == originalDocument)
+        #expect(fixture.state.workspaceModel.authSession?.accountID == "account-b")
+        #expect(fixture.state.workspaceModel.activeWorkID == originalWorkID)
+        #expect(fixture.state.workspaceModel.documentSessionToken != originalSession)
+        #expect(fixture.state.workspaceModel.document == originalDocument)
     }
 }
 
@@ -540,10 +540,10 @@ extension SnapshotSyncV2MacTransitionTests {
             await fixture.state.refreshSnapshotSyncV2UIState()
             try await eventuallyMac { fixture.state.snapshotSyncAutoAdoptionTask == nil }
             #expect(try await fixture.application.pendingAdoption(workID: fixture.workID) != nil)
-            #expect(fixture.state.document.title == fixture.document.title)
+            #expect(fixture.state.workspaceModel.document.title == fixture.document.title)
         }
         #expect(await fixture.state.applySnapshotSyncV2ServerVersion())
         #expect(try await fixture.application.pendingAdoption(workID: fixture.workID) == nil)
-        #expect(fixture.state.document.title == fixture.remoteDocument.title)
+        #expect(fixture.state.workspaceModel.document.title == fixture.remoteDocument.title)
     }
 }

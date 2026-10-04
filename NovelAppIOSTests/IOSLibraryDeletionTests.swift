@@ -19,23 +19,23 @@ struct IOSLibraryDeletionTests {
         await store.bootstrap()
         #expect(await store.makeNewDocument())
         if dirty {
-            let chapter = try #require(store.selectedChapterID)
-            let episode = try #require(store.selectedEpisodeID)
+            let chapter = try #require(store.workspaceModel.selectedChapterID)
+            let episode = try #require(store.workspaceModel.selectedEpisodeID)
             store.updateEpisodeContent("削除前に保存する原稿", chapterID: chapter, episodeID: episode)
         }
         _ = await store.refreshLibrary()
-        let item = try #require(store.syncV2LibraryItems.first)
+        let item = try #require(store.workspaceModel.libraryRows.first)
         let oldSession = store.currentDocumentSessionToken
         #expect(await store.deleteLibraryWork(item, expectedSession: oldSession, accountScope: store.snapshotSyncV2AccountScope))
-        #expect(store.syncV2ActiveWorkID == nil)
+        #expect(store.workspaceModel.activeWorkID == nil)
         #expect(store.currentDocumentSessionToken == nil)
         #expect(store.startupState == .library)
-        #expect(store.syncV2LibraryItems.isEmpty)
+        #expect(store.workspaceModel.libraryRows.isEmpty)
         #expect(await config.remote.recordedDeletions().isEmpty)
         let restarted = IOSDocumentStore(userDefaults: defaults, libraryRoot: root, runtimeComposition: .test(config))
         await restarted.bootstrap()
         #expect(restarted.startupState == .library)
-        #expect(restarted.syncV2LibraryItems.isEmpty)
+        #expect(restarted.workspaceModel.libraryRows.isEmpty)
     }
 }
 
@@ -50,11 +50,11 @@ extension IOSLibraryDeletionTests {
         await store.bootstrap()
         #expect(await store.makeNewDocument())
         _ = await store.refreshLibrary()
-        let item = try #require(store.syncV2LibraryItems.first)
+        let item = try #require(store.workspaceModel.libraryRows.first)
         let session = store.currentDocumentSessionToken
         store.saveCoordinator = V2DocumentSaveCoordinator(
             timing: FuminiwaTiming(autosaveDebounceSeconds: 60, autosavePostSaveWaitSeconds: 60),
-            currentDocument: { store.document },
+            currentDocument: { store.workspaceModel.document },
             saveOperation: { _ in throw SyncV2ApplicationError.safeBoundaryRejected }
         )
         store.saveCoordinator.markDirty()

@@ -15,9 +15,9 @@ extension AppState {
             guard let self, expected.isCurrent(operationContext),
                   editorCommandSession.prepareForDocumentTransition() else { return false }
             defer { editorCommandSession.resumeAfterDocumentTransition() }
-            isDocumentTransitionInProgress = true
-            defer { isDocumentTransitionInProgress = false }
-            if saveState != .saved, currentSnapshotSyncV2WorkID != nil {
+            workspaceModel.isDocumentTransitionInProgress = true
+            defer { workspaceModel.isDocumentTransitionInProgress = false }
+            if workspaceModel.saveState != .saved, currentSnapshotSyncV2WorkID != nil {
                 guard await saveNow() else { return false }
             }
             return await (try? coordinator.installAtPreparedBoundary(

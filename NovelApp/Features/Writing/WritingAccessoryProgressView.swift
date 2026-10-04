@@ -1,8 +1,10 @@
 import AppKit
+import NovelWorkspace
 import NovelWritingProgress
 import SwiftUI
 
 struct WritingAccessoryProgressView: View {
+    @Environment(WorkspaceModel.self) private var workspace
     @Environment(AppState.self) private var appState
     var body: some View {
         TimelineView(.periodic(from: .now, by: 60)) { context in
@@ -11,7 +13,7 @@ struct WritingAccessoryProgressView: View {
                 if let notice = tracker.notice, notice.workID == work {
                     Text(notice.message)
                 } else {
-                    let count = appState.selectedEpisodeID.map { tracker.episodeCount($0) } ?? 0
+                    let count = workspace.selectedEpisodeID.map { tracker.episodeCount($0) } ?? 0
                     let today = tracker.days(for: work)[tracker.calendar.key(context.date)]?.added ?? 0
                     Text("話 \(count.formatted())字 · 今日 +\(today.formatted())字")
                 }

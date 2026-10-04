@@ -25,7 +25,7 @@ public enum WritingAssistantHostFactory {
         }
         let scheduler = host.writingSyncScheduler
         var result = WritingAssistantHost(contextID: contextID, workID: workUUID, accountID: String(describing: scope.account),
-                                          defaults: host.userDefaults, requestCenter: host.assistantRequestCenter,
+                                          defaults: host.userDefaults, requestCenter: host.workspaceModel.assistantRequestCenter,
                                           capture: { [weak host] in
                                               try validate(); guard let host else { throw WritingError.changedScope }
                                               return try capture(host: host, workUUID: workUUID)

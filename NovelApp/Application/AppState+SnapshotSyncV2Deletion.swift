@@ -3,7 +3,7 @@ import NovelWorkspace
 extension AppState {
     func deleteLibraryWork(_ work: StartupLibraryWork, accountScope: WorkspaceAccountScope) async -> Bool {
         guard let application = snapshotSyncV2Application else { return false }
-        let context = WorkspaceOperationContext(workID: currentSnapshotSyncV2WorkID, session: documentSessionToken,
+        let context = WorkspaceOperationContext(workID: currentSnapshotSyncV2WorkID, session: workspaceModel.documentSessionToken,
                                                 account: accountScope, editGeneration: nil)
         do {
             return try await LibraryCoordinator(operations: LibraryOperations(application: application)).delete(

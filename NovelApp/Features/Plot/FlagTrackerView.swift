@@ -1,5 +1,6 @@
 import NovelCore
 import NovelUI
+import NovelWorkspace
 import SwiftUI
 
 /// プロットdetail下段の伏線領域。選択状態はAppStateに集約したまま一覧と詳細を分ける。
@@ -55,6 +56,7 @@ struct FlagTrackerView: View {
 }
 
 private struct FlagListView: View {
+    @Environment(WorkspaceModel.self) private var workspace
     @Environment(AppState.self) private var appState
 
     @Binding var flagPendingDeletion: SessionBoundValue<Flag>?
@@ -64,7 +66,7 @@ private struct FlagListView: View {
         VStack(spacing: 0) {
             flagContent
 
-            if !appState.document.flags.isEmpty {
+            if !workspace.document.flags.isEmpty {
                 Divider()
 
                 HStack {
@@ -76,7 +78,7 @@ private struct FlagListView: View {
 
                     Button(role: .destructive) {
                         flagPendingDeletion = appState.selectedFlag.map {
-                            SessionBoundValue(value: $0, session: appState.documentSessionToken)
+                            SessionBoundValue(value: $0, session: workspace.documentSessionToken)
                         }
                     } label: {
                         Label("削除", systemImage: "trash")
@@ -92,7 +94,7 @@ private struct FlagListView: View {
 
     @ViewBuilder
     private var flagContent: some View {
-        if appState.document.flags.isEmpty {
+        if workspace.document.flags.isEmpty {
             ContentUnavailableView {
                 Label("伏線がありません", systemImage: "flag")
             } actions: {
@@ -133,11 +135,11 @@ private struct FlagListView: View {
     }
 
     private var unresolvedFlags: [Flag] {
-        appState.document.flags.filter { !$0.isResolved }
+        workspace.document.flags.filter { !$0.isResolved }
     }
 
     private var resolvedFlags: [Flag] {
-        appState.document.flags.filter(\.isResolved)
+        workspace.document.flags.filter(\.isResolved)
     }
 
     private var sessionBoundUnresolvedFlags: [SessionBoundValue<Flag>] {
@@ -164,17 +166,18 @@ private struct FlagListView: View {
     }
 
     private func sessionBound(_ flags: [Flag]) -> [SessionBoundValue<Flag>] {
-        let session = appState.documentSessionToken
+        let session = workspace.documentSessionToken
         return flags.map { SessionBoundValue(value: $0, session: session) }
     }
 
     private func chapterTitle(for chapterID: ChapterID?) -> String? {
         guard let chapterID else { return nil }
-        return appState.document.chapters.first { $0.id == chapterID }?.title
+        return workspace.document.chapters.first { $0.id == chapterID }?.title
     }
 }
 
 private struct FlagDetailView: View {
+    @Environment(WorkspaceModel.self) private var workspace
     @Environment(AppState.self) private var appState
 
     let onChapterJump: (ChapterID) -> Void
@@ -184,7 +187,7 @@ private struct FlagDetailView: View {
             ContentUnavailableView {
                 Label("伏線が選択されていません", systemImage: "flag")
             } description: {
-                if !appState.document.flags.isEmpty {
+                if !workspace.document.flags.isEmpty {
                     Text("左の一覧から伏線を選択してください。")
                 }
             }
@@ -195,7 +198,7 @@ private struct FlagDetailView: View {
                 plantedChapterID: selectedFlagPlantedChapterBinding,
                 resolvedChapterID: selectedFlagResolvedChapterBinding,
                 isResolved: appState.selectedFlag?.isResolved == true,
-                chapters: appState.document.chapters,
+                chapters: workspace.document.chapters,
                 showsOrderWarning: selectedFlagHasOrderWarning,
                 onToggleResolved: {
                     appState.toggleSelectedFlagResolved()
@@ -248,7 +251,7 @@ private struct FlagDetailView: View {
 
     private func chapterIndex(for chapterID: ChapterID?) -> Int? {
         guard let chapterID else { return nil }
-        return appState.document.chapters.firstIndex { $0.id == chapterID }
+        return workspace.document.chapters.firstIndex { $0.id == chapterID }
     }
 }
 

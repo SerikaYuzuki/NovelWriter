@@ -26,13 +26,13 @@ struct IOSKeepBothRecoveryTests {
         let sourceDocument = try #require(opened.document)
         #expect(store.installSnapshotSyncV2Opened(opened, value: sourceDocument))
         await store.applySnapshotSyncV2State(application.uiState(workID: sourceID))
-        let original = store.document
+        let original = store.workspaceModel.document
         let selection = try #require(store.snapshotSyncV2DisplayedConflictSelection)
         store.snapshotSyncV2KeepBothInstallOverride = { false }
         #expect(await store.resolveSnapshotSyncV2Conflict(using: .keepBoth, expectedSelection: selection) == false)
-        let duplicateID = try #require(store.syncV2KeepBothPendingWorkID)
-        #expect(store.syncV2ActiveWorkID == sourceID)
-        #expect(store.document == original)
+        let duplicateID = try #require(store.workspaceModel.keepBothPendingWorkID)
+        #expect(store.workspaceModel.activeWorkID == sourceID)
+        #expect(store.workspaceModel.document == original)
         let sourceBeforeDeparture = try await application.openLocal(workID: sourceID)
         let historyBefore = try await application.historyPage(workID: sourceID).items
         let navigation = IOSWorkspaceNavigationCoordinator()
@@ -43,23 +43,23 @@ struct IOSKeepBothRecoveryTests {
             // Retrying a failed install never queues another conflict decision.
             store.snapshotSyncV2KeepBothInstallOverride = { true }
             #expect(await store.retryKeepBothHandoff())
-            #expect(store.syncV2ActiveWorkID == duplicateID)
+            #expect(store.workspaceModel.activeWorkID == duplicateID)
         } else if action == "other" {
             let anotherID = WorkID(UUID())
             _ = try await application.checkpoint(workID: anotherID, document: .newDocument(title: "別作品"),
                                                  reason: .explicit, documentCreatedAt: Date())
-            store.saveState = .failed // Departure must bypass save for this frozen source.
+            store.workspaceModel.saveState = .failed // Departure must bypass save for this frozen source.
             #expect(await store.openSnapshotSyncV2(workID: anotherID.rawValue))
-            #expect(store.syncV2ActiveWorkID == anotherID)
+            #expect(store.workspaceModel.activeWorkID == anotherID)
         } else {
-            store.saveState = .failed
+            store.workspaceModel.saveState = .failed
             #expect(await navigation.returnToLibrary(using: store))
             #expect(navigation.path.isEmpty)
             #expect(store.startupState == .library)
-            #expect(store.syncV2ActiveWorkID == nil)
+            #expect(store.workspaceModel.activeWorkID == nil)
         }
-        #expect(store.syncV2KeepBothPendingWorkID == nil)
-        #expect(store.syncV2KeepBothHandoff == nil)
+        #expect(store.workspaceModel.keepBothPendingWorkID == nil)
+        #expect(store.workspaceModel.keepBothHandoff == nil)
         let after = try await application.openLocal(workID: sourceID)
         #expect(after.generation == sourceBeforeDeparture.generation && after.document == original)
         #expect(try await application.historyPage(workID: sourceID).items == historyBefore)

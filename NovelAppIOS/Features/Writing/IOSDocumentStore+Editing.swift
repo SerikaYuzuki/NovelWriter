@@ -6,12 +6,12 @@ import NovelWorkspace
 /// すべての操作は従来どおり`markDocumentChanged()`へ集約し、保存・同期境界は変えない。
 extension IOSDocumentStore {
     var selectedChapter: Chapter? {
-        guard let selectedChapterID else { return nil }
-        return document.chapters.first(where: { $0.id == selectedChapterID })
+        guard let selectedChapterID = workspaceModel.selectedChapterID else { return nil }
+        return workspaceModel.document.chapters.first(where: { $0.id == selectedChapterID })
     }
 
     var selectedEpisode: Episode? {
-        guard let selectedChapter, let selectedEpisodeID else { return nil }
+        guard let selectedChapter, let selectedEpisodeID = workspaceModel.selectedEpisodeID else { return nil }
         return selectedChapter.episodes.first(where: { $0.id == selectedEpisodeID })
     }
 
@@ -20,21 +20,21 @@ extension IOSDocumentStore {
     }
 
     func selectEpisode(_ episodeID: EpisodeID?) {
-        guard selectedEpisodeID != episodeID, let chapterID = selectedChapterID else { return }
+        guard workspaceModel.selectedEpisodeID != episodeID, let chapterID = workspaceModel.selectedChapterID else { return }
         _ = OutlineCommands(host: self).selectEpisode(episodeID, in: chapterID, validate: false)
     }
 
     func updateDocumentTitle(_ title: String) {
         guard permitsSyncSelectionMutation,
-              document.title != title else { return }
-        document.title = title
+              workspaceModel.document.title != title else { return }
+        workspaceModel.document.title = title
         markDocumentChanged()
     }
 
     func updateDocumentSynopsis(_ synopsis: String) {
         guard permitsSyncSelectionMutation,
-              document.synopsis != synopsis else { return }
-        document.synopsis = synopsis
+              workspaceModel.document.synopsis != synopsis else { return }
+        workspaceModel.document.synopsis = synopsis
         markDocumentChanged()
     }
 
@@ -61,16 +61,16 @@ extension IOSDocumentStore {
         if let expectedEditingToken {
             guard currentEpisodeEditingToken == expectedEditingToken else { return }
         }
-        guard selectedChapterID == chapterID, selectedEpisodeID == episodeID else { return }
-        guard let previousContent = document.episode(episodeID)?.episode.content,
+        guard workspaceModel.selectedChapterID == chapterID, workspaceModel.selectedEpisodeID == episodeID else { return }
+        guard let previousContent = workspaceModel.document.episode(episodeID)?.episode.content,
               previousContent != content else { return }
-        if let workID = syncV2ActiveWorkID {
-            writingProgress.manualChange(document: document, workID: workID.rawValue, episodeID: episodeID, content: content, previousContent: previousContent)
+        if let workID = workspaceModel.activeWorkID {
+            writingProgress.manualChange(document: workspaceModel.document, workID: workID.rawValue, episodeID: episodeID, content: content, previousContent: previousContent)
         }
-        if let application = snapshotSyncV2Application, let workID = syncV2ActiveWorkID {
+        if let application = snapshotSyncV2Application, let workID = workspaceModel.activeWorkID {
             Task { await application.recordBodyEdit(workID: workID) }
         }
-        document.updateEpisodeContent(content, for: episodeID, in: chapterID)
+        workspaceModel.document.updateEpisodeContent(content, for: episodeID, in: chapterID)
         markDocumentChanged(progressAlreadyTracked: true)
     }
 
@@ -79,11 +79,11 @@ extension IOSDocumentStore {
     }
 
     func addEpisode() {
-        _ = OutlineCommands(host: self).addEpisode(to: selectedChapterID, firstTitle: Episode.defaultTitle)
+        _ = OutlineCommands(host: self).addEpisode(to: workspaceModel.selectedChapterID, firstTitle: Episode.defaultTitle)
     }
 
     func deleteEpisodes(at offsets: IndexSet, chapterID: ChapterID) {
-        guard let chapter = document.chapters.first(where: { $0.id == chapterID }) else { return }
+        guard let chapter = workspaceModel.document.chapters.first(where: { $0.id == chapterID }) else { return }
         let ids = Set(offsets.compactMap { chapter.episodes.indices.contains($0) ? chapter.episodes[$0].id : nil })
         _ = OutlineCommands(host: self).deleteEpisodes(ids, in: chapterID, repair: .first)
     }
@@ -98,16 +98,16 @@ extension IOSDocumentStore {
 
     func updateEpisodeMemo(_ memo: String, chapterID: ChapterID, episodeID: EpisodeID) {
         guard permitsSyncSelectionMutation,
-              document.episode(episodeID)?.episode.memo != memo else { return }
-        document.updateEpisodeMemo(memo, for: episodeID, in: chapterID)
+              workspaceModel.document.episode(episodeID)?.episode.memo != memo else { return }
+        workspaceModel.document.updateEpisodeMemo(memo, for: episodeID, in: chapterID)
         markDocumentChanged()
     }
 
     private var permitsSyncSelectionMutation: Bool {
         startupState == .ready
-            && syncV2ActiveWorkID != nil
-            && !isDocumentTransitionInProgress
+            && workspaceModel.activeWorkID != nil
+            && !workspaceModel.isDocumentTransitionInProgress
             && !syncV2AccountTransitionInProgress
-            && syncV2KeepBothPendingWorkID == nil
+            && workspaceModel.keepBothPendingWorkID == nil
     }
 }

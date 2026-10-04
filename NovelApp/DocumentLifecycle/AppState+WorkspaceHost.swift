@@ -1,6 +1,13 @@
+import NovelCore
 import NovelWorkspace
 
 extension AppState: WorkspaceAttachmentHost {
+    /// Required by the shared coordinator port; app call sites use workspaceModel.
+    var document: NovelDocument {
+        get { workspaceModel.document }
+        set { workspaceModel.document = newValue }
+    }
+
     var operationContext: WorkspaceOperationContext {
         WorkspaceOperationContext(
             workID: currentSnapshotSyncV2WorkID, session: workspaceModel.documentSessionToken,

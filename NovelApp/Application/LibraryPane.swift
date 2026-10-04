@@ -7,6 +7,7 @@ import NovelWorkspaceUI
 import SwiftUI
 
 struct LibraryPane: View {
+    @Environment(WorkspaceModel.self) private var workspace
     var observesImports = true
     @Environment(AppState.self) private var appState
     @Environment(DocumentPanelPresenter.self) private var documentPanelPresenter
@@ -50,7 +51,7 @@ struct LibraryPane: View {
                 .accessibilityIdentifier("library.search")
                 .textFieldStyle(.roundedBorder)
                 .padding(.horizontal, Spacing.medium)
-            if let failure = appState.snapshotSyncLibraryFailure ?? appState.snapshotSyncLibraryLocalFailure {
+            if let failure = workspace.libraryFailure ?? appState.snapshotSyncLibraryLocalFailure {
                 StatusLabel(SyncV2LibraryPresentation.isOffline(failure)
                     ? SyncV2LibraryPresentation.offlineNotice : remoteOnlyOpenErrorMessage(failure),
                     systemImage: SyncV2LibraryPresentation.isOffline(failure) ? "wifi.slash" : "exclamationmark.circle",
@@ -81,9 +82,9 @@ struct LibraryPane: View {
             }
             .overlay {
                 if filteredWorks.isEmpty {
-                    if appState.snapshotSyncLibraryIsLoading {
+                    if workspace.libraryIsLoading {
                         ProgressView(LibraryText.loading)
-                    } else if let failure = appState.snapshotSyncLibraryFailure ?? appState.snapshotSyncLibraryLocalFailure {
+                    } else if let failure = workspace.libraryFailure ?? appState.snapshotSyncLibraryLocalFailure {
                         ContentUnavailableView(SyncV2LibraryPresentation.isOffline(failure) ? LibraryText.offline : LibraryText.loadFailed,
                                                systemImage: SyncV2LibraryPresentation.isOffline(failure) ? "wifi.slash" : "exclamationmark.circle",
                                                description: Text(LibraryText.retryMac))
@@ -123,11 +124,11 @@ struct LibraryPane: View {
                     open(work)
                 }
             }
-            if appState.snapshotSyncRemoteCatalogNextCursor != nil {
+            if workspace.remoteCatalogCursor != nil {
                 Button(LibraryText.loadMore) {
                     Task { await appState.refreshSnapshotRemoteCatalog(loadMore: true) }
                 }
-                .disabled(appState.snapshotSyncLibraryIsLoading)
+                .disabled(workspace.libraryIsLoading)
                 .frame(maxWidth: .infinity)
             }
             Divider()
@@ -227,7 +228,7 @@ struct LibraryPane: View {
             guard observesImports, let application = appState.snapshotSyncV2Application else { return }
             for await _ in await application.stateChanges() {
                 guard !Task.isCancelled else { return }
-                guard !appState.isDocumentTransitionInProgress, !appState.startupState.isReady else { continue }
+                guard !workspace.isDocumentTransitionInProgress, !appState.startupState.isReady else { continue }
                 await appState.refreshSnapshotLibrary()
             }
         }
@@ -334,13 +335,13 @@ private extension LibraryPane {
                    let startedAt = appState.snapshotSyncV2RemoteOnlyOpenStartedAt {
                     LibraryImportProgress(startedAt: startedAt,
                                           longImportNotice: SyncV2LibraryPresentation.longImportNotice,
-                                          label: (appState.libraryImportPhases[work.workID] ?? ImportPhase()).japaneseLabel,
-                                          fraction: appState.libraryImportPhases[work.workID]?.stage == .receiving
-                                              ? appState.libraryImportPhases[work.workID]?.fraction : nil,
-                                          accessibilityValue: (appState.libraryImportPhases[work.workID] ?? ImportPhase()).accessibilityValue, compact: usesGrid)
+                                          label: (appState.workspaceModel.libraryImportPhases[work.workID] ?? ImportPhase()).japaneseLabel,
+                                          fraction: appState.workspaceModel.libraryImportPhases[work.workID]?.stage == .receiving
+                                              ? appState.workspaceModel.libraryImportPhases[work.workID]?.fraction : nil,
+                                          accessibilityValue: (appState.workspaceModel.libraryImportPhases[work.workID] ?? ImportPhase()).accessibilityValue, compact: usesGrid)
                     Button(usesGrid ? "中止" : "取り込みを中止") { Task { await appState.cancelLibraryImport() } }
                         .buttonStyle(.borderless)
-                } else if let failure = appState.libraryImportFailures[work.workID] {
+                } else if let failure = appState.workspaceModel.libraryImportFailures[work.workID] {
                     StatusLabel(SyncV2LibraryPresentation.importFailure(failure), systemImage: "exclamationmark.circle", tone: .danger)
                     Button("再試行") { appState.takeOntoDevice(workID: work.workID, title: work.title) }
                         .tint(FuminiwaColor.accent.color)
@@ -387,7 +388,7 @@ private extension LibraryPane {
         if appState.libraryPrefetchWorkID == work.workID || appState.snapshotSyncV2RemoteOnlyOpeningWorkID == work.workID {
             Text(LibraryImportProgress.hint(SyncV2LibraryPresentation.longImportNotice))
             Button("取り込みを中止") { Task { await appState.cancelLibraryImport() } }
-        } else if appState.libraryImportFailures[work.workID] != nil {
+        } else if appState.workspaceModel.libraryImportFailures[work.workID] != nil {
             Button("再試行") { appState.takeOntoDevice(workID: work.workID, title: work.title) }
                 .tint(FuminiwaColor.accent.color)
                 .help(appState.libraryPrefetchWorkID != nil || appState.snapshotSyncV2RemoteOnlyOpeningWorkID != nil ? "ほかの作品を取り込み中です" : "この端末へ取り込み直します")
@@ -403,8 +404,8 @@ private extension LibraryPane {
                 guard await appState.openLibraryWork(work),
                       appState.currentSnapshotSyncV2WorkID == work.workID,
                       appState.matchesSnapshotSyncV2AccountScope(account) else { return }
-                let session = appState.documentSessionToken
-                guard appState.documentSessionToken == session,
+                let session = appState.workspaceModel.documentSessionToken
+                guard appState.workspaceModel.documentSessionToken == session,
                       appState.matchesSnapshotSyncV2AccountScope(account) else { return }
                 NotificationCenter.default.post(name: .presentWorkHistory, object: session)
             }
@@ -415,13 +416,13 @@ private extension LibraryPane {
     private func canOpen(_ work: StartupLibraryWork) -> Bool {
         work.isOpenable && !renamingIDs.contains(work.id)
 
-            && !appState.snapshotSyncPendingDeletionWorkIDs.contains(work.workID)
+            && !appState.workspaceModel.pendingDeletionWorkIDs.contains(work.workID)
     }
 
     private func renameButton(_ work: StartupLibraryWork) -> some View {
         Button("作品名を変更…", systemImage: "pencil") {
             renameTitle = work.title
-            renameSession = appState.documentSessionToken
+            renameSession = appState.workspaceModel.documentSessionToken
             renameAccountScope = appState.snapshotSyncV2AccountScopeToken
             pendingRename = work
         }
@@ -489,7 +490,7 @@ private extension LibraryPane {
     }
 
     private func status(for work: StartupLibraryWork) -> SyncV2LibraryStatus {
-        if appState.snapshotSyncPendingDeletionWorkIDs.contains(work.workID) {
+        if appState.workspaceModel.pendingDeletionWorkIDs.contains(work.workID) {
             return .init(text: LibraryText.pendingDeletion, symbol: "clock", tone: .secondary)
         }
         return work.status
@@ -511,15 +512,16 @@ private extension LibraryPane {
 }
 
 struct SnapshotHistorySheet: View {
+    @Environment(WorkspaceModel.self) private var workspace
     @Environment(AppState.self) private var appState
     let dismiss: () -> Void
 
     var body: some View {
         NavigationStack {
             VStack(alignment: .leading, spacing: Spacing.medium) {
-                Text("\(appState.document.title)の履歴")
+                Text("\(workspace.document.title)の履歴")
                     .font(.title2.weight(.semibold))
-                if appState.snapshotSyncHistory.isEmpty, !appState.snapshotSyncHistoryLoading,
+                if workspace.historyItems.isEmpty, !appState.snapshotSyncHistoryLoading,
                    appState.snapshotSyncHistoryFailure == nil {
                     ContentUnavailableView(
                         "履歴はありません",
@@ -528,12 +530,12 @@ struct SnapshotHistorySheet: View {
                     )
                 } else {
                     List {
-                        SnapshotHistorySections(items: appState.snapshotSyncHistory, application: appState.snapshotSyncV2Application, workID: appState.currentSnapshotSyncV2WorkID) { entry in
+                        SnapshotHistorySections(items: workspace.historyItems, application: appState.snapshotSyncV2Application, workID: appState.currentSnapshotSyncV2WorkID) { entry in
                             if let application = appState.snapshotSyncV2Application,
                                let workID = appState.currentSnapshotSyncV2WorkID {
-                                let session = appState.documentSessionToken
+                                let session = workspace.documentSessionToken
                                 let scope = appState.snapshotSyncV2AccountScopeToken
-                                let newest = entry.occurrenceID == appState.snapshotSyncHistory.first?.occurrenceID
+                                let newest = entry.occurrenceID == workspace.historyItems.first?.occurrenceID
                                 HistoryFetchControls(
                                     application: application, workID: workID, snapshotID: entry.snapshotID,
                                     rowDate: entry.createdAt,
@@ -541,7 +543,7 @@ struct SnapshotHistorySheet: View {
                                     historyItem: entry, userDefaults: appState.userDefaults,
                                     announcesStatus: newest
                                 ) {
-                                    guard appState.documentSessionToken == session,
+                                    guard workspace.documentSessionToken == session,
                                           appState.matchesSnapshotSyncV2AccountScope(scope) else { return }
                                     if await appState.restoreSnapshotV2(snapshotID: entry.snapshotID) {
                                         dismiss()
@@ -575,7 +577,7 @@ struct SnapshotHistorySheet: View {
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("閉じる", action: dismiss) } }
         }
         .task(id: appState.workSearchScope) { await appState.refreshSnapshotHistory() }
-        .onChange(of: appState.documentSessionToken) { _, _ in dismiss() }
+        .onChange(of: workspace.documentSessionToken) { _, _ in dismiss() }
         .onChange(of: appState.snapshotSyncV2AccountScopeToken) { _, _ in dismiss() }
     }
 }

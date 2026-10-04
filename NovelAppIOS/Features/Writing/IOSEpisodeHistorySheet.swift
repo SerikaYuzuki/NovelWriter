@@ -3,14 +3,15 @@ import NovelWorkspaceUI
 import SwiftUI
 
 struct IOSEpisodeHistorySheet: View {
+    @Environment(WorkspaceModel.self) private var workspace
     let store: IOSDocumentStore
     @Environment(\.dismiss) private var dismiss
     @State private var showingWholeWorkHistory = false
 
     var body: some View {
         NavigationStack {
-            if let context = EpisodeHistoryContext(document: store.document, episodeID: store.selectedEpisodeID),
-               let application = store.snapshotSyncV2Application, let workID = store.syncV2ActiveWorkID {
+            if let context = EpisodeHistoryContext(document: workspace.document, episodeID: workspace.selectedEpisodeID),
+               let application = store.snapshotSyncV2Application, let workID = workspace.activeWorkID {
                 EpisodeHistoryList(application: application, workID: workID, chapterID: context.chapterID,
                                    episodeID: context.episodeID, heading: context.heading, scope: store.workSearchScope,
                                    userDefaults: store.userDefaults, currentBody: { store.episodeHistoryCurrentBody },

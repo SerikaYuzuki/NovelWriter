@@ -14,13 +14,13 @@ struct ThumbnailPersistenceTests {
         let fixture = try await makeFixture()
         let state = fixture.state, application = fixture.application, work = fixture.work
         let character = Character(name: "合成人物"), note = WorldNote(title: "合成世界", content: "合成ノート")
-        state.document.characters = [character]
-        state.document.worldNotes = [note]
-        let cover = ThumbnailOwner(.work, state.document.id)
+        state.workspaceModel.document.characters = [character]
+        state.workspaceModel.document.worldNotes = [note]
+        let cover = ThumbnailOwner(.work, state.workspaceModel.document.id)
         let avatar = ThumbnailOwner(.character, character.id.rawValue)
         let world = ThumbnailOwner(.worldNote, note.id.rawValue)
         let orphan = ThumbnailOwner(.character, UUID())
-        let session = state.documentSessionToken, account = state.snapshotSyncV2AccountScopeToken
+        let session = state.workspaceModel.documentSessionToken, account = state.snapshotSyncV2AccountScopeToken
         let first = try ThumbnailEncoder.encode(SyntheticThumbnailImage.data(), owner: cover)
         let second = try ThumbnailEncoder.encode(SyntheticThumbnailImage.data(), owner: cover, crop: .init(zoom: 2))
         #expect(await state.setThumbnail(first, owner: cover, session: session, account: account))
@@ -31,7 +31,7 @@ struct ThumbnailPersistenceTests {
         #expect(await state.setThumbnail(first, owner: world, session: session, account: account))
         state.snapshotSyncV2Attachments.append(.init(attachmentId: UUID(), fileName: orphan.fileName, bytes: first))
         await state.reloadAttachments()
-        #expect(await state.checkpointSnapshotSyncV2(state.document))
+        #expect(await state.checkpointSnapshotSyncV2(state.workspaceModel.document))
         let before = try await application.openLocal(workID: work)
         #expect(state.deleteCharacter(id: character.id, expectedSession: session))
         #expect(state.deleteWorldNote(id: note.id, expectedSession: session))
@@ -54,8 +54,8 @@ struct ThumbnailPersistenceTests {
     @Test func staleAccountAndMissingOwnerCannotWrite() async throws {
         let fixture = try await makeFixture()
         let state = fixture.state
-        let owner = ThumbnailOwner(.work, state.document.id)
-        let session = state.documentSessionToken, account = state.snapshotSyncV2AccountScopeToken
+        let owner = ThumbnailOwner(.work, state.workspaceModel.document.id)
+        let session = state.workspaceModel.documentSessionToken, account = state.snapshotSyncV2AccountScopeToken
         state.snapshotSyncV2AccountScopeGeneration &+= 1
         #expect(await !state.setThumbnail(Data([1]), owner: owner, session: session, account: account))
         #expect(await !state.setThumbnail(Data([1]), owner: .init(.character, UUID()), session: session,
@@ -71,14 +71,14 @@ struct ThumbnailPersistenceTests {
         let state = AppState(dependencies: dependencies, initialStartupState: .ready)
         state.snapshotSyncV2Application = application
         state.installV2Document(.newDocument(title: "合成作品"), workID: WorkID(UUID()), createdAt: Date())
-        let owner = ThumbnailOwner(.work, state.document.id)
+        let owner = ThumbnailOwner(.work, state.workspaceModel.document.id)
         let previous = SyncAttachment(attachmentId: UUID(), fileName: owner.fileName, bytes: Data([1]))
         state.snapshotSyncV2Attachments = [previous]
         await state.reloadAttachments()
-        #expect(await !state.setThumbnail(Data([2]), owner: owner, session: state.documentSessionToken,
+        #expect(await !state.setThumbnail(Data([2]), owner: owner, session: state.workspaceModel.documentSessionToken,
                                           account: state.snapshotSyncV2AccountScopeToken))
         #expect(state.snapshotSyncV2Attachments == [previous])
-        #expect(state.attachments.first?.fileName == owner.fileName)
+        #expect(state.workspaceModel.attachments.first?.fileName == owner.fileName)
     }
 
     private func makeFixture() async throws -> Fixture {
@@ -130,7 +130,7 @@ extension ThumbnailPersistenceTests {
         state.snapshotSyncV2Attachments = [.init(attachmentId: UUID(), fileName: owner.fileName, bytes: Data([1]))]
         await state.reloadAttachments()
         let task = Task {
-            await state.setThumbnail(Data([2]), owner: owner, session: state.documentSessionToken,
+            await state.setThumbnail(Data([2]), owner: owner, session: state.workspaceModel.documentSessionToken,
                                      account: state.snapshotSyncV2AccountScopeToken)
         }
         for _ in 0 ..< 100 {
@@ -143,7 +143,7 @@ extension ThumbnailPersistenceTests {
         #expect(state.deleteCharacter(id: character.id))
         continuation.resume()
         #expect(await !task.value)
-        #expect(state.document.characters.isEmpty)
+        #expect(state.workspaceModel.document.characters.isEmpty)
         #expect(state.thumbnailData(owner) == nil)
     }
 }

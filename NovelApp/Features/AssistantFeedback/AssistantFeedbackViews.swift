@@ -1,3 +1,4 @@
+import NovelWorkspace
 import NovelWorkspaceUI
 import SwiftUI
 
@@ -107,10 +108,11 @@ struct AssistantFeedbackList: View {
 
 #if os(macOS)
 struct MacAssistantFeedbackOutline: View {
+    @Environment(WorkspaceModel.self) private var workspace
     @Environment(AppState.self) private var appState
     @Binding var selection: UUID?
     var body: some View {
-        let session = appState.documentSessionToken
+        let session = workspace.documentSessionToken
         let account = appState.snapshotSyncV2AccountScopeToken
         AssistantFeedbackList(records: appState.assistantFeedback, selection: $selection, writingHost: appState.writingAssistantHost) { record in
             await appState.deleteAssistantFeedback(record, session: session, account: account)

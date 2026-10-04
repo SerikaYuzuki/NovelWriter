@@ -86,25 +86,25 @@ extension AppState {
     /// 選択中の登場人物(存在しなければ `nil`)。
     var selectedCharacter: NovelCore.Character? {
         guard let selectedCharacterID else { return nil }
-        return document.characters.first { $0.id == selectedCharacterID }
+        return workspaceModel.document.characters.first { $0.id == selectedCharacterID }
     }
 
     /// 選択中のプロットカード(存在しなければ `nil`)。
     var selectedPlotCard: PlotCard? {
         guard let selectedPlotCardID else { return nil }
-        return document.plotCards.first { $0.id == selectedPlotCardID }
+        return workspaceModel.document.plotCards.first { $0.id == selectedPlotCardID }
     }
 
     /// 選択中の伏線(存在しなければ `nil`)。
     var selectedFlag: Flag? {
         guard let selectedFlagID else { return nil }
-        return document.flags.first { $0.id == selectedFlagID }
+        return workspaceModel.document.flags.first { $0.id == selectedFlagID }
     }
 
     /// 選択中の世界観ノート(存在しなければ `nil`)。
     var selectedWorldNote: WorldNote? {
         guard let selectedWorldNoteID else { return nil }
-        return document.worldNotes.first { $0.id == selectedWorldNoteID }
+        return workspaceModel.document.worldNotes.first { $0.id == selectedWorldNoteID }
     }
 
     // MARK: - 世界観ノート
@@ -113,7 +113,7 @@ extension AppState {
     func addWorldNote() {
         guard let id = projectFeatureCommands(.flushNow).addWorldNote(
             WorldNote(title: ""),
-            expectedSession: documentSessionToken
+            expectedSession: workspaceModel.documentSessionToken
         ) else { return }
         selectedWorldNoteID = id
     }
@@ -121,7 +121,7 @@ extension AppState {
     /// 世界観ノートを選択する。選択前の本文はdidChangeでモデルへ反映済みとする。
     func selectWorldNote(_ id: WorldNoteID?) {
         guard permitsDocumentInteraction else { return }
-        guard id == nil || document.worldNotes.contains(where: { $0.id == id }) else { return }
+        guard id == nil || workspaceModel.document.worldNotes.contains(where: { $0.id == id }) else { return }
         guard selectedWorldNoteID != id else { return }
         selectedWorldNoteID = id
         flushSaveImmediately()
@@ -129,9 +129,9 @@ extension AppState {
 
     /// 世界観ノートのタイトルを更新する。空タイトルは編集中の値として許可する。
     func updateWorldNoteTitle(_ title: String, for id: WorldNoteID) {
-        guard var note = document.worldNotes.first(where: { $0.id == id }) else { return }
+        guard var note = workspaceModel.document.worldNotes.first(where: { $0.id == id }) else { return }
         note.title = title
-        projectFeatureCommands(.debounced).updateWorldNote(note, expectedSession: documentSessionToken)
+        projectFeatureCommands(.debounced).updateWorldNote(note, expectedSession: workspaceModel.documentSessionToken)
     }
 
     /// 世界観ノートの本文を更新する。モデル反映は即時、保存だけをデバウンスする。
@@ -140,26 +140,26 @@ extension AppState {
         for id: WorldNoteID,
         expectedSession: WorkspaceSessionToken? = nil
     ) {
-        guard var note = document.worldNotes.first(where: { $0.id == id }) else { return }
+        guard var note = workspaceModel.document.worldNotes.first(where: { $0.id == id }) else { return }
         note.content = content
         projectFeatureCommands(.debounced).updateWorldNote(
             note,
-            expectedSession: expectedSession ?? documentSessionToken
+            expectedSession: expectedSession ?? workspaceModel.documentSessionToken
         )
     }
 
     /// 世界観ノートを削除し、隣接ノートへ選択を移す。
     @discardableResult
     func deleteWorldNote(id: WorldNoteID, expectedSession: WorkspaceSessionToken? = nil) -> Bool {
-        guard let index = document.worldNotes.firstIndex(where: { $0.id == id }),
+        guard let index = workspaceModel.document.worldNotes.firstIndex(where: { $0.id == id }),
               projectFeatureCommands(.flushNow).deleteWorldNote(
                   id: id,
-                  expectedSession: expectedSession ?? documentSessionToken
+                  expectedSession: expectedSession ?? workspaceModel.documentSessionToken
               ) else { return false }
         if selectedWorldNoteID == id {
-            let fallbackIndex = min(index, max(document.worldNotes.count - 1, 0))
-            selectedWorldNoteID = document.worldNotes.indices.contains(fallbackIndex)
-                ? document.worldNotes[fallbackIndex].id : nil
+            let fallbackIndex = min(index, max(workspaceModel.document.worldNotes.count - 1, 0))
+            selectedWorldNoteID = workspaceModel.document.worldNotes.indices.contains(fallbackIndex)
+                ? workspaceModel.document.worldNotes[fallbackIndex].id : nil
         }
         return true
     }
@@ -169,22 +169,22 @@ extension AppState {
         projectFeatureCommands(.flushNow).moveWorldNotes(
             fromOffsets: fromOffsets,
             toOffset: toOffset,
-            expectedSession: documentSessionToken
+            expectedSession: workspaceModel.documentSessionToken
         )
     }
 
     func ensureWorldNoteSelection() {
         if let selectedWorldNoteID,
-           document.worldNotes.contains(where: { $0.id == selectedWorldNoteID }) {
+           workspaceModel.document.worldNotes.contains(where: { $0.id == selectedWorldNoteID }) {
             return
         }
-        selectedWorldNoteID = document.worldNotes.first?.id
+        selectedWorldNoteID = workspaceModel.document.worldNotes.first?.id
     }
 
     /// 章を選択する。最後に選択していた話、なければ先頭の話も選択する。
     /// 選択が変わるたびに即座に保存する(docs/DESIGN.md 6.4)。
     func selectChapter(_ id: ChapterID?) {
-        guard permitsDocumentInteraction, id != selectedChapterID else { return }
+        guard permitsDocumentInteraction, id != workspaceModel.selectedChapterID else { return }
         if outlineCommands().selectChapter(id) {
             flushSaveImmediately()
         }
@@ -194,7 +194,7 @@ extension AppState {
     func selectPlotOutline(_ selection: PlotOutlineSelection) {
         guard permitsDocumentInteraction else { return }
         guard selection != plotOutlineSelection else { return }
-        if case let .chapter(chapterID) = selection, chapterID != selectedChapterID {
+        if case let .chapter(chapterID) = selection, chapterID != workspaceModel.selectedChapterID {
             guard permitsDocumentInteraction else { return }
         }
         plotOutlineSelection = selection
@@ -206,7 +206,7 @@ extension AppState {
 
     /// 話を選択する。`chapterID` を省略した場合は現在の章を対象にする。
     func selectEpisode(_ id: EpisodeID?, in chapterID: ChapterID? = nil) {
-        guard let target = chapterID ?? selectedChapterID else { return }
+        guard let target = chapterID ?? workspaceModel.selectedChapterID else { return }
         if outlineCommands().selectEpisode(id, in: target) {
             flushSaveImmediately()
         }
@@ -223,7 +223,7 @@ extension AppState {
     ///
     /// `title` を省略したときは、その章内の通し番号で「第N話」を付ける(UIFIX 2.1)。
     func addEpisode(to chapterID: ChapterID? = nil, title: String? = nil) {
-        _ = outlineCommands(.flushNow).addEpisode(to: chapterID ?? selectedChapterID, title: title)
+        _ = outlineCommands(.flushNow).addEpisode(to: chapterID ?? workspaceModel.selectedChapterID, title: title)
     }
 
     /// 話のタイトルを更新する。
@@ -234,8 +234,8 @@ extension AppState {
     /// 作品タイトルを更新する。空タイトルも編集中は許可し、保存はデバウンスする。
     func updateDocumentTitle(_ title: String) {
         guard permitsDocumentInteraction else { return }
-        guard document.title != title else { return }
-        document.title = title
+        guard workspaceModel.document.title != title else { return }
+        workspaceModel.document.title = title
         saveCoordinator.markDirty()
         saveCoordinator.scheduleDebouncedSave()
     }
@@ -243,8 +243,8 @@ extension AppState {
     /// 作品あらすじを更新する。保存形式の詳細はNovelStorageに閉じ込める。
     func updateDocumentSynopsis(_ synopsis: String) {
         guard permitsDocumentInteraction else { return }
-        guard document.synopsis != synopsis else { return }
-        document.synopsis = synopsis
+        guard workspaceModel.document.synopsis != synopsis else { return }
+        workspaceModel.document.synopsis = synopsis
         saveCoordinator.markDirty()
         saveCoordinator.scheduleDebouncedSave()
     }
@@ -252,11 +252,11 @@ extension AppState {
     /// 話タイトルの編集を確定し、空タイトルを既定値へ戻す。
     func commitEpisodeTitleEditing() {
         guard permitsDocumentInteraction else { return }
-        for chapter in document.chapters {
+        for chapter in workspaceModel.document.chapters {
             for episode in chapter.episodes {
                 let normalizedTitle = normalizedEpisodeTitle(episode.title)
                 if episode.title != normalizedTitle {
-                    document.updateEpisodeTitle(normalizedTitle, for: episode.id, in: chapter.id)
+                    workspaceModel.document.updateEpisodeTitle(normalizedTitle, for: episode.id, in: chapter.id)
                     saveCoordinator.markDirty()
                 }
             }
@@ -272,10 +272,10 @@ extension AppState {
     /// タイトル編集の確定時に、未保存分を即時保存へ寄せる。
     func commitChapterTitleEditing() {
         guard permitsDocumentInteraction else { return }
-        for chapter in document.chapters {
+        for chapter in workspaceModel.document.chapters {
             let normalizedTitle = normalizedChapterTitle(chapter.title)
             if chapter.title != normalizedTitle {
-                document.updateTitle(normalizedTitle, for: chapter.id)
+                workspaceModel.document.updateTitle(normalizedTitle, for: chapter.id)
                 saveCoordinator.markDirty()
             }
         }
@@ -313,7 +313,7 @@ extension AppState {
     /// ディスクへの保存は2秒デバウンスする(テキスト所有権ルール D-005。
     /// `EditorView` から編集中に本文を書き戻すことはしない)。
     func updateSelectedEpisodeContent(_ content: String) {
-        guard let selectedChapterID, let selectedEpisodeID else { return }
+        guard let selectedChapterID = workspaceModel.selectedChapterID, let selectedEpisodeID = workspaceModel.selectedEpisodeID else { return }
         updateEpisodeContent(content, for: selectedEpisodeID, in: selectedChapterID)
     }
 
@@ -330,18 +330,18 @@ extension AppState {
     ) {
         guard permitsEditorSynchronization(expectedSession: expectedSession) else { return }
         if let expectedEditorContentGeneration {
-            guard editorContentGeneration == expectedEditorContentGeneration else { return }
+            guard workspaceModel.editorContentGeneration == expectedEditorContentGeneration else { return }
         }
-        guard let chapter = document.chapters.first(where: { $0.id == chapterID }),
+        guard let chapter = workspaceModel.document.chapters.first(where: { $0.id == chapterID }),
               let episode = chapter.episodes.first(where: { $0.id == episodeID }),
               episode.content != content else { return }
         if let workID = currentSnapshotSyncV2WorkID {
-            writingProgress.manualChange(document: document, workID: workID.rawValue, episodeID: episodeID, content: content, previousContent: episode.content)
+            writingProgress.manualChange(document: workspaceModel.document, workID: workID.rawValue, episodeID: episodeID, content: content, previousContent: episode.content)
         }
         if let application = snapshotSyncV2Application, let workID = currentSnapshotSyncV2WorkID {
             Task { await application.recordBodyEdit(workID: workID) }
         }
-        document.updateEpisodeContent(content, for: episodeID, in: chapterID)
+        workspaceModel.document.updateEpisodeContent(content, for: episodeID, in: chapterID)
         editorProgressAlreadyTracked = true
         defer { editorProgressAlreadyTracked = false }
         saveCoordinator.markDirty()
@@ -352,9 +352,9 @@ extension AppState {
     /// `TextEditor` から通常の Binding 更新で呼ばれる。
     func updateSelectedEpisodeMemo(_ memo: String) {
         guard permitsDocumentInteraction else { return }
-        guard let selectedChapterID, let selectedEpisodeID else { return }
+        guard let selectedChapterID = workspaceModel.selectedChapterID, let selectedEpisodeID = workspaceModel.selectedEpisodeID else { return }
         guard selectedEpisode?.memo != memo else { return }
-        document.updateEpisodeMemo(memo, for: selectedEpisodeID, in: selectedChapterID)
+        workspaceModel.document.updateEpisodeMemo(memo, for: selectedEpisodeID, in: selectedChapterID)
         saveCoordinator.markDirty()
         saveCoordinator.scheduleDebouncedSave()
     }
