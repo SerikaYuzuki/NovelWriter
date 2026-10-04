@@ -15,7 +15,7 @@ import NovelWritingSupport
 import Observation
 
 enum IOSStartupState: Equatable { case loading, library, ready, recovery(message: String) }
-enum IOSSaveState: Equatable { case saved, dirty, saving, failed }
+typealias IOSSaveState = WorkspaceSaveState
 
 /// Build-time composition boundary for the app-hosted iOS tests. A Test
 /// binary cannot name the production case, while Run/Archive binaries do not
@@ -41,18 +41,7 @@ enum IOSRuntimeComposition: Sendable {
     #endif
 }
 
-enum IOSAuthUIState: Equatable {
-    case unavailable, signedOut, signingIn, signedIn(accountID: String), failed(String)
-    var label: String {
-        switch self {
-        case .unavailable: "アカウント同期は未設定"
-        case .signedOut: "未サインイン"
-        case .signingIn: "サインイン中…"
-        case let .signedIn(accountID): "サインイン済み（\(accountID)）"
-        case let .failed(message): message
-        }
-    }
-}
+typealias IOSAuthUIState = WorkspaceAuthUIState
 
 struct IOSEpisodeEditingToken: Hashable, Sendable {
     let documentSession: IOSDocumentSessionToken

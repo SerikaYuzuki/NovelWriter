@@ -2,6 +2,7 @@ import Foundation
 import NovelCore
 import NovelSyncV2
 import NovelSyncV2Application
+import NovelWorkspace
 import SwiftUI
 
 /// macOSのv2作品棚とremote catalogの投影。
@@ -27,7 +28,6 @@ extension AppState {
     func refreshSnapshotLibrary() async {
         guard let application = snapshotSyncV2Application else { return }
         let accountScope = snapshotSyncV2AccountScopeToken
-        let shouldPresentSelection = !startupState.isReady
         let connection: StartupLibraryConnection = switch authUIState {
         case .signedIn: .available
         case .signedOut, .unavailable, .signingIn, .failed: .offline
@@ -40,7 +40,7 @@ extension AppState {
             snapshotSyncLibraryLocalFailure = syncV2FailureKind(error)
             logSyncV2PresentationFailure(error)
             // Keep the last verified shelf on read failure.
-            if shouldPresentSelection {
+            if !startupState.isReady {
                 startupState = .documentSelection(.init(works: snapshotSyncLibraryWorks,
                                                         presentation: .localAndRemote, connection: connection))
             }
@@ -52,53 +52,26 @@ extension AppState {
         let deletedIDs = await (try? application.deletedWorkIDs()) ?? []
         guard matchesSnapshotSyncV2AccountScope(accountScope) else { return }
         snapshotSyncPendingDeletionWorkIDs = pendingDeletionIDs
-        let parkedWorkIDs = Set(
-            projection.items
-                .filter { $0.accountState == .parkedDifferentAccount }
-                .map(\.workID)
-        )
         lastStartupLibraryConnection = connection
         snapshotSyncCurrentWorkAccountState = currentSnapshotSyncV2WorkID.flatMap { workID in
             projection.items.first(where: { $0.workID == workID })?.accountState
         }
-        var worksByID = Dictionary(uniqueKeysWithValues: projection.items.compactMap(Self.startupLibraryWork))
-        for remote in snapshotSyncRemoteCatalogItems {
-            if parkedWorkIDs.contains(remote.workID) || deletedIDs.contains(remote.workID) {
-                continue
-            }
-            if let local = worksByID[remote.workID] {
-                let availability: StartupLibraryWorkAvailability = local.availability == .conflict
-                    ? .conflict
-                    : (local.availability == .remoteOnly ? .remoteOnly : .cached)
-                worksByID[remote.workID] = StartupLibraryWork(
-                    id: remote.workID.rawValue,
-                    title: local.availability == .remoteOnly || local.title.isEmpty ? remote.title : local.title,
-                    availability: availability,
-                    workID: remote.workID,
-                    remoteProgress: local.remoteProgress,
-                    historyBackfillNote: local.historyBackfillNote,
-                    oldestUnreceivedAt: local.oldestUnreceivedAt,
-                    accountState: local.accountState, remoteHeadConfirmed: local.remoteHeadConfirmed,
-                    localGeneration: local.localGeneration
-                )
-            } else {
-                worksByID[remote.workID] = StartupLibraryWork(
-                    id: remote.workID.rawValue,
-                    title: remote.title,
-                    availability: .remoteOnly,
-                    workID: remote.workID,
-                    remoteProgress: .idle, accountState: .active
-                )
-            }
-        }
-        let works = worksByID.values.sorted { SyncV2LibraryPresentation.precedes(title: $0.title, workID: $0.workID, otherTitle: $1.title, otherWorkID: $1.workID) }
+        let works = LibraryShelf.merge(
+            localItems: projection.items.filter {
+                $0.accountState == .active || $0.accountState == .unbound || $0.accountState == .parkedDifferentAccount
+            },
+            catalog: snapshotSyncRemoteCatalogItems,
+            previousItems: snapshotSyncLibraryWorks.map(Self.snapshotLibraryItem),
+            pendingDeletionIDs: pendingDeletionIDs,
+            deletedIDs: deletedIDs
+        ).compactMap(Self.startupLibraryWork).map { $0.1 }
         snapshotSyncLibraryWorks = works
-        if shouldPresentSelection {
+        if !startupState.isReady {
             startupState = .documentSelection(.init(works: works, presentation: .localAndRemote, connection: connection))
         }
     }
 
-    private static func startupLibraryWork(_ item: SyncV2LibraryItem) -> (WorkID, StartupLibraryWork)? {
+    static func startupLibraryWork(_ item: SyncV2LibraryItem) -> (WorkID, StartupLibraryWork)? {
         guard item.accountState == .active || item.accountState == .unbound
             || item.accountState == .parkedDifferentAccount else { return nil }
         let availability: StartupLibraryWorkAvailability = if item.accountState == .parkedDifferentAccount {
@@ -129,6 +102,21 @@ extension AppState {
             localGeneration: item.localGeneration
         )
         return (item.workID, work)
+    }
+
+    /// Adapts the previous macOS shelf for retention of pending deletion rows.
+    private static func snapshotLibraryItem(_ work: StartupLibraryWork) -> SyncV2LibraryItem {
+        let availability: SyncV2LibraryAvailability = switch work.availability {
+        case .remoteOnly: .remoteOnly
+        case .cached, .conflict: .cached
+        case .local, .pending, .parked, .excluded: .localOnly
+        }
+        return SyncV2LibraryItem(
+            workID: work.workID, title: work.title, availability: availability,
+            accountState: work.accountState, localGeneration: work.localGeneration,
+            remoteHeadConfirmed: work.remoteHeadConfirmed, remoteProgress: work.remoteProgress,
+            oldestUnreceivedAt: work.oldestUnreceivedAt, historyBackfillNote: work.historyBackfillNote
+        )
     }
 
     /// Refresh the account-scoped remote catalog in the background. The
