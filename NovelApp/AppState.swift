@@ -87,6 +87,9 @@ final class AppState {
     @ObservationIgnored var automaticAdoptionAttempts: [SnapshotSyncV2AccountScopeToken: [WorkID: Set<UUID>]] = [:]
     var snapshotSyncConflict: SyncV2ConflictProjection?
     var snapshotSyncHistory: [SyncV2HistoryItem] = []
+    var snapshotSyncHistoryLoading = false
+    var snapshotSyncHistoryFailure: String?
+    @ObservationIgnored var snapshotSyncHistoryRevision = UUID()
     var snapshotSyncLibraryWorks: [StartupLibraryWork] = []
     var snapshotSyncRemoteCatalogNextCursor: String?
     var snapshotSyncRemoteCatalogItems: [SyncV2RemoteCatalogEntry] = []

@@ -9,6 +9,26 @@ extension IOSDocumentStore {
         "\(String(describing: currentDocumentSessionToken))-\(snapshotSyncV2AccountScope)-\(String(describing: syncV2ActiveWorkID))-\(syncSessionController.accountGeneration)"
     }
 
+    var episodeHistoryCurrentBody: String? {
+        guard let episode = selectedEpisode else { return nil }
+        switch editorCommandSession.captureActiveCommittedText() {
+        case let .captured(text): return text
+        case .compositionInProgress: return nil
+        case .notActive: return episode.content
+        }
+    }
+
+    func episodeRestoreHost(episodeID: EpisodeID) -> WorkReplacementHost {
+        let host = workReplacementHost
+        let allowed = { [self] in
+            guard selectedEpisodeID == episodeID, document.episode(episodeID) != nil else { return false }
+            return host.validate() && snapshotSyncConflict == nil
+                && editorCommandSession.captureActiveCommittedText() != .compositionInProgress
+        }
+        return WorkReplacementHost(scope: host.scope, validate: allowed, document: host.document,
+                                   boundary: host.boundary, snapshot: host.snapshot, apply: host.apply)
+    }
+
     var workReplacementHost: WorkReplacementHost {
         let session = currentDocumentSessionToken, account = snapshotSyncV2AccountScope, work = syncV2ActiveWorkID
         let accountGeneration = syncSessionController.accountGeneration

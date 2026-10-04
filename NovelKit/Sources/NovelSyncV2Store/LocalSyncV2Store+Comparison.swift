@@ -3,6 +3,47 @@ import NovelSyncV2
 
 /// Presentation reads immutable, scoped bytes without opening a document or downloading history.
 public extension LocalSyncV2Store {
+    /// One metadata query; no manifest/object decoding. Verified pending inboxes
+    /// use the same exact account binding as the comparison reader.
+    func episodeBodyVersions(workID: WorkID, episodeKey: String,
+                             scope: V2LocalWorkScope) throws -> [SnapshotID: SnapshotEntry] {
+        guard try workRepository.scopedWorkRow(workID: workID, scope: scope) != nil else {
+            throw SyncV2StoreError.accountMismatch
+        }
+        var sql = """
+        SELECT e.snapshot_id,e.object_id,e.byte_count FROM snapshot_entries e
+        JOIN snapshots s ON s.snapshot_id=e.snapshot_id
+        WHERE s.work_id=? AND e.entity_key=?
+        """
+        var values: [SQLiteValue] = [.text(workID.description), .text(episodeKey)]
+        if case let .bound(binding) = scope {
+            sql += """
+
+            UNION
+            SELECT e.snapshot_id,e.object_id,e.byte_count FROM inbox_closure e
+            JOIN inbox_snapshots s ON s.inbox_id=e.inbox_id AND s.snapshot_id=e.snapshot_id
+            JOIN inbox_batches b ON b.inbox_id=s.inbox_id
+            JOIN inbox_objects o ON o.inbox_id=e.inbox_id AND o.object_id=e.object_id
+            WHERE s.work_id=? AND e.entity_key=? AND s.verified=1 AND o.verified=1
+              AND b.server_instance_id=? AND b.protocol_epoch=? AND b.account_id=? AND b.account_fence=?
+            """
+            values += [.text(workID.description), .text(episodeKey)] + binding.values
+        }
+        var result: [SnapshotID: SnapshotEntry] = [:]
+        for row in try workRepository.query(sql, values) {
+            guard let snapshot = try row.blob("snapshot_id"), let object = try row.blob("object_id"),
+                  let count = try row.int64("byte_count"), count >= 0 else { throw SyncV2StoreError.invalidSnapshot }
+            let id = try SnapshotID(rawValue: snapshot.hexString)
+            let entry = try SnapshotEntry(byteCount: Int(count), contentType: .entityJSON, entityKey: episodeKey,
+                                          objectId: ObjectID(rawValue: object.hexString))
+            if let existing = result[id], existing != entry {
+                throw SyncV2StoreError.invalidSnapshot
+            }
+            result[id] = entry
+        }
+        return result
+    }
+
     func comparisonManifest(workID: WorkID, snapshotID: SnapshotID, scope: V2LocalWorkScope) throws -> SnapshotManifest? {
         guard try workRepository.scopedWorkRow(workID: workID, scope: scope) != nil else {
             throw SyncV2StoreError.accountMismatch

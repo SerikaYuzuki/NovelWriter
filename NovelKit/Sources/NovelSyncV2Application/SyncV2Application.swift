@@ -49,6 +49,8 @@ public actor SyncV2Application {
     /// must never use the dictionary slot or clear a newer worker merely
     /// because it has the same WorkID.
     var lanes: [WorkID: WorkLane] = [:]
+    var episodeBodyCounts: [EpisodeBodyCountKey: Int] = [:]
+    var episodeBodyCountFlights: [EpisodeBodyCountKey: Task<Int, Error>] = [:]
     var snapshotDifferences: [SnapshotComparisonKey: SnapshotDifference] = [:]
     var snapshotDifferenceFlights: [SnapshotComparisonKey: Task<SnapshotDifference, Error>] = [:]
     var conflictPreparations: [WorkID: SyncV2ConflictAction] = [:]
@@ -65,6 +67,9 @@ public actor SyncV2Application {
     /// page can append stale rows.
     var historyScopeGeneration: UInt64 = 0 {
         didSet {
+            episodeBodyCounts.removeAll()
+            episodeBodyCountFlights.values.forEach { $0.cancel() }
+            episodeBodyCountFlights.removeAll()
             snapshotDifferences.removeAll()
             snapshotDifferenceFlights.values.forEach { $0.cancel() }
             snapshotDifferenceFlights.removeAll()

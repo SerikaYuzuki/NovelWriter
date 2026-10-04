@@ -544,6 +544,7 @@ struct IOSWorkbenchView: View {
 
 struct IOSEditorPane: View {
     @State private var showingAssistant = false
+    @State private var showingEpisodeHistory = false
     let store: IOSDocumentStore
     let userDefaults: UserDefaults
     @AppStorage(IOSEditorFontPreference.preferenceKey)
@@ -622,11 +623,17 @@ struct IOSEditorPane: View {
                 .accessibilityLabel("AI支援")
                 .accessibilityValue(showingAssistant ? "開いています" : "閉じています")
                 .accessibilityIdentifier("ios.editor.assistant")
-                Menu("コピー", systemImage: "doc.on.clipboard") {
+                Menu("話の操作", systemImage: "ellipsis") {
+                    Button("この話の履歴") { showingEpisodeHistory = true }
                     Button("この話をコピー") { store.copyEpisodeManuscript(expectedEpisodeID: episode.id) }
                     Button("この章をコピー") { store.copyChapterManuscript(expectedChapterID: chapter.id) }
                 }
             }
+            .sheet(isPresented: $showingEpisodeHistory) {
+                IOSEpisodeHistorySheet(store: store)
+            }
+            .onChange(of: store.workSearchScope) { _, _ in showingEpisodeHistory = false }
+            .onChange(of: store.selectedEpisodeID) { _, _ in showingEpisodeHistory = false }
             .inspector(isPresented: $showingAssistant) {
                 let account = store.snapshotSyncV2AccountScope
                 let session = store.currentDocumentSessionToken

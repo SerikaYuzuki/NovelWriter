@@ -27,37 +27,54 @@ extension AppState {
         }
     }
 
-    func refreshSnapshotHistory() async {
+    func presentWholeWorkHistory() {
+        NotificationCenter.default.post(name: .presentWorkHistory, object: documentSessionToken)
+    }
+
+    func refreshSnapshotHistory(publish: () -> Void = {}) async {
         guard let application = snapshotSyncV2Application else { return }
         guard let workID = currentSnapshotSyncV2WorkID else {
             snapshotSyncHistory = []
+            snapshotSyncHistoryLoading = false
+            snapshotSyncHistoryFailure = nil
+            publish()
             return
         }
         let accountScope = snapshotSyncV2AccountScopeToken
         let documentSession = documentSessionToken
-        do {
-            var cursor: String?
-            var items: [SyncV2HistoryItem] = []
-            repeat {
-                guard matchesSnapshotSyncV2AccountScope(accountScope),
-                      currentSnapshotSyncV2WorkID == workID,
-                      documentSessionToken == documentSession else { return }
-                let page = try await application.historyPage(
-                    workID: workID,
-                    cursor: cursor,
-                    pageSize: 100
-                )
-                items.append(contentsOf: page.items)
-                cursor = page.nextCursor
-            } while cursor != nil
-            guard matchesSnapshotSyncV2AccountScope(accountScope),
-                  currentSnapshotSyncV2WorkID == workID,
-                  documentSessionToken == documentSession else {
-                return
+        let revision = UUID()
+        snapshotSyncHistoryRevision = revision
+        func isCurrent() -> Bool {
+            !Task.isCancelled && snapshotSyncHistoryRevision == revision &&
+                matchesSnapshotSyncV2AccountScope(accountScope) && currentSnapshotSyncV2WorkID == workID &&
+                documentSessionToken == documentSession
+        }
+        snapshotSyncHistory = []
+        snapshotSyncHistoryLoading = true
+        snapshotSyncHistoryFailure = nil
+        defer {
+            if snapshotSyncHistoryRevision == revision {
+                snapshotSyncHistoryLoading = false
             }
-            snapshotSyncHistory = items
+        }
+        do {
+            var page = try await application.firstHistoryPage(workID: workID)
+            while true {
+                guard isCurrent() else { return }
+                if page.replacesItems {
+                    snapshotSyncHistory = page.items
+                } else {
+                    snapshotSyncHistory.append(contentsOf: page.items)
+                }
+                snapshotSyncHistoryFailure = page.onlineFailure == nil ? nil : "オンラインの履歴を取得できません。この端末の履歴を表示しています。"
+                publish()
+                guard let next = page.next else { break }
+                await Task.yield()
+                page = try await application.olderHistoryPage(next)
+            }
         } catch {
-            snapshotSyncHistory = []
+            guard isCurrent() else { return }
+            snapshotSyncHistoryFailure = "履歴を読み込めませんでした。"
         }
     }
 
