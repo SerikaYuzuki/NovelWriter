@@ -43,6 +43,7 @@ extension IOSDocumentStore {
     }
 
     func invalidateSnapshotSyncV2AccountOperations() {
+        assistantRequestCenter.cancelAll()
         libraryPrefetchTask?.cancel()
         libraryImportPhases.removeAll()
         libraryImportFailures.removeAll()

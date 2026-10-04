@@ -73,6 +73,9 @@ extension AppState {
         }
         guard prepared else { return false }
         do {
+            if let id = UUID(uuidString: work.workID.description) {
+                assistantRequestCenter.cancel(work: id)
+            }
             try await application.deleteWork(workID: work.workID)
             guard matchesSnapshotSyncV2AccountScope(accountScope) else { return false }
             snapshotSyncRemoteCatalogItems.removeAll { $0.workID == work.workID }

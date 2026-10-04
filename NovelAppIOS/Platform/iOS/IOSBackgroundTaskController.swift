@@ -60,6 +60,24 @@ private final class IOSBackgroundTaskLease {
 }
 
 extension IOSDocumentStore {
+    func assistantWithBackgroundTime(_ operation: @escaping @MainActor () async throws -> String) async throws -> String {
+        let task = Task { @MainActor in try await operation() }
+        let lease = IOSBackgroundTaskLease(controller: backgroundTaskController) { task.cancel() }
+        defer { lease.end() }
+        return try await withTaskCancellationHandler {
+            do {
+                let value = try await task.value
+                guard !task.isCancelled else { throw CancellationError() }
+                return value
+            } catch {
+                if task.isCancelled {
+                    throw CancellationError()
+                }
+                throw error
+            }
+        } onCancel: { task.cancel() }
+    }
+
     func prefetchWithBackgroundTime(_ application: SyncV2Application, workID: WorkID) async throws {
         let task = Task { try await application.prefetch(workID: workID) }
         let lease = IOSBackgroundTaskLease(controller: backgroundTaskController) { task.cancel() }

@@ -68,7 +68,7 @@ struct WritingPromptsView: View {
     var body: some View {
         Form {
             Section {
-                Picker("用途", selection: $purpose) { ForEach(AssistantPurpose.allCases) { Text($0.rawValue).tag($0) } }.disabled(saving)
+                Picker("用途", selection: $purpose) { ForEach(AssistantPurpose.allCases) { Text($0.label).tag($0) } }.disabled(saving)
                 Picker("適用先", selection: $common) {
                     Text("全作品の共通設定").tag(true); Text("この作品への追加指定").tag(false)
                 }.disabled(saving)
@@ -121,7 +121,7 @@ struct WritingPromptsView: View {
             .task(id: "\(host.contextID)-\(purpose.id)-\(common)") { await load() }
             .sheet(item: $resetTarget) { target in
                 VStack(alignment: .leading, spacing: 16) {
-                    Text("\(target == .prompt ? purpose.rawValue + "の指示" : "校正のチェック項目")を初期値に戻しますか？").font(.headline)
+                    Text("\(target == .prompt ? purpose.label + "の指示" : "校正のチェック項目")を初期値に戻しますか？").font(.headline)
                     Text("\(common ? "全作品の共通設定" : "この作品の設定")を、現在のアプリの初期値で保存し直します。")
                     ScrollView {
                         Text(target == .prompt ? purpose.defaultPrompt : ProofreadingChecklist.defaults.instructions)

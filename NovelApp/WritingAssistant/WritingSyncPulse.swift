@@ -29,6 +29,12 @@ struct WritingSyncPulse: ViewModifier {
         }
         attachedHost = host
         guard let host else { return }
+        Task { @MainActor in
+            if let entries = try? await host.records(false) {
+                _ = try? await host.recoverInterruptedRequests(entries, defaults: host.defaults)
+                host.requestCenter.changed()
+            }
+        }
         host.syncScheduler?.attach(contextID: host.contextID, foreground: scenePhase == .active,
                                    synchronize: host.synchronize)
     }
