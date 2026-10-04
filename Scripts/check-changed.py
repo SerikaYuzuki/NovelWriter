@@ -37,6 +37,11 @@ CONFORMANCE_PREFIXES = (
     "NovelKit/Sources/NovelWritingSupport/",
     "Scripts/conformance-v2",
 )
+# Window-hosted regression suites for long-fixed layout/crash issues.  They stay
+# in check.sh; changed-area runs include them only when their files change.
+LEGACY_MAC_SUITES = {
+    "WorkbenchVisualTests": ("NovelAppTests/WorkbenchVisualTests.swift", "NovelAppTests/WorkbenchSidebarLayoutTests.swift"),
+}
 STATIC_CHECKS = {
     "Scripts/check-code-structure.sh",
     "Scripts/check-sync-target-dependencies.sh",
@@ -202,8 +207,10 @@ def build_plan(files: list[str]) -> Plan:
             plan.add("sync v2 boundary", ["./Scripts/check-sync-v2-boundary.sh"])
     xcode = ["xcodebuild", "-project", "FUMINIWA.xcodeproj", "-quiet"]
     if mac_app_test:
+        skips = [f"-skip-testing:NovelAppTests/{suite}" for suite, paths in LEGACY_MAC_SUITES.items()
+                 if not any(f in paths for f in files)]
         plan.add("macOS app test", [*xcode, "test", "-scheme", "FUMINIWA", "-destination", "platform=macOS",
-                                    *unsigned])
+                                    *skips, *unsigned])
     elif app_build_mac:
         plan.add("macOS app build-for-testing", [*xcode, "build-for-testing", "-scheme", "FUMINIWA",
                                                  "-destination", "platform=macOS", *unsigned])
