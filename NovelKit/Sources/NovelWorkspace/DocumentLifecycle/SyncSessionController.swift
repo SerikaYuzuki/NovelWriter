@@ -18,7 +18,6 @@ public final class SyncSessionController<OpenResult: Sendable> {
     public var prefetchWorkID: WorkID?
     public var reprojectionTask: Task<Void, Never>?
     public var reprojectionOwner: UUID?
-    public var accountGeneration: UInt64 = 0
     /// Internal readback for the app adapter conformance tests; mutation remains owned here.
     private(set) var remoteLeases: Set<SyncV2AccountTransitionRemoteSuspensionToken> = []
 

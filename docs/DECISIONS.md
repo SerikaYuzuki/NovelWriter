@@ -181,7 +181,9 @@ P9完了：`OutlineCommands`へ章／話の追加・改名・削除・配列順�
 
 P10完了：`AuthComposition`に続き、`AccountTransitionCoordinator`へrequest window、remote suspension lease、abandon recovery、復元／Apple・Google sign-in／sign-out／A→B／refresh／revoke journal retry／旧epoch fail-closedを統合した。両AppはIME・SQLite checkpoint、document gate、UI投影とOS別providerのadapterを持つ。Macのinteractive countは共通Coordinatorの短い準備／transition状態から導出する。18シナリオのfakeと両Appは、Apple入口のcompositionを除き同じ期待値を使う。D8と12差分の判断は[D-115](#d-115-認証account-transitionの統合2026-10-04)、現在の安全境界と検証入口は[AUTH](AUTH.md)へ集約した。
 
-片方の意味を暗黙に採用しない。以下は後続phaseの統合方針であり、P1では適用しない。
+P11完了、D-111のP1〜P11移設完了：`@MainActor @Observable WorkspaceModel`へ両OSのdocument／章・話選択、session／account generation、添付、保存・同期projection、棚・catalog・取り込み、keep-both保留とAI依頼センターを集約した。AppState／IOSDocumentStoreは一つのmodelを持ち、既存名のforwarderと各coordinatorへのOS adapterを維持する。AI依頼センターと必要な値型は非UIのNovelWorkspaceへ移し、NovelWorkspaceUIからの型名を互換aliasで保つ。呼出元のない旧helperと不要なruntime判定を削除した。Macの起動画面用棚の表示identity／availability・機能選択、iOSの画面内選択とstartup／OS lifecycle／gateの意味差は保持し、wire／schema／保存・入力挙動を変更しない。稼働反映・実機受入・公開完了とは別の構造整理である。
+
+以下は各phaseで採用した統合方針。移設だけで片方の意味を暗黙に採用しない。
 
 | 差 | 現状 | 推奨・判断 |
 | --- | --- | --- |

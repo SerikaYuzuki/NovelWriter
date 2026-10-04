@@ -3,8 +3,8 @@ import NovelWorkspace
 extension AppState: WorkspaceAttachmentHost {
     var operationContext: WorkspaceOperationContext {
         WorkspaceOperationContext(
-            workID: currentSnapshotSyncV2WorkID, session: documentSessionToken,
-            account: snapshotSyncV2AccountScopeToken, editGeneration: documentChangeRevision
+            workID: currentSnapshotSyncV2WorkID, session: workspaceModel.documentSessionToken,
+            account: snapshotSyncV2AccountScopeToken, editGeneration: workspaceModel.editGeneration
         )
     }
 

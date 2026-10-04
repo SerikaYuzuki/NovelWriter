@@ -56,8 +56,8 @@ extension IOSDocumentStore {
     }
 
     var currentDocumentSessionToken: WorkspaceSessionToken? {
-        guard currentPrivateDocumentID != nil, let workID = syncV2ActiveWorkID else { return nil }
-        return WorkspaceSessionToken(generation: documentSessionGeneration, documentID: document.id, workID: workID)
+        guard currentPrivateDocumentID != nil else { return nil }
+        return workspaceModel.activeDocumentSessionToken
     }
 
     var currentEpisodeEditingToken: IOSEpisodeEditingToken? {

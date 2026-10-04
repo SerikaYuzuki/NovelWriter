@@ -1,0 +1,8 @@
+import NovelWorkspace
+
+public typealias AssistantPurpose = NovelWorkspace.AssistantPurpose
+public typealias AssistantError = NovelWorkspace.AssistantError
+public typealias AssistantProgress = NovelWorkspace.AssistantProgress
+public typealias AssistantRuntimeTiming = NovelWorkspace.AssistantRuntimeTiming
+public typealias AssistantRequestKey = NovelWorkspace.AssistantRequestKey
+public typealias AssistantRequestCenter = NovelWorkspace.AssistantRequestCenter

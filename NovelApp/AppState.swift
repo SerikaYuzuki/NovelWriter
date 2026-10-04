@@ -35,22 +35,18 @@ final class NotificationObserverToken {
 @MainActor
 @Observable
 final class AppState {
+    let workspaceModel: WorkspaceModel
     let syncSessionController = SyncSessionController<Bool>()
     let timing: FuminiwaTiming
-    let assistantRequestCenter = AssistantRequestCenter()
     let writingSyncScheduler: WritingSyncScheduler
     let writingProgress: WritingProgressTracker
     let writingProgressRoot: URL?
-    var document: NovelDocument
-    var selectedChapterID: ChapterID?
-    var selectedEpisodeID: EpisodeID?
     var selectedCharacterID: CharacterID?
     var selectedPlotCardID: PlotCardID?
     var selectedFlagID: FlagID?
     var selectedWorldNoteID: WorldNoteID?
     var plotOutlineSelection: PlotOutlineSelection = .unassigned
 
-    var saveState: DocumentSaveState
     var startupState: AppStartupState {
         didSet { logStartupTransition(from: oldValue) }
     }
@@ -60,27 +56,16 @@ final class AppState {
     @ObservationIgnored var testServerInstanceIDOverride: String?
     @ObservationIgnored var testBrowserAuthorization: (@MainActor @Sendable (URL) async throws -> Void)?
     #endif
-    var authSession: FuminiwaSession?
-    var authUIState: AuthUIState
-    var snapshotSyncPendingDeletionWorkIDs: Set<WorkID> = []
-    var snapshotSyncV2UIState: SyncUIState?
-    @ObservationIgnored var presentedSyncFailures: [WorkspaceAccountScope: [WorkID: SyncV2FatalReason]] = [:]
-    @ObservationIgnored var automaticAdoptionAttempts: [WorkspaceAccountScope: [WorkID: Set<UUID>]] = [:]
-    var snapshotSyncConflict: SyncV2ConflictProjection?
-    var snapshotSyncHistory: [SyncV2HistoryItem] = []
     var snapshotSyncHistoryLoading = false
     var snapshotSyncHistoryFailure: String?
     @ObservationIgnored var snapshotSyncHistoryRevision = UUID()
-    var snapshotSyncLibraryWorks: [StartupLibraryWork] = []
-    var snapshotSyncRemoteCatalogNextCursor: String?
-    var snapshotSyncRemoteCatalogItems: [SyncV2RemoteCatalogEntry] = []
+    @ObservationIgnored var startupShelfIdentities: [(workID: WorkID, id: UUID, availability: StartupLibraryWorkAvailability)] = []
+
     var snapshotSyncCurrentWorkAccountState: SyncV2LibraryAccountState?
     @ObservationIgnored var writingMCPControllerStorage: WritingMCPController?
     var manuscriptCopyNotice: ManuscriptCopyNotice?
-    var isSnapshotSyncInFlight = false
     var externalDocumentOpenErrorMessage: String?
     var operationMessage: String?
-    var isDocumentTransitionInProgress = false
     var isTerminationPending = false
 
     var workspaceSelection: WorkspaceSelection {
@@ -92,8 +77,6 @@ final class AppState {
     let workSearch = WorkSearchSession()
 
     var outlinePresentation = OutlinePresentationState()
-    var attachments: [Attachment]
-    @ObservationIgnored var workspaceAttachments = WorkspaceAttachmentSet()
     var snapshotSyncV2Attachments: [SyncAttachment] {
         get { workspaceAttachments.records }
         set {
@@ -105,11 +88,7 @@ final class AppState {
 
     @ObservationIgnored var attachmentPreviewURLs: [String: URL]
 
-    var documentSessionToken: WorkspaceSessionToken
-    var syncV2KeepBothHandoff: WorkspaceKeepBothHandoff?
     var syncV2KeepBothSourceSelection: SnapshotSyncV2ConflictSelection?
-    var syncV2KeepBothPendingWorkID: WorkID?
-    var editorContentGeneration: UInt64
 
     let portableBridge: SyncV2PortableBridge
     let userDefaults: UserDefaults
@@ -137,16 +116,11 @@ final class AppState {
 
     @ObservationIgnored var snapshotSyncV2Application: SyncV2Application?
     @ObservationIgnored var snapshotSyncV2Session: NovelSyncV2Application.DocumentSessionToken?
-    @ObservationIgnored var snapshotSyncV2ActiveWorkID: WorkID?
     @ObservationIgnored var snapshotSyncV2DocumentCreatedAt: Date?
     @ObservationIgnored var snapshotSyncV2PortableCreatedAt: Date?
     @ObservationIgnored var snapshotSyncV2Resources: [PortableResource]
-    var libraryImportPhases: [WorkID: ImportPhase] = [:]
-    var libraryImportFailures: [WorkID: SyncV2Failure] = [:]
-    var snapshotSyncLibraryFailure: SyncV2Failure?
     var snapshotSyncLibraryLocalFailure: SyncV2Failure?
     var snapshotSyncLibraryOpenFailure: SyncV2Failure?
-    var snapshotSyncLibraryIsLoading = false
     @ObservationIgnored var snapshotSyncV2CatalogRefreshToken: UUID?
     #if FUMINIWA_TEST_COMPOSITION
     @ObservationIgnored var documentOperationDidEnqueue: (@MainActor () -> Void)?
@@ -169,7 +143,6 @@ final class AppState {
     @ObservationIgnored var bootstrapTask: Task<Void, Never>?
     @ObservationIgnored var manuscriptCopyNoticeDismissTask: Task<Void, Never>?
     @ObservationIgnored var hasCompletedBootstrap = false
-    var documentChangeRevision: UInt64 = 0
     @ObservationIgnored var editorProgressAlreadyTracked = false
     @ObservationIgnored var saveCoordinator: V2DocumentSaveCoordinator!
     @ObservationIgnored let resignActiveObserver = NotificationObserverToken()
@@ -178,10 +151,6 @@ final class AppState {
     @ObservationIgnored let systemWakeObserver = NotificationObserverToken(center: NSWorkspace.shared.notificationCenter)
 
     static let projectSectionKey = AppPreferenceKey.projectSection
-
-    var usesSnapshotSyncV2Runtime: Bool {
-        snapshotSyncV2Application != nil || snapshotSyncV2Factory != nil
-    }
 
     /// Compatibility names used by old menu wiring are deliberately v2-only.
     var permitsDocumentInteraction: Bool {
@@ -230,6 +199,12 @@ final class AppState {
         dependencies: AppDependencies,
         initialStartupState: AppStartupState = .loading
     ) {
+        let placeholder = NovelDocument.newDocument()
+        workspaceModel = WorkspaceModel(
+            document: placeholder,
+            session: WorkspaceSessionToken(generation: 0, documentID: placeholder.id, workID: WorkID(UUID())),
+            saveState: .unsaved
+        )
         let timing = FuminiwaTiming(defaults: dependencies.userDefaults)
         self.timing = timing
         writingSyncScheduler = WritingSyncScheduler(timing: timing)
@@ -257,35 +232,19 @@ final class AppState {
         snapshotSyncV2AfterStagedRemoteOverride = dependencies.snapshotSyncV2AfterStagedRemoteOverride
         #endif
 
-        let placeholder = NovelDocument.newDocument()
-        document = placeholder
-        selectedChapterID = placeholder.chapters.first?.id
-        selectedEpisodeID = placeholder.chapters.first?.episodes.first?.id
         selectedCharacterID = nil
         selectedPlotCardID = nil
         selectedFlagID = nil
         selectedWorldNoteID = nil
         plotOutlineSelection = placeholder.chapters.first.map { .chapter($0.id) } ?? .unassigned
-        saveState = .unsaved
         startupState = initialStartupState
-        authSession = nil
-        authUIState = dependencies.authSessionCoordinator == nil ? .unavailable : .signedOut
         externalDocumentOpenErrorMessage = nil
         operationMessage = nil
-        attachments = []
         snapshotSyncV2Resources = []
         snapshotSyncV2PortableCreatedAt = nil
         attachmentPreviewURLs = [:]
-        snapshotSyncLibraryWorks = []
-        snapshotSyncRemoteCatalogItems = []
         snapshotSyncCurrentWorkAccountState = nil
         manuscriptCopyNotice = nil
-        documentSessionToken = WorkspaceSessionToken(
-            generation: 0,
-            documentID: placeholder.id,
-            workID: WorkID(UUID())
-        )
-        editorContentGeneration = 0
         let storedSection = dependencies.userDefaults.string(forKey: Self.projectSectionKey) ?? ""
         let normalizedSection = storedSection == "planning" ? ProjectSection.projectInfo.rawValue : storedSection
         if storedSection == "planning" {
@@ -294,6 +253,8 @@ final class AppState {
         workspaceSelection = WorkspaceSelection(
             section: ProjectSection(rawValue: normalizedSection) ?? .structure
         )
+
+        authUIState = dependencies.authSessionCoordinator == nil ? .unavailable : .signedOut
 
         saveCoordinator = V2DocumentSaveCoordinator(
             timing: timing,

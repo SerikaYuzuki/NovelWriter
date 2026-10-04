@@ -50,32 +50,6 @@ extension AppState {
         projectFeatureCommands(.debounced).updateCharacter(next, expectedSession: documentSessionToken)
     }
 
-    /// Optional な登場人物シート項目を更新する。空文字は `nil` として保存する。
-    func updateSelectedCharacterProfile(
-        role: String? = nil,
-        age: String? = nil,
-        gender: String? = nil,
-        firstPerson: String? = nil,
-        secondPerson: String? = nil,
-        speechStyle: String? = nil,
-        appearance: String? = nil,
-        personality: String? = nil,
-        background: String? = nil
-    ) {
-        guard permitsDocumentInteraction else { return }
-        updateSelectedCharacter(
-            role: role.map(Self.nilIfBlank(_:)) ?? selectedCharacter?.role,
-            age: age.map(Self.nilIfBlank(_:)) ?? selectedCharacter?.age,
-            gender: gender.map(Self.nilIfBlank(_:)) ?? selectedCharacter?.gender,
-            firstPerson: firstPerson.map(Self.nilIfBlank(_:)) ?? selectedCharacter?.firstPerson,
-            secondPerson: secondPerson.map(Self.nilIfBlank(_:)) ?? selectedCharacter?.secondPerson,
-            speechStyle: speechStyle.map(Self.nilIfBlank(_:)) ?? selectedCharacter?.speechStyle,
-            appearance: appearance.map(Self.nilIfBlank(_:)) ?? selectedCharacter?.appearance,
-            personality: personality.map(Self.nilIfBlank(_:)) ?? selectedCharacter?.personality,
-            background: background.map(Self.nilIfBlank(_:)) ?? selectedCharacter?.background
-        )
-    }
-
     func updateSelectedCharacterProfileField(_ field: CharacterProfileField, value: String) {
         guard permitsDocumentInteraction else { return }
         guard var current = selectedCharacter else { return }
@@ -285,14 +259,6 @@ extension AppState {
         guard var next = selectedFlag else { return }
         next.title = title ?? next.title
         next.note = note ?? next.note
-        projectFeatureCommands(.debounced).updateFlag(next, expectedSession: documentSessionToken)
-    }
-
-    /// 選択中の伏線の章紐付けを更新する。
-    func updateSelectedFlagChapters(plantedChapterID: ChapterID? = nil, resolvedChapterID: ChapterID? = nil) {
-        guard var next = selectedFlag else { return }
-        next.plantedChapterID = plantedChapterID ?? next.plantedChapterID
-        next.resolvedChapterID = resolvedChapterID ?? next.resolvedChapterID
         projectFeatureCommands(.debounced).updateFlag(next, expectedSession: documentSessionToken)
     }
 

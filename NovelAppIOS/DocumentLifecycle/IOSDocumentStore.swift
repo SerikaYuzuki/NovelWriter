@@ -155,6 +155,7 @@ private enum IOSDocumentStoreComposition {
 @MainActor
 @Observable
 final class IOSDocumentStore {
+    let workspaceModel: WorkspaceModel
     let syncSessionController = SyncSessionController<Void>()
     static let lastDocumentNameKey = "FUMINIWAIOS.lastDocumentName"
     /// v2 reopens by WorkID.  The legacy package-recent key remains available
@@ -175,60 +176,32 @@ final class IOSDocumentStore {
     #endif
 
     let timing: FuminiwaTiming
-    let assistantRequestCenter = AssistantRequestCenter()
     let writingSyncScheduler: WritingSyncScheduler
     let writingProgress: WritingProgressTracker
-    var document: NovelDocument
     var documentCreatedAt: Date
     var documentURL: URL
-    var selectedChapterID: ChapterID?
-    var selectedEpisodeID: EpisodeID?
     var startupState: IOSStartupState = .loading
-    var saveState: IOSSaveState = .saved
-    var authUIState: IOSAuthUIState = .unavailable
     var showsDocumentTransitionOverlay: Bool {
         isDocumentTransitionInProgress && !isNavigationDepartureInProgress && !isRemoteAdoptionInProgress
     }
 
     var isRemoteAdoptionInProgress = false
-    var isDocumentTransitionInProgress = false
     var isNavigationDepartureInProgress = false
-    var documentSessionGeneration: UInt64 = 0
-    var editorContentGeneration: UInt64 = 0
-    var localEditGeneration: UInt64 = 0
     var isImporterPresented = false
     var pendingExportURL: URL?
     var manuscriptCopyNotice: IOSManuscriptCopyNotice?
     var operationErrorMessage: String?
-    var attachments: [Attachment] = []
     var libraryItems: [IOSDocumentLibraryItem] = []
     var deviceSyncStartupFailedSafely = false
     var snapshotSyncOutcome: SyncV2TypedResult?
-    var snapshotSyncConflict: SyncV2ConflictProjection?
     /// Set only after a remote-only document has passed the install boundary.
     /// The shelf uses it to navigate after the asynchronous fetch completes.
-    var libraryImportPhases: [WorkID: ImportPhase] = [:]
-    var libraryImportFailures: [WorkID: SyncV2Failure] = [:]
     var snapshotSyncV2RemoteOnlyOpenFailure: SyncV2Failure?
     var showsConflictSheet = false
     var libraryNotice: String?
-    var libraryIsLoading = false
-    var libraryFailure: SyncV2Failure?
-    var isSnapshotSyncInFlight = false
-    var snapshotSyncState: SyncUIState?
-    @ObservationIgnored var presentedSyncFailures: [WorkspaceAccountScope: [WorkID: SyncV2FatalReason]] = [:]
-    @ObservationIgnored var automaticAdoptionAttempts: [WorkspaceAccountScope: [WorkID: Set<UUID>]] = [:]
-    var pendingDeletionWorkIDs: Set<WorkID> = []
     var deletedLibraryWorkIDs: Set<WorkID> = []
-    var syncV2LibraryItems: [SyncV2LibraryItem] = []
-    var syncV2RemoteCatalogItems: [SyncV2RemoteCatalogEntry] = []
-    var syncV2RemoteCatalogCursor: String?
     var syncV2RemoteCatalogIsLoading = false
     var syncV2RemoteCatalogError: SyncV2Failure?
-    /// Local SQLite and remote occurrences share one history projection.  A
-    /// SnapshotID is not a deduplication key: the same snapshot can have a
-    /// different local/remote restore authority.
-    var syncV2HistoryItems: [SyncV2HistoryItem] = []
     var syncV2HistoryCursor: String?
     var syncV2HistoryWorkID: WorkID?
     var syncV2HistoryLocalAvailability: SyncV2HistoryAvailability = .unavailable
@@ -237,18 +210,10 @@ final class IOSDocumentStore {
     /// A signed-out store keeps local SQLite data intact but parks the former
     /// account's remote projection and active sync status.
     var syncV2ParkedAccountID: String?
-    /// WorkID is the sync identity; NovelDocument.id is only its payload
-    /// anchor and may differ after import, remote open, keep-both, or clone.
-    var syncV2ActiveWorkID: WorkID?
     var syncV2AccountCloneInFlight = false
-    /// Keep-both reserves a second WorkID before the remote acknowledgement.
-    /// Until the candidate is safely opened, the original editor is read-only
-    /// so a later autosave cannot accidentally write the source Work again.
-    var syncV2KeepBothHandoff: WorkspaceKeepBothHandoff?
     #if FUMINIWA_TEST_COMPOSITION
     var snapshotSyncV2KeepBothInstallOverride: (@MainActor () async -> Bool)?
     #endif
-    var syncV2KeepBothPendingWorkID: WorkID?
 
     var snapshotSyncV2DisplayedConflictSelection: IOSSnapshotSyncV2ConflictSelection? {
         guard let workID = syncV2ActiveWorkID,
@@ -271,13 +236,7 @@ final class IOSDocumentStore {
         #else
         serverInstanceID = authSession?.serverInstanceID.uuidString.lowercased()
         #endif
-        return WorkspaceAccountScope(
-            accountID: authSession?.accountID,
-            accountFence: authSession?.accountFence,
-            serverInstanceID: serverInstanceID,
-            protocolEpoch: authSession.flatMap { Int64(exactly: $0.syncProtocolEpoch) },
-            generation: syncSessionController.accountGeneration
-        )
+        return workspaceModel.accountScope(serverInstanceID: serverInstanceID)
     }
 
     let workSearch = WorkSearchSession()
@@ -319,7 +278,6 @@ final class IOSDocumentStore {
     /// production always uses the session's attested UUID.
     @ObservationIgnored var testServerInstanceIDOverride: String?
     #endif
-    @ObservationIgnored var authSession: FuminiwaSession?
     #if FUMINIWA_TEST_COMPOSITION
     @ObservationIgnored var documentOperationDidEnqueue: (@MainActor () -> Void)?
     @ObservationIgnored lazy var documentOperationGate = DocumentOperationGate(didEnqueueOperation: { [weak self] in
@@ -358,8 +316,6 @@ final class IOSDocumentStore {
     @ObservationIgnored var bootstrapTask: Task<Void, Never>?
     @ObservationIgnored var hasCompletedBootstrap = false
     @ObservationIgnored var pendingExportRootURL: URL?
-    /// Attachment bytes are owned by the Snapshot Sync v2 SQLite/CAS record.
-    @ObservationIgnored var workspaceAttachments = WorkspaceAttachmentSet()
     /// Opaque portable-package remainder retained by the shared SQLite v2
     /// store. It is only populated by explicit import/open and is never read
     /// from a package during ordinary document lifecycle operations.
@@ -409,6 +365,12 @@ final class IOSDocumentStore {
         libraryRoot: URL? = nil,
         runtimeComposition: IOSRuntimeComposition = .currentBuild()
     ) {
+        let placeholder = NovelDocument.newDocument()
+        workspaceModel = WorkspaceModel(
+            document: placeholder,
+            session: WorkspaceSessionToken(generation: 0, documentID: placeholder.id, workID: WorkID(UUID())),
+            saveState: .saved
+        )
         let timing = FuminiwaTiming(defaults: userDefaults)
         self.timing = timing
         writingSyncScheduler = WritingSyncScheduler(timing: timing)
@@ -426,7 +388,6 @@ final class IOSDocumentStore {
         authSessionCoordinator = auth.sessionCoordinator
         appleSignInCoordinator = auth.appleSignInCoordinator
         appleAuthenticationOrchestrator = auth.appleAuthenticationOrchestrator
-        authUIState = auth.uiState
         let workingCopy = IOSDocumentStoreComposition.makeWorkingCopy(
             runtimeComposition: runtimeComposition,
             privateWorkingCopyLocation: privateWorkingCopyLocation,
@@ -436,15 +397,12 @@ final class IOSDocumentStore {
         self.privateWorkingCopyLocation = workingCopy.location
         self.libraryRoot = workingCopy.root
         snapshotSyncV2DocumentGate = SnapshotSyncV2Runtime.makeProductionDocumentGate()
-        let placeholder = NovelDocument.newDocument()
-        document = placeholder
         documentCreatedAt = Date()
         // URL is retained only for the explicit package import/export bridge.
         // A normal v2 work has no filesystem identity; WorkID + SQLite is the
         // sole durable identity and no per-work directory is created here.
         documentURL = workingCopy.root.standardizedFileURL
-        selectedChapterID = placeholder.chapters.first?.id
-        selectedEpisodeID = placeholder.chapters.first?.episodes.first?.id
+        authUIState = auth.uiState
         if workingCopy.location == nil {
             failStartupForDeviceSyncSafety()
         }

@@ -3,8 +3,8 @@ import NovelWorkspace
 extension IOSDocumentStore: WorkspaceAttachmentHost {
     var operationContext: WorkspaceOperationContext {
         WorkspaceOperationContext(
-            workID: syncV2ActiveWorkID, session: currentDocumentSessionToken,
-            account: snapshotSyncV2AccountScope, editGeneration: localEditGeneration
+            workID: workspaceModel.activeWorkID, session: currentDocumentSessionToken,
+            account: snapshotSyncV2AccountScope, editGeneration: workspaceModel.editGeneration
         )
     }
 
