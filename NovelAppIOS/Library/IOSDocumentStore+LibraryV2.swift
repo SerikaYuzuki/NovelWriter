@@ -137,14 +137,15 @@ extension IOSDocumentStore {
                 libraryIsLoading = false
             }
         }
-        let projection: SyncV2LibraryProjection
+        let refresh: LibraryRefresh
         do {
-            projection = try await application.library()
-            let pending = try await application.pendingDeletionWorkIDs()
-            let deleted = try await application.deletedWorkIDs()
-            guard matchesSyncAccount(expectedAccountScope), libraryRefreshGeneration == refreshGeneration else { return false }
-            pendingDeletionWorkIDs = pending
-            deletedLibraryWorkIDs = deleted
+            guard let result = try await LibraryCoordinator(operations: LibraryOperations(application: application)).refresh(
+                account: expectedAccountScope, currentAccount: { snapshotSyncV2AccountScope },
+                isCurrent: { !isSyncV2AccountTransitionActive && libraryRefreshGeneration == refreshGeneration }
+            ) else { return false }
+            refresh = result
+            pendingDeletionWorkIDs = result.pendingDeletionIDs
+            deletedLibraryWorkIDs = result.deletedIDs
             libraryFailure = nil
         } catch {
             guard matchesSyncAccount(expectedAccountScope) else { return false }
@@ -153,7 +154,7 @@ extension IOSDocumentStore {
             throw error
         }
         return applySnapshotSyncV2LibraryProjection(
-            projection,
+            refresh.projection,
             expectedAccountScope: expectedAccountScope,
             refreshGeneration: refreshGeneration
         )
@@ -168,15 +169,12 @@ extension IOSDocumentStore {
         guard !isSyncV2AccountTransitionActive,
               libraryRefreshGeneration == refreshGeneration,
               matchesSyncAccount(expectedAccountScope) else { return false }
-        let localItems = projection.items.filter { item in
-            if item.accountState == .parkedDifferentAccount {
-                return exposesParkedSyncV2Items
-            }
-            return exposesAccountScopedSyncV2Items || item.accountState == .unbound
-        }
-        syncV2LibraryItems = mergeRemoteCatalog(
-            into: localItems,
-            catalog: exposesAccountScopedSyncV2Items ? syncV2RemoteCatalogItems : []
+        let refresh = LibraryRefresh(projection: projection, pendingDeletionIDs: pendingDeletionWorkIDs,
+                                     deletedIDs: deletedLibraryWorkIDs)
+        syncV2LibraryItems = refresh.merged(
+            catalog: syncV2RemoteCatalogItems, previousItems: syncV2LibraryItems,
+            exposesAccountScopedItems: exposesAccountScopedSyncV2Items,
+            exposesParkedItems: exposesParkedSyncV2Items
         )
         libraryItems = []
         verifiedPrivateDocumentIDs = []
@@ -205,24 +203,13 @@ extension IOSDocumentStore {
             }
         }
         do {
-            let page = try await application.refreshRemoteCatalog(
-                cursor: cursor,
-                pageSize: 100
-            )
-            guard !isSyncV2RemoteAccountTransitionActive,
-                  remoteCatalogRefreshGeneration == refreshGeneration,
-                  matchesSyncAccount(expectedAccountScope) else { return false }
-            var rows = Dictionary(
-                uniqueKeysWithValues: existingItems.map { ($0.workID, $0) }
-            )
-            for item in page.items {
-                rows[item.workID] = item
-            }
-            let remoteItems = rows.values.sorted {
-                $0.title.localizedStandardCompare($1.title) == .orderedAscending
-            }
+            guard let page = try await LibraryCoordinator(operations: LibraryOperations(application: application)).catalogPage(
+                cursor: cursor, existingItems: existingItems, order: .title,
+                account: expectedAccountScope, currentAccount: { snapshotSyncV2AccountScope },
+                isCurrent: { !isSyncV2RemoteAccountTransitionActive && remoteCatalogRefreshGeneration == refreshGeneration }
+            ) else { return false }
             return applySnapshotSyncV2RemoteCatalogPage(
-                remoteItems: remoteItems,
+                remoteItems: page.items,
                 nextCursor: page.nextCursor,
                 expectedAccountScope: expectedAccountScope,
                 refreshGeneration: refreshGeneration

@@ -164,6 +164,8 @@ P6完了：`WorkspaceAttachmentSet`と`WorkspaceAttachmentCommands`へ添付の�
 
 P7完了：`WritingAssistantHostFactory`／`WorkReplacementHostFactory`でWorkspaceHostの能力portからhostを生成し、本文capture・範囲検査・編集claim／checkpoint／永続Undoと感想保存の共通処理を集約（D10解決）。Macの注入closureとiOSのEditorCommandSession取得は`captureCommittedText()`を通す。OS別の保存・遷移gate、選択修復、MCP画像hook、iOS背景時間、HTTP／Keychain／設定とpanelはAppに残し、既存挙動を維持する。
 
+P8a完了：棚のSQLite読取・削除ID・merge、account付きcatalog paging、取り込み監視／取消／端末取得、改名・削除の手順を`LibraryCoordinator`へ集約。`WorkspaceLibraryHost`は既存のOS別IME・保存・document gateと退役を注入し、削除は保存後に編集世代を固定してdurable intentを作り、gate解放後に通信する。MacのstartupState書込時判断、catalog順と削除待ち表示の時機、iOS背景時間を維持。共通の照合・順序テストはfake hostへ移し、SQLite／IME／表示のadapter smokeを残す。open／install・checkpoint・adoption・conflict・authは後続phaseのまま。
+
 片方の意味を暗黙に採用しない。以下は後続phaseの統合方針であり、P1では適用しない。
 
 | 差 | 現状 | 推奨・判断 |

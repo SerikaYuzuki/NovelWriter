@@ -43,17 +43,19 @@ extension AppState {
         case .signedIn: .available
         case .signedOut, .unavailable, .signingIn, .failed: .offline
         }
-        let projection: SyncV2LibraryProjection
+        let refresh: LibraryRefresh
         do {
+            var operations = LibraryOperations(application: application)
             #if FUMINIWA_TEST_COMPOSITION
-            projection = if let snapshotSyncV2LibraryOverride {
-                try await snapshotSyncV2LibraryOverride(application)
-            } else {
-                try await application.library()
+            if let snapshotSyncV2LibraryOverride {
+                operations.library = { try await snapshotSyncV2LibraryOverride(application) }
             }
-            #else
-            projection = try await application.library()
             #endif
+            guard let result = try await LibraryCoordinator(operations: operations).refresh(
+                account: accountScope, currentAccount: { snapshotSyncV2AccountScopeToken },
+                isCurrent: { true }, tolerateDeletionReadFailure: true
+            ) else { return }
+            refresh = result
         } catch is CancellationError {
             return
         } catch {
@@ -69,22 +71,14 @@ extension AppState {
         }
         guard !Task.isCancelled, matchesSnapshotSyncV2AccountScope(accountScope) else { return }
         snapshotSyncLibraryLocalFailure = nil
-        let pendingDeletionIDs = await (try? application.pendingDeletionWorkIDs()) ?? []
-        let deletedIDs = await (try? application.deletedWorkIDs()) ?? []
-        guard !Task.isCancelled, matchesSnapshotSyncV2AccountScope(accountScope) else { return }
-        snapshotSyncPendingDeletionWorkIDs = pendingDeletionIDs
+        snapshotSyncPendingDeletionWorkIDs = refresh.pendingDeletionIDs
         lastStartupLibraryConnection = connection
         snapshotSyncCurrentWorkAccountState = currentSnapshotSyncV2WorkID.flatMap { workID in
-            projection.items.first(where: { $0.workID == workID })?.accountState
+            refresh.projection.items.first(where: { $0.workID == workID })?.accountState
         }
-        let works = LibraryShelf.merge(
-            localItems: projection.items.filter {
-                $0.accountState == .active || $0.accountState == .unbound || $0.accountState == .parkedDifferentAccount
-            },
+        let works = refresh.merged(
             catalog: snapshotSyncRemoteCatalogItems,
-            previousItems: snapshotSyncLibraryWorks.map(Self.snapshotLibraryItem),
-            pendingDeletionIDs: pendingDeletionIDs,
-            deletedIDs: deletedIDs
+            previousItems: snapshotSyncLibraryWorks.map(Self.snapshotLibraryItem), includesQuarantinedItems: false
         ).compactMap(Self.startupLibraryWork).map { $0.1 }
         snapshotSyncLibraryWorks = works
         if shouldPresentRefreshedLibrary {
@@ -162,38 +156,20 @@ extension AppState {
             }
         }
         do {
-            let cursor = loadMore ? snapshotSyncRemoteCatalogNextCursor : nil
-            var items: [SyncV2RemoteCatalogEntry] = loadMore ? snapshotSyncRemoteCatalogItems : []
-            do {
-                guard matchesSnapshotSyncV2AccountScope(accountScope),
-                      snapshotSyncV2CatalogRefreshToken == operationToken else { return }
-                #if FUMINIWA_TEST_COMPOSITION
-                let page = if let snapshotSyncV2CatalogOverride {
-                    try await snapshotSyncV2CatalogOverride(application, cursor, 100)
-                } else {
-                    try await application.refreshRemoteCatalog(cursor: cursor, pageSize: 100)
-                }
-                #else
-                let page = try await application.refreshRemoteCatalog(cursor: cursor, pageSize: 100)
-                #endif
-                guard matchesSnapshotSyncV2AccountScope(accountScope),
-                      snapshotSyncV2CatalogRefreshToken == operationToken else { return }
-                items.append(contentsOf: page.items)
-                snapshotSyncRemoteCatalogNextCursor = page.nextCursor
+            var operations = LibraryOperations(application: application)
+            #if FUMINIWA_TEST_COMPOSITION
+            if let snapshotSyncV2CatalogOverride {
+                operations.catalog = { try await snapshotSyncV2CatalogOverride(application, $0, $1) }
             }
-            guard matchesSnapshotSyncV2AccountScope(accountScope),
-                  snapshotSyncV2CatalogRefreshToken == operationToken else {
-                return
-            }
-            snapshotSyncRemoteCatalogItems = items.reduce(into: [:]) { result, item in
-                result[item.workID] = item
-            }.values.sorted {
-                $0.workID.description < $1.workID.description
-            }
-            guard matchesSnapshotSyncV2AccountScope(accountScope),
-                  snapshotSyncV2CatalogRefreshToken == operationToken else {
-                return
-            }
+            #endif
+            guard let page = try await LibraryCoordinator(operations: operations).catalogPage(
+                cursor: loadMore ? snapshotSyncRemoteCatalogNextCursor : nil,
+                existingItems: loadMore ? snapshotSyncRemoteCatalogItems : [], order: .workID,
+                account: accountScope, currentAccount: { snapshotSyncV2AccountScopeToken },
+                isCurrent: { snapshotSyncV2CatalogRefreshToken == operationToken }
+            ) else { return }
+            snapshotSyncRemoteCatalogNextCursor = page.nextCursor
+            snapshotSyncRemoteCatalogItems = page.items
             await refreshSnapshotLibrary()
         } catch {
             guard matchesSnapshotSyncV2AccountScope(accountScope),
