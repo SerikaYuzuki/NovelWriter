@@ -34,20 +34,16 @@ enum AccountTransitionConformance {
             try await failedExchange(host: host, cancellation: false, committed: scenario == .committedExchangeFailure)
             let expected = scenario == .unsignedFailure ? nil : scenario == .committedExchangeFailure ? fixture.second : fixture.first
             #expect(host.session == expected)
-            #expect((host.failureNotice != nil) == (host.profile == .macOS))
+            #expect((host.failureNotice != nil) == (expected != nil))
             if expected == nil {
-                if host.profile == .macOS {
-                    #expect(host.uiState == .signedOut)
-                } else {
-                    #expect(isFailed(host.uiState))
-                }
+                #expect(isFailed(host.uiState))
             }
         case .exchangeCancellation, .unsignedCancellation:
             await fixture.transport.configure(outcome: .cancellation, holdExchange: true)
             try await failedExchange(host: host, cancellation: true, committed: false)
             #expect(host.session == (scenario == .unsignedCancellation ? nil : fixture.first))
             if scenario == .unsignedCancellation {
-                #expect(host.uiState == host.profile.cancellationWithoutSession)
+                #expect(host.uiState == .signedOut)
             }
         case .rejectedIME:
             fixture.rejectIME = true
@@ -57,19 +53,21 @@ enum AccountTransitionConformance {
             #expect(await fixture.transport.providers.isEmpty)
         case .oldEpochTransition:
             let succeeded = await host.transition(authCharacterizationSession(account: "account-b", epoch: 1))
-            #expect(succeeded == host.profile.oldEpochTransitionSucceeds)
+            #expect(!succeeded)
             #expect(host.session == nil)
             assertUnsupportedUI(host)
         case .oldEpochRestore:
             await host.restore()
+            await host.settleRevoke()
+            await host.retryRevoke()
             #expect(host.session == nil)
             assertUnsupportedUI(host)
-            #expect(try await (fixture.vault.load() == nil) == host.profile.removesOldEpochVault)
+            #expect(try await fixture.vault.load() == nil)
         case .revokedCredentialRestore:
             try await fixture.handles.save("fixture-handle", providerConfigurationID: "apple-primary-fuminiwa-v1")
             await fixture.credentialProvider.setRevoked()
             await host.restore()
-            #expect(host.session == (host.profile.consultsCredentialState ? nil : fixture.first))
+            #expect(host.session == nil)
         case .pendingRevoke:
             try await pendingRevoke(host: host)
         case .queuedSignOut:
@@ -88,9 +86,9 @@ enum AccountTransitionConformance {
         switch scenario {
         case .apple, .google, .switchAccount, .exchangeFailure,
              .committedExchangeFailure, .exchangeCancellation:
-            #expect(fixture.preparationLeases.count == (host.profile == .iOS ? 3 : 2))
+            #expect(fixture.preparationLeases.count == 3)
         case .unsignedFailure, .unsignedCancellation:
-            #expect(fixture.preparationLeases.count == (host.profile == .iOS ? 2 : 1))
+            #expect(fixture.preparationLeases.count == 2)
         default: break
         }
         #expect(host.leaseCount == 0)
@@ -112,11 +110,9 @@ enum AccountTransitionConformance {
         let signingOut = Task { await host.signOut(); returned = true }
         do {
             try await waitForAuthCharacterization { await fixture.transport.revokeWaiting }
-            if host.profile == .iOS {
-                try await waitForAuthCharacterization { returned }
-            }
+            try await waitForAuthCharacterization { returned }
             #expect(host.session == nil)
-            #expect(host.leaseCount == (host.profile == .macOS ? 1 : 0))
+            #expect(host.leaseCount == 0)
             #expect(host.localOperationsAllowed)
             #expect(try await host.isWorkParked())
             #expect(try await host.persistedTitle() == fixture.dirtyTitle)
@@ -143,8 +139,8 @@ enum AccountTransitionConformance {
         await fixture.transport.configure()
         await host.retryRevoke()
         #expect(try await fixture.vault.load() == fixture.second)
-        #expect(try await (fixture.vault.loadPendingRevoke() == nil) == (host.profile != .macOS))
-        #expect(await fixture.transport.revokeCount == (host.profile == .macOS ? 1 : 2))
+        #expect(try await fixture.vault.loadPendingRevoke() == nil)
+        #expect(await fixture.transport.revokeCount == 2)
     }
 
     private static func queuedSignOut(host: any AccountTransitionHost) async throws {
@@ -154,37 +150,32 @@ enum AccountTransitionConformance {
         try await waitForAuthCharacterization { await fixture.transport.exchangeWaiting }
         var signOutReturned = false
         let signingOut = Task { await host.signOut(); signOutReturned = true }
-        if !host.profile.queuesSignOut {
-            try await waitForAuthCharacterization { signOutReturned }
-        } else {
-            // Allow the serialized request to enqueue without waiting on its revoke.
-            for _ in 0 ..< 20 {
-                await Task.yield()
-            }
-            #expect(!signOutReturned)
+        for _ in 0 ..< 20 {
+            await Task.yield()
         }
+        #expect(!signOutReturned)
         #expect(host.localOperationsAllowed)
         await fixture.transport.releaseExchange()
         await signingIn.value
         await signingOut.value
         await host.settleRevoke()
-        #expect(host.session == (host.profile.queuesSignOut ? nil : fixture.second))
+        #expect(host.session == nil)
     }
 
     private static func refresh(host: any AccountTransitionHost, initialScope: WorkspaceAccountScope) async throws {
         let fixture = host.fixture
-        let refreshed = try await fixture.coordinator.refresh()
+        #expect(await host.refresh())
+        let refreshed = try #require(host.session)
         #expect(refreshed.binding == fixture.first.binding)
         #expect(refreshed.tokens != fixture.first.tokens)
-        #expect(await host.transition(refreshed))
         #expect(host.session == refreshed)
         #expect(host.scope.accountID == initialScope.accountID)
         #expect(host.scope.accountFence == initialScope.accountFence)
         #expect(host.scope.serverInstanceID == initialScope.serverInstanceID)
         #expect(host.scope.protocolEpoch == initialScope.protocolEpoch)
-        #expect((host.scope.generation != initialScope.generation) == host.profile.refreshInvalidates)
+        #expect(host.scope.generation == initialScope.generation)
         #expect(host.hasScopedUI)
-        #expect(await host.requestsCancelled() == host.profile.refreshInvalidates)
+        #expect(await !host.requestsCancelled())
         #expect(fixture.preparationLeases.isEmpty)
         #expect(host.leaseCount == 0)
     }
@@ -218,11 +209,7 @@ enum AccountTransitionConformance {
     }
 
     private static func assertUnsupportedUI(_ host: any AccountTransitionHost) {
-        if host.profile == .macOS {
-            #expect(host.uiState == .unavailable)
-        } else {
-            #expect(isFailed(host.uiState))
-        }
+        #expect(isFailed(host.uiState))
     }
 
     private static func isFailed(_ state: WorkspaceAuthUIState) -> Bool {

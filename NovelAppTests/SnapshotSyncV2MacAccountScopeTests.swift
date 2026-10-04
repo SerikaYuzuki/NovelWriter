@@ -440,8 +440,8 @@ struct SnapshotSyncV2MacAuthBoundaryTests {
             $0.workID == originalWorkID && $0.remoteProgress == .parkedDifferentAccount
         })
 
-        // Local operations remain available while the revoke is offline; the
-        // active suspension prevents these checkpoints from sending remotely.
+        // Local operations remain available after releasing the revoke lease;
+        // the retired account's parked lanes cannot send checkpoints.
         state.document.title = "revoke 待機中の追加入力"
         state.markDocumentDirty()
         #expect(await state.saveNow())
@@ -449,8 +449,8 @@ struct SnapshotSyncV2MacAuthBoundaryTests {
         #expect(state.permitsDocumentTransitionOperation)
         #expect(await configuration.remote.recordedOperations().isEmpty)
 
-        // A new auth request is queued behind the revoke rather than racing
-        // the vault. The request is queued without blocking local work.
+        // Revoke replays only A's journal; a new login may start independently.
+        // Duplicate taps still produce one provider authorization.
         let signingIn = Task { @MainActor in
             await state.signInWithApple()
         }
@@ -462,17 +462,16 @@ struct SnapshotSyncV2MacAuthBoundaryTests {
             signInProvider.resume()
         }
         defer { signInProviderFallback.cancel() }
+        await signingOut.value
+        try await eventuallyMac { signInProvider.isWaiting }
+        #expect(state.authUIState == .signingIn)
         #expect(state.interactiveAuthOperationCount == 0)
         #expect(await state.createNewDocument())
         #expect(await state.openDocument(at: queuedOpenURL))
         #expect(await state.saveNow())
         #expect(state.interactiveAuthOperationCount == 0)
-        #expect(!signInProvider.isWaiting)
-        #expect(state.authUIState == .signedOut)
-
         await revokeTransport.resume()
-        await signingOut.value
-        try await eventuallyMac { signInProvider.isWaiting }
+        await state.authRevokeRetryTask?.value
         #expect(signInProvider.authorizationCallCount == 1)
         signInProvider.resume()
         await signingIn.value

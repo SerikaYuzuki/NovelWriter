@@ -350,7 +350,11 @@ final class IOSDocumentStore {
     /// may remain suspended on an offline device, while the local shelf and
     /// editor continue to work.  The task is resumed from the vault on the
     /// next launch (and is never allowed to gate document operations).
-    @ObservationIgnored var authRevokeRetryTask: Task<Void, Never>?
+    @ObservationIgnored lazy var accountTransitionCoordinator = AccountTransitionCoordinator(host: self)
+    var authRevokeRetryTask: Task<Void, Never>? {
+        accountTransitionCoordinator.revokeTask
+    }
+
     @ObservationIgnored var bootstrapTask: Task<Void, Never>?
     @ObservationIgnored var hasCompletedBootstrap = false
     @ObservationIgnored var pendingExportRootURL: URL?

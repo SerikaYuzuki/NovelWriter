@@ -3,7 +3,7 @@ import Foundation
 import NovelAuth
 import NovelAuthApple
 
-/// Construction only. Account-transition ownership remains in each app (D-111 P10b).
+/// Provider construction only. AccountTransitionCoordinator owns transitions (D-115).
 @MainActor
 public struct AuthComposition {
     public enum AppleFlow { case browser, native }
