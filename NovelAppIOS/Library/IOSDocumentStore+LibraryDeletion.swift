@@ -76,8 +76,7 @@ extension IOSDocumentStore {
         document = NovelDocument.newDocument()
         documentURL = libraryRoot
         replaceAttachments([])
-        syncV2AttachmentPayloads = [:]
-        syncV2AttachmentIDs = [:]
+        workspaceAttachments = WorkspaceAttachmentSet()
         syncV2PortableResources = []
         syncV2PortableCreatedAt = nil
         selectedChapterID = nil

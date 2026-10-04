@@ -373,8 +373,7 @@ extension IOSDocumentStore {
             syncV2KeepBothPendingWorkID = nil
         }
         replaceAttachments(attachments)
-        syncV2AttachmentPayloads = [:]
-        syncV2AttachmentIDs = [:]
+        workspaceAttachments = WorkspaceAttachmentSet()
         syncV2PortableResources = []
         syncV2PortableCreatedAt = nil
         selectedChapterID = value.chapters.first?.id

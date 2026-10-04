@@ -1,6 +1,6 @@
 import NovelWorkspace
 
-extension IOSDocumentStore: WorkspaceHost {
+extension IOSDocumentStore: WorkspaceAttachmentHost {
     var operationContext: WorkspaceOperationContext {
         WorkspaceOperationContext(
             workID: syncV2ActiveWorkID, session: currentDocumentSessionToken,

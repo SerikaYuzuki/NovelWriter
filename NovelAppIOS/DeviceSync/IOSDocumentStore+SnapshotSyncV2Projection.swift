@@ -34,15 +34,7 @@ extension IOSDocumentStore {
         // v2 does not derive identity from a path or create a WorkID folder.
         // Keep this URL only as the import/export compatibility boundary.
         documentURL = libraryRoot.standardizedFileURL
-        replaceAttachments(opened.attachments.map {
-            Attachment(fileName: $0.fileName, byteCount: Int64($0.byteCount))
-        })
-        syncV2AttachmentPayloads = Dictionary(
-            uniqueKeysWithValues: opened.attachments.map { ($0.fileName, $0.bytes) }
-        )
-        syncV2AttachmentIDs = Dictionary(
-            uniqueKeysWithValues: opened.attachments.map { ($0.fileName, $0.attachmentId) }
-        )
+        _ = adoptV2AttachmentRecords(opened.attachments)
         syncV2PortableCreatedAt = portableMirror.portableCreatedAt
         syncV2PortableResources = portableMirror.resources
         userDefaults.set(opened.workID.rawValue.uuidString, forKey: Self.lastWorkIDKey)

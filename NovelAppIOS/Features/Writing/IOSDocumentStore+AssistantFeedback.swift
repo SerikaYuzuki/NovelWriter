@@ -7,7 +7,7 @@ import NovelWorkspaceUI
 extension IOSDocumentStore {
     var assistantFeedback: [AssistantFeedback] {
         attachments.compactMap { attachment in
-            guard let bytes = syncV2AttachmentPayloads[attachment.fileName] else { return nil }
+            guard let bytes = workspaceAttachments[attachment.fileName]?.bytes else { return nil }
             return AssistantFeedback.decode(fileName: attachment.fileName, bytes: bytes)
         }.sorted { $0.createdAt == $1.createdAt ? $0.id.uuidString < $1.id.uuidString : $0.createdAt > $1.createdAt }
     }

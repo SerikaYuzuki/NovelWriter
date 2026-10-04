@@ -82,7 +82,7 @@ def package_graph() -> tuple[dict[str, set[str]], set[str]]:
 
 
 def added_package_targets(base: str) -> set[str] | None:
-    """An additive manifest need not select tests for unchanged targets."""
+    """Added targets or dependencies need only select their dependent tests."""
     try:
         merge_base = run(["git", "merge-base", base, "HEAD"]).stdout.strip()
         previous = run(["git", "show", f"{merge_base}:NovelKit/Package.swift"]).stdout
@@ -100,15 +100,26 @@ def added_package_targets(base: str) -> set[str] | None:
         new_targets = {t["name"]: t for t in current["targets"]}
         old_products = {p["name"]: p for p in old["products"]}
         new_products = {p["name"]: p for p in current["products"]}
-        if any(new_targets.get(name) != target for name, target in old_targets.items()):
-            return None
+        dependency_changes: set[str] = set()
+        for name, target in old_targets.items():
+            replacement = new_targets.get(name)
+            if replacement == target:
+                continue
+            if replacement is None or {
+                k: v for k, v in target.items() if k != "dependencies"
+            } != {k: v for k, v in replacement.items() if k != "dependencies"}:
+                return None
+            # Removing or rewriting dependencies retains the conservative full gate.
+            if any(dep not in replacement["dependencies"] for dep in target["dependencies"]):
+                return None
+            dependency_changes.add(name)
         if any(new_products.get(name) != product for name, product in old_products.items()):
             return None
         added = new_targets.keys() - old_targets.keys()
         if any(set(product["targets"]) - added for name, product in new_products.items()
                if name not in old_products):
             return None
-        return set(added)
+        return set(added) | dependency_changes
     except (subprocess.CalledProcessError, KeyError, ValueError):
         return None
 

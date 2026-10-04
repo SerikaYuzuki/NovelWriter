@@ -147,12 +147,14 @@ struct MCPThumbnailTests {
             initialStartupState: .ready
         )
         state.snapshotSyncV2Application = restarted
-        state.installV2Document(document, workID: fixture.work, createdAt: Date())
+        state.installV2Document(document, workID: fixture.work, createdAt: local.documentCreatedAt)
         state.snapshotSyncV2Attachments = local.attachments
         await state.reloadAttachments()
         let host = try #require(state.writingAssistantHost)
         args["sessionId"] = host.contextID
-        #expect(try await fixture.call("undo_edit", args, host: host)["isError"] as? Bool == false)
+        let undoResult = try await fixture.call("undo_edit", args, host: host)
+        let message = (undoResult["content"] as? [[String: Any]])?.first?["text"] as? String
+        #expect(undoResult["isError"] as? Bool == false, "\(message ?? "Undo response missing")")
         #expect(state.snapshotSyncV2Attachments == before)
         #expect(try await restarted.openLocal(workID: fixture.work).attachments == before)
     }

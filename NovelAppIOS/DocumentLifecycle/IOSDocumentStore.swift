@@ -399,8 +399,7 @@ final class IOSDocumentStore {
     @ObservationIgnored var hasCompletedBootstrap = false
     @ObservationIgnored var pendingExportRootURL: URL?
     /// Attachment bytes are owned by the Snapshot Sync v2 SQLite/CAS record.
-    @ObservationIgnored var syncV2AttachmentPayloads: [String: Data] = [:]
-    @ObservationIgnored var syncV2AttachmentIDs: [String: UUID] = [:]
+    @ObservationIgnored var workspaceAttachments = WorkspaceAttachmentSet()
     /// Opaque portable-package remainder retained by the shared SQLite v2
     /// store. It is only populated by explicit import/open and is never read
     /// from a package during ordinary document lifecycle operations.
