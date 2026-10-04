@@ -98,6 +98,13 @@ fi
 # false branch, so the hosted test executable cannot open Keychain, production
 # SQLite roots, or a production HTTP origin through an app-level constructor.
 while IFS= read -r source; do
+  # P10b owns Keychain/HTTP construction in this one shared factory. SPM
+  # products do not inherit the app's Test compilation condition, so enforce
+  # the boundary at its app call sites (AuthComposition below), not by hiding
+  # the public factory from the independently compiled package.
+  if [[ "$source" == "NovelKit/Sources/NovelWorkspace/Authentication/AuthComposition.swift" ]]; then
+    continue
+  fi
   if awk '
     function test_build_active(    level) {
       for (level = 1; level <= depth; level += 1) {
@@ -138,7 +145,7 @@ while IFS= read -r source; do
       next
     }
     test_build_active() &&
-      $0 ~ /(ProductionRuntimeConfiguration|ProductionHTTPSOrigin|FuminiwaHTTPAuthTransport|FuminiwaRuntimeEnvironment|Keychain[A-Za-z0-9_]*)[[:space:]]*\(/ {
+      $0 ~ /(^|[^A-Za-z0-9_])(AuthComposition|ProductionRuntimeConfiguration|ProductionHTTPSOrigin|FuminiwaHTTPAuthTransport|FuminiwaRuntimeEnvironment|Keychain[A-Za-z0-9_]*)[[:space:]]*\(/ {
       print FNR ":" $0
       invalid = 1
     }

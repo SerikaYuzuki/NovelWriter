@@ -56,6 +56,10 @@ final class AppState {
     }
 
     var lastStartupLibraryConnection: StartupLibraryConnection = .offline
+    #if FUMINIWA_TEST_COMPOSITION
+    @ObservationIgnored var testServerInstanceIDOverride: String?
+    @ObservationIgnored var testBrowserAuthorization: (@MainActor @Sendable (URL) async throws -> Void)?
+    #endif
     var authSession: FuminiwaSession?
     var authUIState: AuthUIState
     var snapshotSyncPendingDeletionWorkIDs: Set<WorkID> = []
@@ -114,6 +118,7 @@ final class AppState {
     let editorCommandSession: EditorCommandSession
     let clipboardWriter: any PlainTextClipboardWriting
     let activeCommittedTextCapture: @MainActor () -> EditorCommittedTextCaptureResult
+    let browserAuthorization: @MainActor @Sendable (URL) async throws -> Void
     let authSessionCoordinator: AuthSessionCoordinator?
     let appleSignInCoordinator: AppleSignInCoordinator?
     let appleAuthenticationOrchestrator: AppleAuthenticationOrchestrator?
@@ -239,6 +244,7 @@ final class AppState {
         editorCommandSession = dependencies.editorCommandSession
         clipboardWriter = dependencies.clipboardWriter
         activeCommittedTextCapture = dependencies.activeCommittedTextCapture
+        browserAuthorization = dependencies.browserAuthorization
         authSessionCoordinator = dependencies.authSessionCoordinator
         appleSignInCoordinator = dependencies.appleSignInCoordinator
         appleAuthenticationOrchestrator = dependencies.appleAuthenticationOrchestrator

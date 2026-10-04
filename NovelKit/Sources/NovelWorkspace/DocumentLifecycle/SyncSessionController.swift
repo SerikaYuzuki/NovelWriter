@@ -23,7 +23,8 @@ public final class SyncSessionController<OpenResult: Sendable> {
     public var accountTransitionRequested = false
     public var accountTransitionInProgress = false
     public var remoteSuspension: SyncV2AccountTransitionRemoteSuspensionToken?
-    private var remoteLeases: Set<SyncV2AccountTransitionRemoteSuspensionToken> = []
+    /// Internal readback for the app adapter conformance tests; mutation remains owned here.
+    private(set) var remoteLeases: Set<SyncV2AccountTransitionRemoteSuspensionToken> = []
 
     public enum RemoteCancellation {
         case releaseImmediately

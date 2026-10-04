@@ -108,41 +108,16 @@ struct FuminiwaApp: App {
         let platformGate = MacSyncV2DocumentGate()
         let explicitOrigin = environment.syncServerURL.flatMap { try? ProductionHTTPSOrigin(url: $0) }
 
-        #if canImport(Security)
-        let authVault: (any AuthSessionVault)? = KeychainAuthSessionVault(
-            service: "dev.serikayuzuki.fuminiwa.sync"
+        let auth = AuthComposition(
+            origin: explicitOrigin?.url,
+            keychainService: "dev.serikayuzuki.fuminiwa.sync",
+            clientPlatform: .macos,
+            appleFlow: .browser
         )
-        #else
-        let authVault: (any AuthSessionVault)? = nil
-        #endif
-
-        let authCoordinator: AuthSessionCoordinator? = if let authVault,
-                                                          let explicitOrigin,
-                                                          let configuration = try? AuthClientConfiguration(
-                                                              origin: explicitOrigin.url,
-                                                              clientVersion: "0.1.0",
-                                                              clientPlatform: .macos
-                                                          ),
-                                                          let limits = try? AuthLimits(
-                                                              accessTokenLifetimeSeconds: 900,
-                                                              authReceiptLifetimeSeconds: 86400,
-                                                              challengeLifetimeSeconds: 300,
-                                                              maxCanonicalCommandBytes: 65536,
-                                                              maxProviderClockSkewSeconds: 300,
-                                                              refreshTokenLifetimeSeconds: 86400
-                                                          ),
-                                                          let transport = try? FuminiwaHTTPAuthTransport(configuration: configuration) {
-            AuthSessionCoordinator(
-                transport: transport,
-                vault: authVault,
-                authLimits: limits
-            )
-        } else {
-            nil
-        }
-
-        let appleSignInCoordinator = AppleSignInCoordinator()
-        let orchestrator: AppleAuthenticationOrchestrator? = nil
+        let authVault = auth.sessionVault
+        let authCoordinator = auth.sessionCoordinator
+        let appleSignInCoordinator = auth.appleSignInCoordinator
+        let orchestrator = auth.appleAuthenticationOrchestrator
 
         let runtimeConfiguration = try? ProductionRuntimeConfiguration(
             origin: explicitOrigin, vault: authVault, authSessionCoordinator: authCoordinator,
@@ -162,6 +137,7 @@ struct FuminiwaApp: App {
             userDefaults: userDefaults,
             defaultDocumentDirectoryName: AppBuildFlavor.defaultDocumentDirectoryName,
             editorCommandSession: editorCommandSession,
+            browserAuthorization: auth.browserAuthorization,
             authSessionCoordinator: authCoordinator,
             appleSignInCoordinator: appleSignInCoordinator,
             appleAuthenticationOrchestrator: orchestrator,
