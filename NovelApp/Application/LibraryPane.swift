@@ -44,7 +44,7 @@ struct LibraryPane: View {
                 Spacer()
             }
             .padding(.horizontal, Spacing.medium)
-            TextField("作品を検索", text: $searchText)
+            TextField(LibraryText.search, text: $searchText)
                 .focused($searchFocused)
                 .accessibilityIdentifier("library.search")
                 .textFieldStyle(.roundedBorder)
@@ -81,29 +81,29 @@ struct LibraryPane: View {
             .overlay {
                 if filteredWorks.isEmpty {
                     if appState.snapshotSyncLibraryIsLoading {
-                        ProgressView("作品一覧を読み込み中…")
+                        ProgressView(LibraryText.loading)
                     } else if let failure = appState.snapshotSyncLibraryFailure ?? appState.snapshotSyncLibraryLocalFailure {
-                        ContentUnavailableView(SyncV2LibraryPresentation.isOffline(failure) ? "オフラインです" : "作品一覧を読み込めませんでした",
+                        ContentUnavailableView(SyncV2LibraryPresentation.isOffline(failure) ? LibraryText.offline : LibraryText.loadFailed,
                                                systemImage: SyncV2LibraryPresentation.isOffline(failure) ? "wifi.slash" : "exclamationmark.circle",
-                                               description: Text("「更新」からもう一度読み込めます。端末内では「新規」から書き始められます。"))
+                                               description: Text(LibraryText.retryMac))
                     } else {
                         if searchText.isEmpty {
                             ContentUnavailableView {
                                 Image("FuminiwaBookSprout").resizable().scaledToFit()
                                     .frame(width: 144, height: 144).accessibilityHidden(true)
-                                Text("最初の作品を書きましょう")
+                                Text(LibraryText.empty)
                             } description: {
-                                Text("オフラインでも作成・編集できます。")
+                                Text(LibraryText.emptyMac)
                             } actions: {
                                 Button("新しい作品…") { documentPanelPresenter.presentNewDocument() }
                                     .buttonStyle(.borderedProminent)
                                     .disabled(!appState.permitsNewDocument)
-                                Button("作品を取り込む…") { documentPanelPresenter.presentOpenPanel() }
+                                Button(LibraryText.importWork) { documentPanelPresenter.presentOpenPanel() }
                                     .disabled(!appState.permitsDocumentImport)
                             }
                         } else {
-                            ContentUnavailableView("作品が見つかりません", systemImage: "magnifyingglass",
-                                                   description: Text("検索する言葉を変えてください。"))
+                            ContentUnavailableView(LibraryText.noSearchResults, systemImage: "magnifyingglass",
+                                                   description: Text(LibraryText.searchHint))
                         }
                     }
                 }
@@ -123,7 +123,7 @@ struct LibraryPane: View {
                 }
             }
             if appState.snapshotSyncRemoteCatalogNextCursor != nil {
-                Button("サーバーの作品をさらに読み込む") {
+                Button(LibraryText.loadMore) {
                     Task { await appState.refreshSnapshotRemoteCatalog(loadMore: true) }
                 }
                 .disabled(appState.snapshotSyncLibraryIsLoading)
@@ -154,7 +154,7 @@ struct LibraryPane: View {
                     .disabled(!appState.permitsNewDocument)
             }
             ToolbarItem(placement: .primaryAction) {
-                Button("作品を取り込む…", systemImage: "square.and.arrow.down") { documentPanelPresenter.presentOpenPanel() }
+                Button(LibraryText.importWork, systemImage: "square.and.arrow.down") { documentPanelPresenter.presentOpenPanel() }
                     .disabled(!appState.permitsDocumentImport)
             }
             ToolbarItem(placement: .primaryAction) {
@@ -174,7 +174,7 @@ struct LibraryPane: View {
             searchFocused = true
         }
         .background(FuminiwaColor.paper.color)
-        .alert("作品名を変更", isPresented: Binding(
+        .alert(LibraryText.rename, isPresented: Binding(
             get: { pendingRename != nil },
             set: {
                 if !$0 {
@@ -182,8 +182,8 @@ struct LibraryPane: View {
                 }
             }
         )) {
-            TextField("作品名", text: $renameTitle)
-            Button("変更") {
+            TextField(LibraryText.title, text: $renameTitle)
+            Button(LibraryText.change) {
                 guard let work = pendingRename, let session = renameSession,
                       let scope = renameAccountScope else { return }
                 let title = renameTitle
@@ -196,19 +196,19 @@ struct LibraryPane: View {
                 }
             }
             .disabled(renameTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            Button("キャンセル", role: .cancel) {}
+            Button(LibraryText.cancel, role: .cancel) {}
         }
-        .alert("作品名を変更できませんでした", isPresented: $renameFailed) {
+        .alert(LibraryText.renameFailed, isPresented: $renameFailed) {
             Button("OK", role: .cancel) {}
         } message: {
-            Text("作品やアカウントが切り替わっていないか、接続状態を確認して再試行してください。")
+            Text(LibraryText.renameRetry)
         }
-        .alert("作品を完全に削除しますか？", isPresented: Binding(get: { pendingDeletion != nil }, set: {
+        .alert(LibraryText.deleteConfirmation, isPresented: Binding(get: { pendingDeletion != nil }, set: {
             if !$0 {
                 pendingDeletion = nil
             }
         })) {
-            Button("削除", role: .destructive) {
+            Button(LibraryText.delete, role: .destructive) {
                 guard let work = pendingDeletion, let accountScope = deletionAccountScope else { return }
                 deletingIDs.insert(work.id)
                 Task {
@@ -218,9 +218,9 @@ struct LibraryPane: View {
                     deletingIDs.remove(work.id)
                 }
             }
-            Button("キャンセル", role: .cancel) {}
+            Button(LibraryText.cancel, role: .cancel) {}
         } message: {
-            Text("「\(pendingDeletion?.title ?? "")」を一覧から削除します。同期した作品のサーバー受領済みデータは1年間保管されます。この端末だけの作品は元に戻せません。")
+            Text(LibraryText.deletionMessage(title: pendingDeletion?.title ?? ""))
         }
         .task(id: appState.snapshotSyncV2AccountScopeToken) {
             guard observesImports, let application = appState.snapshotSyncV2Application else { return }
@@ -250,7 +250,7 @@ struct LibraryPane: View {
                     await appState.observeLibraryImports()
                 }
             }
-            .confirmationDialog("取り込みを中止して開きますか？", isPresented: Binding(
+            .confirmationDialog(LibraryText.cancelImportConfirmation, isPresented: Binding(
                 get: { pendingImportOpen != nil }, set: {
                     if !$0 {
                         pendingImportOpen = nil
@@ -258,12 +258,12 @@ struct LibraryPane: View {
                 }
             ), titleVisibility: .visible) {
                 if let work = pendingImportOpen {
-                    Button("取り込みを中止して開く") {
+                    Button(LibraryText.cancelImportAndOpen) {
                         pendingImportOpen = nil
                         Task { await appState.cancelLibraryImport(); performOpen(work) }
                     }
                 }
-                Button("キャンセル", role: .cancel) { pendingImportOpen = nil }
+                Button(LibraryText.cancel, role: .cancel) { pendingImportOpen = nil }
             }
             .frame(minWidth: 220)
     }
@@ -484,13 +484,13 @@ private extension LibraryPane {
         case .offline: "オフライン・接続時再開"
         case .accountRequired: "サインインせず、この端末で執筆できます"
         case .differentAccount: "別のアカウントのため保留中"
-        case .unavailable: "作品一覧を読み込めませんでした"
+        case .unavailable: LibraryText.loadFailed
         }
     }
 
     private func status(for work: StartupLibraryWork) -> SyncV2LibraryStatus {
         if appState.snapshotSyncPendingDeletionWorkIDs.contains(work.workID) {
-            return .init(text: "削除待ち・接続時に再試行", symbol: "clock", tone: .secondary)
+            return .init(text: LibraryText.pendingDeletion, symbol: "clock", tone: .secondary)
         }
         return work.status
     }

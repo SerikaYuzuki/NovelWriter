@@ -102,7 +102,7 @@ struct IOSLibraryImportRow: View {
                 .accessibilityHint(store.libraryPrefetchWorkID != nil || store.snapshotSyncV2RemoteOnlyOpeningWorkID != nil ? "ほかの作品を取り込み中です" : "この端末へ取り込み直します")
                 .disabled(store.libraryPrefetchWorkID != nil || store.snapshotSyncV2RemoteOnlyOpeningWorkID != nil)
         }
-        Button("作品名を変更", systemImage: "pencil", action: rename)
+        Button(LibraryText.rename, systemImage: "pencil", action: rename)
             .disabled(isRenaming || isImporting || store.pendingDeletionWorkIDs.contains(item.workID))
         deletionButton
         if let reason = store.libraryDeletionDisabledReason(for: item.workID) {
@@ -139,7 +139,7 @@ struct IOSLibraryImportRow: View {
 
     @ViewBuilder private var status: some View {
         if store.pendingDeletionWorkIDs.contains(item.workID) {
-            StatusLabel("削除待ち・接続時に再試行", systemImage: "clock", tone: .secondary)
+            StatusLabel(LibraryText.pendingDeletion, systemImage: "clock", tone: .secondary)
                 .font(FuminiwaType.rowSecondary)
         } else if isImporting, let startedAt = store.snapshotSyncV2RemoteOnlyOpenStartedAt {
             LibraryImportProgress(startedAt: startedAt, longImportNotice: SyncV2LibraryPresentation.longImportNotice,

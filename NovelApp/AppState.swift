@@ -14,48 +14,8 @@ import NovelWritingProgress
 import NovelWritingSupport
 import Observation
 
-enum DocumentSaveState: Equatable {
-    case unsaved
-    case saving
-    case saved
-    case failed
-
-    var label: String {
-        switch self {
-        case .unsaved: "未保存"
-        case .saving: "保存中"
-        case .saved: "この端末に保存済み"
-        case .failed: "実エラー"
-        }
-    }
-
-    var systemImage: String {
-        switch self {
-        case .unsaved: "circle.fill"
-        case .saving: "arrow.triangle.2.circlepath"
-        case .saved: "checkmark.circle"
-        case .failed: "exclamationmark.triangle"
-        }
-    }
-}
-
-enum AuthUIState: Equatable {
-    case unavailable
-    case signedOut
-    case signingIn
-    case signedIn(accountID: String)
-    case failed(String)
-
-    var label: String {
-        switch self {
-        case .unavailable: "アカウント同期は未設定"
-        case .signedOut: "未サインイン"
-        case .signingIn: "サインイン中…"
-        case let .signedIn(accountID): "サインイン済み（\(accountID)）"
-        case let .failed(message): message
-        }
-    }
-}
+typealias DocumentSaveState = WorkspaceSaveState
+typealias AuthUIState = WorkspaceAuthUIState
 
 final class NotificationObserverToken {
     private let center: NotificationCenter
