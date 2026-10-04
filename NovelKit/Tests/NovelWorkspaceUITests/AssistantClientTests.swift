@@ -107,11 +107,11 @@ struct AssistantClientTests {
         #expect(try AssistantClient.decode(Data(#"{"status":"completed","output":[{"type":"reasoning"},{"type":"message","content":[{"type":"output_text","text":"回答"}]}]}"#.utf8)) == "回答")
         #expect(throws: AssistantError.self) { try AssistantClient.decode(Data(#"{"status":"incomplete","output":[]}"#.utf8)) }
         #expect(try AssistantClient.decodeModels(Data(#"{"data":[{"id":"old","created":1},{"id":"new","created":3}]}"#.utf8)) == ["new", "old"])
-        #expect(try AssistantClient.proofreadContent(#"{"content":"本文\n続き"}"#) == "本文\n続き")
-        #expect(throws: AssistantError.self) { try AssistantClient.proofreadContent("途中のJSON") }
+        #expect(try AssistantClient.proofreadChanges(#"{"changes":[]}"#).changes.isEmpty)
+        #expect(throws: AssistantError.self) { try AssistantClient.proofreadChanges("途中のJSON") }
     }
 
-    @Test("proofreading requires complete structured manuscript output", arguments: ["https://api.openai.com/v1/responses", "https://example.invalid/v1/chat/completions"])
+    @Test("proofreading requires structured changes and reasons", arguments: ["https://api.openai.com/v1/responses", "https://example.invalid/v1/chat/completions"])
     func proofreadingSchema(endpoint: String) throws {
         let config = try AssistantConfiguration(endpoint: endpoint, model: "model", prompt: "校正", replacesManuscript: true)
         let request = try config.request(manuscript: .init(title: "題", content: "原文"), apiKey: "synthetic")
@@ -121,8 +121,13 @@ struct AssistantClientTests {
         let format = try #require((envelope?["format"] ?? envelope?["json_schema"]) as? [String: Any])
         #expect(format["strict"] as? Bool == true)
         let schema = try #require(format["schema"] as? [String: Any])
-        #expect(schema["required"] as? [String] == ["content"])
+        #expect(schema["required"] as? [String] == ["changes"])
         #expect(schema["additionalProperties"] as? Bool == false)
+        let properties = try #require(schema["properties"] as? [String: Any])
+        let changes = try #require(properties["changes"] as? [String: Any])
+        let item = try #require(changes["items"] as? [String: Any])
+        #expect(item["required"] as? [String] == ["before", "after", "reason", "check"])
+        #expect(item["additionalProperties"] as? Bool == false)
     }
 }
 

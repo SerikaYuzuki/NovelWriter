@@ -166,3 +166,11 @@ P2完了：SyncPresentation、HistoryFetchControls／ConnectivityRecovery、Work
 | D9 | project feature編集後、Macは即flush、iOSはdebounce | policy parameterにする |
 | D10 | committed-text取得はMacが注入closure、iOSがeditorCommandSession直接参照 | portを通す |
 | D11 | attachmentの表現・順序が異なる | 一つのset型へ統合 |
+
+## D-112: AI校正のチェック項目・理由と感想（2026-10-04）
+
+owner承認済み。機械的な表記チェックと端末内の無視設定使用を廃止し、作品全体検索・置換と人物登場検出を維持する。校正は選択したチェック項目を基底指示の後に展開し、人物名チェック時だけ登録名・読みを参考情報として送る。選択は既存assistant prompt laneの`校正チェック`（`{"checks":["typo",…]}`）へ共通初期値／作品別上書きとして保存し、schema・server・fixtureは変更しない。
+
+校正のAI応答は`changes`（before／after／reason／check）とし、一意な完全一致・重ならない提案だけで本文を構成する。不一致・曖昧・重なりは「適用できなかった提案」へ分ける。送信本文・作品／話／session／accountを照合し、既存EditorKit適用を1回だけ呼びnative Undo・着色を保つ。感想の初期指示は熱心な読者の自然な口語に変更し、作品名・あらすじ／人物名・役割／話の位置を選択式の引用参考情報にする。本文・実効指示・参考情報をpreviewして明示送信する。
+
+指示画面は校正・感想・アドバイスとチェック項目ごとに、確認後に現行コード初期値を保存する操作を持つ。既存指示の自動上書きはしない。保存一覧名は「感想」とし、新規は感想だけを保存する。既存アドバイス添付は引き続き読める。新規アドバイスは既存チャットだけにし、感想添付へ保存しない。

@@ -17,7 +17,8 @@ extension AppState {
 
     func saveAssistantFeedback(_ feedback: AssistantFeedback, session: DocumentSessionToken,
                                account: SnapshotSyncV2AccountScopeToken) async -> Bool {
-        await mutateAssistantFeedback(session: session, account: account) {
+        guard feedback.purpose == .impressions else { return false }
+        return await mutateAssistantFeedback(session: session, account: account) {
             if let existing = self.assistantFeedback.first(where: { $0.id == feedback.id }) {
                 return existing == feedback
             }

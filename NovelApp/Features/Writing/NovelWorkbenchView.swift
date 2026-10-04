@@ -149,6 +149,7 @@ struct NovelWorkbenchView: View {
             },
             writingHost: appState.writingAssistantHost,
             chapters: appState.document.chapters,
+            document: appState.document,
             captureScope: { scope in
                 guard appState.documentSessionToken == session,
                       appState.snapshotSyncV2AccountScopeToken == account,
@@ -247,9 +248,7 @@ struct NovelWorkbenchView: View {
     private var workbenchContent: some View {
         switch appState.workspaceSelection.section {
         case .structure:
-            if appState.textCheck.isPresented {
-                MacTextCheckView()
-            } else if appState.workSearch.isPresented {
+            if appState.workSearch.isPresented {
                 MacWorkSearchView()
             } else {
                 OutlineContainerView()

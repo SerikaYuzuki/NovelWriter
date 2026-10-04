@@ -55,7 +55,6 @@ NovelThumbnailが予約名・所有者判定とImageIO／CoreGraphicsでの縮�
 
 作品全体検索・置換と人物の登場話一覧は両OSで共有ロジックを使う。検索結果の件数上限・ページングは設けず、全一致を保持してListで表示するため、非常に多い一致では結果メモリと描画負荷が残る。置換の一時Undoは直前一回だけで、編集済みの話は戻さず明示履歴へ案内する。検索後の対象本文変更は全体中止で統一する。通常のネイティブUndo／Redoの集計は第1弾の一般規則を維持し、置換と検索画面からの「元に戻す」は集計しない。実機IME・Dynamic Type・VoiceOver、二端末同期の受入は別途必要。
 
-表記・記号チェックは端末内の手動解析。Apple CFStringTokenizerの語分割・読みはOS辞書に依存し、同音異義語や固有名詞の誤検出・見逃しがある。人物名は同じ文字種・長さ・1字差・少ない出現に限定し、別の登録人物名は候補から除く。ひらがなの人物読みも同じ文字種内で照合するが、未知語の分割次第では拾えない。無視・件数の多数派表示で利用者が判断し、検出器は差し替え可能にした。ルビの親字は語として調べ、傍点で文字ごとに分かれた表記は語分割の限界が残る。結果の件数上限・ページングは設けず、多数の指摘ではメモリ・List描画負荷が残る。同数では置換を提案せず、3表記以上の組は最少数→最多数を入力する。個別無視は位置・文脈を含むため周辺の編集で再指摘され得る。実機VoiceOver・長時間IME・iPadの受入は別途必要。
 
 ## 執筆中の負荷（2026-10-03）
 
@@ -140,3 +139,5 @@ Gは通常autosaveを一回で区切り、保存中の追加入力は入力停�
 再計測は`cd NovelKit && FUMINIWA_TYPING_BENCHMARK=1 swift test -c release --filter 'typingEnergyCheckpointBenchmark|typingEnergyOutlineCountBenchmark'`。iOSのdelegate計測はEditorKitの`IOSTextAdapterIntegrationTests`に含む（destinationは指定端末）。
 
 修正前のHEADを同じworktree内の一時packageとして実行し、1千／10万／30万／約100万字と添付・resource有無の8条件で修正後とsnapshot/object ID、manifest bytes、entries、works/history、intent/resource行を比較して一致した。実行ごとのoccurrence／intent UUIDと時刻だけ正規化した。一時package・比較用生成物・今回のビルド生成物は除いた。実account・実原稿・実DB・サーバー稼働反映・実機受入は対象外。
+
+校正はD-112のチェック項目と変更理由付きの提案を使う。送信本文の一意な抜粋だけを置換し、不一致・曖昧・重なる提案は別表示する。実APIでの短い話の校正、参考情報preview、適用後の日本語IME・native Undoは実機受入として確認する。

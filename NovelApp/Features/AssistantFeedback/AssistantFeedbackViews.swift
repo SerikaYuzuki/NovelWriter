@@ -35,11 +35,11 @@ struct AssistantFeedbackList: View {
         }
         .overlay {
             if records.isEmpty {
-                ContentUnavailableView("感想・アドバイスはまだありません", systemImage: "text.bubble",
-                                       description: Text("執筆画面のAI支援から送信すると、回答をここに保存します。"))
+                ContentUnavailableView("感想はまだありません", systemImage: "text.bubble",
+                                       description: Text("執筆画面のAI支援で「感想」を送信すると、回答をここに保存します。"))
             }
         }
-        .navigationTitle("感想・アドバイス")
+        .navigationTitle("感想")
         .confirmationDialog("この回答を削除しますか？", isPresented: Binding(
             get: { pendingDeletion != nil }, set: {
                 if !$0 {
