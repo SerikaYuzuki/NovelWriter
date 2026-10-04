@@ -12,7 +12,7 @@ extension IOSDocumentStore {
         guard snapshotSyncV2Application != nil, syncV2ActiveWorkID != nil else {
             throw SyncV2ApplicationError.invalidRuntimeMode
         }
-        guard await checkpointSnapshotSyncV2(value, reason: .autosave) else {
+        guard await checkpointSnapshotSyncV2(value, reason: .autosave, acknowledgeLocalCommit: true) else {
             throw IOSPrivateWorkingCopyLocationError.unsafeRoot
         }
     }
@@ -253,16 +253,15 @@ extension IOSDocumentStore {
         writingProgress.requestFlush()
         guard startupState == .ready else { return false }
         let workID = syncV2ActiveWorkID
-        let session = currentDocumentSessionToken
-        let account = snapshotSyncV2AccountScope
-        guard await saveCoordinator.saveNow(), currentDocumentSessionToken == session,
-              syncV2ActiveWorkID == workID, matchesSyncAccount(account) else { return false }
+        let context = CheckpointCoordinator.context(of: self)
+        guard await saveCoordinator.saveNow(), CheckpointCoordinator.matches(context, host: self) else { return false }
         do {
             if let workID, let application = snapshotSyncV2Application {
                 try await application.promoteCheckpoint(workID: workID)
             }
-            return true
+            return CheckpointCoordinator.matches(context, host: self)
         } catch {
+            guard CheckpointCoordinator.matches(context, host: self) else { return false }
             saveState = .failed
             return false
         }

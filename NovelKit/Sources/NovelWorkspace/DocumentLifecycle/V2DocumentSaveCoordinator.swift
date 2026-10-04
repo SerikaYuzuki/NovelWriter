@@ -50,6 +50,11 @@ public final class V2DocumentSaveCoordinator {
         savedRevision
     }
 
+    /// Local durability, independent of a retired UI/account projection.
+    public var hasUnsavedChanges: Bool {
+        savedRevision < saveRevision
+    }
+
     public func markDirty() {
         saveRevision += 1
         saveEventHandler(.dirty)

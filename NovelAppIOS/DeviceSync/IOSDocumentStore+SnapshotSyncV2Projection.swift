@@ -53,24 +53,27 @@ extension IOSDocumentStore {
 
     func applySnapshotSyncV2State(_ state: SyncUIState?) {
         guard state == nil || state?.workID == syncV2ActiveWorkID else { return }
-        if state?.remoteProgress == .retryable(.historyIncomplete),
-           snapshotSyncState?.remoteProgress != state?.remoteProgress {
+        let account = snapshotSyncV2AccountScope
+        let projection = WorkspaceSyncProjection(
+            state: state, previous: snapshotSyncState,
+            presentedFailure: state.flatMap { presentedSyncFailures[account]?[$0.workID] }
+        )
+        if projection.announcesHistoryWait {
             AccessibilityNotification.Announcement(SyncV2HistoryFetchState.conflictWaiting).post()
         }
         snapshotSyncState = state
         snapshotSyncConflict = state?.conflict
         guard let state else { return }
-        if state.remoteProgress == .authenticationRequired, case .signedIn = authUIState {
+        if projection.authenticationRequired, case .signedIn = authUIState {
             authUIState = .failed("認証の有効期限が切れました。Appleで再サインインしてください。原稿はこの端末に保存されています。")
         }
-        let account = snapshotSyncV2AccountScope
-        if case let .failed(reason) = state.remoteProgress {
-            if presentedSyncFailures[account]?[state.workID] != reason {
-                presentedSyncFailures[account, default: [:]][state.workID] = reason
-                operationErrorMessage = reason.japaneseDescription
-            }
-        } else if state.lastFailure == nil, state.remoteProgress == .idle || state.remoteProgress == .noChanges {
+        if let reason = projection.presentedFailure {
+            presentedSyncFailures[account, default: [:]][state.workID] = reason
+        } else if projection.clearsPresentedFailure {
             presentedSyncFailures[account]?[state.workID] = nil
+        }
+        if let message = projection.failureMessage {
+            operationErrorMessage = message
         }
         snapshotSyncOutcome = state.lastTypedResult
     }
@@ -84,33 +87,40 @@ extension IOSDocumentStore {
         wakeReason: SyncV2WakeReason = .foreground
     ) {
         guard matchesRemoteSyncAccount(expectedAccountScope) else { return }
+        let context = CheckpointCoordinator.context(of: self)
         let operationToken = syncSessionController.beginReprojection()
         snapshotSyncV2ReprojectionTask = Task { @MainActor [weak self] in
             defer {
                 self?.syncSessionController.finishReprojection(owner: operationToken)
             }
-            if resumesWorker {
-                try? await application.wake(reason: wakeReason)
-            }
-            guard let self,
-                  !isSyncV2RemoteAccountTransitionActive,
-                  snapshotSyncV2ReprojectionToken == operationToken,
-                  matchesSyncAccount(expectedAccountScope) else { return }
-            if let workID {
-                guard syncV2ActiveWorkID == workID else { return }
-                await reprojectAfterResume(
-                    application,
-                    workID: workID,
-                    automaticAdoption: automaticAdoption,
-                    expectedAccountScope: expectedAccountScope,
-                    operationToken: operationToken
-                )
-            } else {
-                await refreshSnapshotSyncV2Projection(
-                    expectedAccountScope: expectedAccountScope,
-                    operationToken: operationToken
-                )
-            }
+            guard let self else { return }
+            await workspaceCheckpointCoordinator(application).resume(
+                host: self, reason: resumesWorker ? wakeReason : nil,
+                isCurrent: {
+                    !self.isSyncV2RemoteAccountTransitionActive
+                        && self.snapshotSyncV2ReprojectionToken == operationToken
+                        && self.matchesSyncAccount(expectedAccountScope)
+                        && self.snapshotSyncV2Application === application
+                        && CheckpointCoordinator.matches(context, host: self)
+                },
+                afterWake: {
+                    if let workID {
+                        guard syncV2ActiveWorkID == workID else { return }
+                        await reprojectAfterResume(
+                            application,
+                            workID: workID,
+                            automaticAdoption: automaticAdoption,
+                            expectedAccountScope: expectedAccountScope,
+                            operationToken: operationToken
+                        )
+                    } else {
+                        await refreshSnapshotSyncV2Projection(
+                            expectedAccountScope: expectedAccountScope,
+                            operationToken: operationToken
+                        )
+                    }
+                }
+            )
         }
     }
 
@@ -121,10 +131,11 @@ extension IOSDocumentStore {
         expectedAccountScope: WorkspaceAccountScope,
         operationToken: UUID
     ) async {
+        let context = CheckpointCoordinator.context(of: self)
         let changes = await application.stateChanges(for: workID, until: .now.advanced(by: .seconds(30)))
         for await event in changes {
             guard event.concerns(workID) else { continue }
-            guard !Task.isCancelled,
+            guard !Task.isCancelled, CheckpointCoordinator.matches(context, host: self),
                   !isSyncV2RemoteAccountTransitionActive,
                   snapshotSyncV2ReprojectionToken == operationToken,
                   matchesSyncAccount(expectedAccountScope),
@@ -137,7 +148,8 @@ extension IOSDocumentStore {
                 )
                 return
             }
-            guard snapshotSyncV2ReprojectionToken == operationToken,
+            guard CheckpointCoordinator.matches(context, host: self),
+                  snapshotSyncV2ReprojectionToken == operationToken,
                   matchesRemoteSyncAccount(expectedAccountScope),
                   syncV2ActiveWorkID == workID else { return }
             applySnapshotSyncV2State(state)
@@ -186,6 +198,7 @@ extension IOSDocumentStore {
         guard !isSyncV2AccountTransitionActive,
               let application = snapshotSyncV2Application else { return }
         let expectedAccountScope = expectedAccountScope ?? snapshotSyncV2AccountScope
+        let context = CheckpointCoordinator.context(of: self)
         libraryRefreshGeneration &+= 1
         let refreshGeneration = libraryRefreshGeneration
         if let workID, let state = await application.uiState(workID: workID) {
@@ -195,7 +208,7 @@ extension IOSDocumentStore {
                   operationToken == nil || snapshotSyncV2ReprojectionToken == operationToken else {
                 return
             }
-            if syncV2ActiveWorkID == workID {
+            if syncV2ActiveWorkID == workID, CheckpointCoordinator.matches(context, host: self) {
                 applySnapshotSyncV2State(state)
             }
         }
