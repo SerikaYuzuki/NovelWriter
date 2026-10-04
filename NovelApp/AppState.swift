@@ -111,7 +111,10 @@ final class AppState {
     var plotOutlineSelection: PlotOutlineSelection = .unassigned
 
     var saveState: DocumentSaveState
-    var startupState: AppStartupState
+    var startupState: AppStartupState {
+        didSet { logStartupTransition(from: oldValue) }
+    }
+
     var lastStartupLibraryConnection: StartupLibraryConnection = .offline
     var authSession: FuminiwaSession?
     var authUIState: AuthUIState

@@ -36,10 +36,10 @@
 | --- | --- |
 | **検証なし** | 動作を変えない決定済み方針・説明の更新。必要な読取・編集・コミットのみ。テスト・build・lint・リンク検査・追加レビューを行わない |
 | **軽い検証** | 局所的な文言・表示・設定。影響を確かめる最小限の差分・表示・小さなテスト等 |
-| **中ぐらいの検証** | 単一機能の挙動変更。対象テストと必要なtarget build。入力変更は該当IME・Undoも確認 |
+| **中ぐらいの検証** | 単一機能の挙動変更。`./Scripts/check-changed.py`で差分に関係するテストとbuildだけを流す（`--dry-run`で計画表示）。全体の`swift test`や両OSの全App testを足さない。入力変更は該当IME・Undoも確認 |
 | **重たい検証** | 保存・migration・互換・認証scope・共有基盤・複数機能・公開準備。`./Scripts/check.sh`と影響する境界。実DB・staging・実機は必要な範囲 |
 
-利用者の明示指定を優先し、行数・拡張子・マージだけで段階を上げない。schema/wireやscript入力を変えるMarkdownは実際の影響で選ぶ。問題が出れば関係する確認へ広げ、十分な結果が得られたら完了へ進む。
+利用者の明示指定を優先し、行数・拡張子・マージだけで段階を上げない。schema/wireやscript入力を変えるMarkdownは実際の影響で選ぶ。問題が出れば関係する確認へ広げ、十分な結果が得られたら完了へ進む。修正後の再確認は失敗した対象から始め、通った検証を毎回やり直さない。
 
 Xcode projectは`./Scripts/generate-project.sh`で生成する。`project.yml`を編集し、生成project・`.derivedData/`・署名設定・秘密情報をコミットしない。Appleの起動・画面確認には利用可能なXcodeBuildMCPを使う（[開発入口](README.md#aiによる起動画面確認)）。Swiftテストはswift-testing（`@Test`）。
 
