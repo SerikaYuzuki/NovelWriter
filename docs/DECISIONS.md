@@ -144,7 +144,7 @@ HTTP edge応答の旧分類で止まったコマンドは、既存の追加型SQ
 
 macOS toolbarの同期状態は形と色で示し、状態名はhelpとaccessibility labelへ残す。標準の「アイコンとテキスト」表示にも対応する。STYLE §5の「記号＋文字」に対するtoolbar限定の例外とし、iOSと作品一覧のStatusLabelは変更しない。
 
-同期ボタンはplain style、macOS 26以降は項目の共有背景を隠す。同期中は15以降でrotate（14はpulse）、記号変更はreplace、同期済みへの遷移は一度bounceし、Reduce Motion時はアニメーションしない。標準カスタマイズとoverflowを維持する。
+同期ボタンは他の項目と同じ標準のtoolbar背景を使う（背景を外すと浮いて見えたため）。同期中は15以降でrotate（14はpulse）、記号変更はreplace、同期済みへの遷移は一度bounceし、Reduce Motion時はアニメーションしない。標準カスタマイズとoverflowを維持する。
 
 ## D-111: 共通App層の段階移設（2026-10-04）
 

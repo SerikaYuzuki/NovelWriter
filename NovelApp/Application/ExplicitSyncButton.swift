@@ -42,7 +42,6 @@ struct ExplicitSyncButton: View {
                 syncSymbol(delayed: delayed)
             }
         }
-        .buttonStyle(.plain)
         .help((delayed ? "未同期の変更があります・" : "") + status.title + " — " + (appState.snapshotSyncCurrentWorkAccountState == .unbound
                 ? "この端末の同じ作品に保存します。同期用コピーは右クリックから作成できます。"
                 : "使用中は自動で更新を確認します。クリックまたは⌘Sで今すぐ同期します。"))

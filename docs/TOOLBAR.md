@@ -16,7 +16,7 @@
 - 全モードのdetailを「作品一覧 → 可変余白 → モード固有操作 → 作品共通操作 → 執筆時のみ話内検索 → 同期状態 → 執筆時のみAI支援」の順に揃える。プロットカード追加はOutlineへ置く。同期操作と状態は一つのボタンへまとめ、形＋色で示す（D-110）。状態名はhelp／accessibilityに残し、標準の「アイコンとテキスト」表示では文字も出す。端末内作品や未確認の状態を同期済みと表示しない。
 - 保存・同期状態を下部へ重複させず、選択章名はOutlineで示す。
 
-同期ボタンはplain styleとし、macOS 26以降は項目の`sharedBackgroundVisibility(.hidden)`で共有カプセル背景を隠す。同期中はmacOS 15以降でSF Symbolsのrotate、14ではpulseを使い、記号の変更はreplace、同期済みへの遷移時だけ一度bounceする。Reduce Motion時はすべて静止表示。クリック操作、help／accessibility、標準カスタマイズとoverflowは維持する。
+同期ボタンは他の項目と同じ標準のtoolbar背景を使う。同期中はmacOS 15以降でSF Symbolsのrotate、14ではpulseを使い、記号の変更はreplace、同期済みへの遷移時だけ一度bounceする。Reduce Motion時はすべて静止表示。クリック操作、help／accessibility、標準カスタマイズとoverflowは維持する。
 
 幅不足は標準overflowと列幅調整で扱い、独自の二段目toolbarやoverflowを作らない。同期前の確認表示は`NovelWorkbenchView`側で所有し、overflow内のボタンを表示元にしない。
 
