@@ -28,7 +28,11 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
     @ToolbarContentBuilder
     private var synchronizationItem: some CustomizableToolbarContent {
         if #available(macOS 26.1, *) {
-            synchronizationButton.visibilityPriority(.high)
+            synchronizationButton
+                .sharedBackgroundVisibility(.hidden)
+                .visibilityPriority(.high)
+        } else if #available(macOS 26, *) {
+            synchronizationButton.sharedBackgroundVisibility(.hidden)
         } else {
             synchronizationButton
         }

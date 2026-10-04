@@ -9,6 +9,7 @@ struct ExplicitSyncButton: View {
     let requestSync: () -> Void
     @State private var delayClock = SyncV2DelayClock()
     @State private var setup = ExplicitSyncPresentation()
+    @State private var syncCompletionCount = 0
 
     private var status: WorkbenchSyncStatus {
         WorkbenchSyncStatus.resolve(
@@ -24,6 +25,11 @@ struct ExplicitSyncButton: View {
         TimelineView(.periodic(from: .now, by: 15)) { _ in
             button(now: delayClock.now)
         }
+        .onChange(of: status.tone) { oldTone, newTone in
+            if oldTone != .success, newTone == .success, !reduceMotion {
+                syncCompletionCount += 1
+            }
+        }
     }
 
     private func button(now: Date) -> some View {
@@ -33,12 +39,10 @@ struct ExplicitSyncButton: View {
             Label {
                 Text(status.title)
             } icon: {
-                Image(systemName: status.systemImage)
-                    .foregroundStyle((delayed && status.tone == .secondary ? StatusTone.warning : status.tone).token.color)
-                    .symbolRenderingMode(.hierarchical)
-                    .symbolEffect(.pulse, isActive: status.isSyncing && !reduceMotion)
+                syncSymbol(delayed: delayed)
             }
         }
+        .buttonStyle(.plain)
         .help((delayed ? "未同期の変更があります・" : "") + status.title + " — " + (appState.snapshotSyncCurrentWorkAccountState == .unbound
                 ? "この端末の同じ作品に保存します。同期用コピーは右クリックから作成できます。"
                 : "使用中は自動で更新を確認します。クリックまたは⌘Sで今すぐ同期します。"))
@@ -58,6 +62,26 @@ struct ExplicitSyncButton: View {
         .accessibilityLabel(appState.snapshotSyncCurrentWorkAccountState == .unbound ? "\(status.title)、この端末に保存" : "\(status.title)、今すぐ同期")
         .disabled(!appState.canExplicitlySyncCurrentWork)
         .accessibilityIdentifier("workbench.snapshot.sync")
+    }
+
+    @ViewBuilder
+    private func syncSymbol(delayed: Bool) -> some View {
+        let symbol = Image(systemName: status.systemImage)
+            .foregroundStyle((delayed && status.tone == .secondary ? StatusTone.warning : status.tone).token.color)
+            .symbolRenderingMode(.hierarchical)
+        if reduceMotion {
+            symbol
+        } else if #available(macOS 15, *) {
+            symbol
+                .symbolEffect(.rotate, isActive: status.isSyncing)
+                .contentTransition(.symbolEffect(.replace))
+                .symbolEffect(.bounce, value: syncCompletionCount)
+        } else {
+            symbol
+                .symbolEffect(.pulse, isActive: status.isSyncing)
+                .contentTransition(.symbolEffect(.replace))
+                .symbolEffect(.bounce, value: syncCompletionCount)
+        }
     }
 }
 

@@ -348,10 +348,9 @@ struct NovelWorkbenchView: View {
         case .worldbuilding:
             WorldNoteDetailView()
         case .settings:
-            SectionSurface(title: "設定", systemImage: "gearshape") {
-                EditorSettingsView()
-                    .environment(editorSettings)
-            }
+            AppSettingsView()
+                .environment(editorSettings)
+                .environment(appState)
         }
     }
 

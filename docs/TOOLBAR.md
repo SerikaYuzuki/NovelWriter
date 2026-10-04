@@ -16,6 +16,8 @@
 - 全モードのdetailを「作品一覧 → 可変余白 → モード固有操作 → 作品共通操作 → 執筆時のみ話内検索 → 同期状態 → 執筆時のみAI支援」の順に揃える。プロットカード追加はOutlineへ置く。同期操作と状態は一つのボタンへまとめ、形＋色で示す（D-110）。状態名はhelp／accessibilityに残し、標準の「アイコンとテキスト」表示では文字も出す。端末内作品や未確認の状態を同期済みと表示しない。
 - 保存・同期状態を下部へ重複させず、選択章名はOutlineで示す。
 
+同期ボタンはplain styleとし、macOS 26以降は項目の`sharedBackgroundVisibility(.hidden)`で共有カプセル背景を隠す。同期中はmacOS 15以降でSF Symbolsのrotate、14ではpulseを使い、記号の変更はreplace、同期済みへの遷移時だけ一度bounceする。Reduce Motion時はすべて静止表示。クリック操作、help／accessibility、標準カスタマイズとoverflowは維持する。
+
 幅不足は標準overflowと列幅調整で扱い、独自の二段目toolbarやoverflowを作らない。同期前の確認表示は`NovelWorkbenchView`側で所有し、overflow内のボタンを表示元にしない。
 
 作品一覧とWorkbenchは標準unified toolbar styleを使う。SidebarとOutlineの区切りはnativeの追従に任せ、項目に必要な幅を下回ると独立した区切りになり、余裕が戻ると再び列境界へ追従する。本文背景のドラッグ判定は変更しない。
@@ -52,6 +54,8 @@ v9で既定配置を更新し、保存済みのtoolbar配置を一度リセッ�
 アプリ固有の操作は個別項目として標準のカスタマイズを使う。作品一覧はnavigation placementの標準制約に従う。Sidebar開閉、列区切りなどOSが管理する構造は標準の制約に従う。選択不足は必要な操作をdisabledにし、stable IDを作り直さない。未実装機能はdisabled placeholderで出さない。
 
 ## 5. ツールバー外の入口
+
+サイドバーの「設定」と設定ウインドウは共通の`AppSettingsView`を使い、同じ「執筆／AI支援／アカウント」タブを提供する。AI支援のプロンプト編集はタブ内のNavigationStackから開く。
 
 toolbar非表示・項目削除後も、章・人物・世界観・プロット・資料の各menu、Fileの保存／履歴／書き出し、話行context menu、編集menuの検索から同じ操作へ到達できること。追加する操作は既存のcommand境界へ接続し、同じ機能の保存やsession検査を二重実装しない。
 
