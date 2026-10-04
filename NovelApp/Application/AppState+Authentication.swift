@@ -21,13 +21,7 @@ extension AppState {
     }
 
     var snapshotSyncV2AccountScopeToken: WorkspaceAccountScope {
-        WorkspaceAccountScope(
-            accountID: authSession?.accountID,
-            accountFence: authSession?.accountFence,
-            serverInstanceID: authSession.map { authServerInstanceID(for: $0) },
-            protocolEpoch: authSession.flatMap { Int64(exactly: $0.syncProtocolEpoch) },
-            generation: snapshotSyncV2AccountScopeGeneration
-        )
+        workspaceModel.accountScope(serverInstanceID: authSession.map { authServerInstanceID(for: $0) })
     }
 
     func matchesSnapshotSyncV2AccountScope(

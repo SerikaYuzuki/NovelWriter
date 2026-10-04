@@ -29,7 +29,7 @@ extension IOSDocumentStore {
     }
 
     func invalidateSnapshotSyncV2AccountOperations() {
-        syncSessionController.accountGeneration &+= 1
+        workspaceModel.accountGeneration &+= 1
         assistantRequestCenter.cancelAll()
         libraryPrefetchTask?.cancel()
         libraryImportPhases.removeAll()

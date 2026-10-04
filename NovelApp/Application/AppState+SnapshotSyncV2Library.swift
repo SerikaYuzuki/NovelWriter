@@ -76,10 +76,11 @@ extension AppState {
         snapshotSyncCurrentWorkAccountState = currentSnapshotSyncV2WorkID.flatMap { workID in
             refresh.projection.items.first(where: { $0.workID == workID })?.accountState
         }
-        let works = refresh.merged(
+        let rows = refresh.merged(
             catalog: snapshotSyncRemoteCatalogItems,
             previousItems: snapshotSyncLibraryWorks.map(Self.snapshotLibraryItem), includesQuarantinedItems: false
-        ).compactMap(Self.startupLibraryWork).map { $0.1 }
+        )
+        let works = rows.compactMap(Self.startupLibraryWork).map { $0.1 }
         snapshotSyncLibraryWorks = works
         if shouldPresentRefreshedLibrary {
             startupState = .documentSelection(.init(works: works, presentation: .localAndRemote, connection: connection))
@@ -120,7 +121,7 @@ extension AppState {
     }
 
     /// Adapts the previous macOS shelf for retention of pending deletion rows.
-    private static func snapshotLibraryItem(_ work: StartupLibraryWork) -> SyncV2LibraryItem {
+    static func snapshotLibraryItem(_ work: StartupLibraryWork) -> SyncV2LibraryItem {
         let availability: SyncV2LibraryAvailability = switch work.availability {
         case .remoteOnly: .remoteOnly
         case .cached, .conflict: .cached

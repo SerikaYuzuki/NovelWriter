@@ -21,6 +21,12 @@
 
 macOSの滑らかなカーソルを通常EditorKitへ組み込み、端末の執筆設定で切り替える。[表示の仕様と受入](CARET_ANIMATION_INVESTIGATION.md)。
 
+## 共通App層（D-111）
+
+P1〜P11の移設を完了し、NovelWorkspaceの`WorkspaceModel`と機能別coordinator／commandを両OSのadapterから使う。共有状態はdocument・章／話選択・identity／account generation・添付・保存／同期projection・棚／取り込み・keep-both・AI依頼所有権。既存名のforwarderはmodelのObservationを読む。共有SwiftUIはNovelWorkspaceUIへ分離した。
+
+OSごとのstartup・終了／scene／background・navigation・window／toolbar・MCP・private working copyとIME／保存gateはAppに残す。機能選択の寿命とMacの起動画面用棚の表示identity／availabilityは維持する。呼出元のない旧機能helper・runtime判定を除去した。保存・wire・schemaは変えておらず、実機受入は別途必要。[現行構成](DESIGN.md#52-workspacemodelとapp-adapter)。
+
 ## 実装が残るもの
 
 - Sync v2全体の不具合・性能・構造・UIの課題。[全体レビュー](SYNC_REVIEW.md)。D-01の端末内自動保存・昇格は実装済み。残る項目は個別に扱う。

@@ -1,14 +1,5 @@
 import Foundation
 
-public struct AssistantProgress: Equatable, Sendable {
-    public enum Phase: String, Sendable { case queued, working, receiving, elapsedOnly }
-    public var phase: Phase
-    public var characters: Int
-    public init(phase: Phase, characters: Int = 0) {
-        self.phase = phase; self.characters = characters
-    }
-}
-
 /// SSE frames are consumed privately. Only terminal output can leave the decoder.
 public struct AssistantStream {
     private var dataLines: [String] = []

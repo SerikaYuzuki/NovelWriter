@@ -1,5 +1,6 @@
 import Foundation
 import NovelCore
+@testable import NovelWorkspace
 @testable import NovelWorkspaceUI
 import NovelWritingSupport
 import Testing

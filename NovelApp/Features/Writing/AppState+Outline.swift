@@ -226,12 +226,6 @@ extension AppState {
         _ = outlineCommands(.flushNow).addEpisode(to: chapterID ?? selectedChapterID, title: title)
     }
 
-    /// 選択中話のタイトルを更新する。
-    func updateSelectedEpisodeTitle(_ title: String) {
-        guard let selectedEpisodeID, let selectedChapterID else { return }
-        outlineCommands(.debounced).renameEpisode(title, id: selectedEpisodeID, in: selectedChapterID)
-    }
-
     /// 話のタイトルを更新する。
     func updateEpisodeTitle(_ title: String, for episodeID: EpisodeID, in chapterID: ChapterID) {
         outlineCommands(.debounced).renameEpisode(title, id: episodeID, in: chapterID)
@@ -299,17 +293,6 @@ extension AppState {
         outlineCommands(.flushNow).moveChapters(fromOffsets: fromOffsets, toOffset: toOffset)
     }
 
-    /// 話を削除し、同じ章の隣接話へ選択を移す。
-    @discardableResult
-    func deleteEpisode(
-        id episodeID: EpisodeID,
-        from chapterID: ChapterID? = nil,
-        expectedSession: WorkspaceSessionToken? = nil
-    ) -> Bool {
-        guard let source = chapterID ?? selectedChapterID else { return false }
-        return outlineCommands(.flushNow).deleteEpisodes([episodeID], in: source, expectedSession: expectedSession)
-    }
-
     /// 章内の話を並べ替える。
     func moveEpisodes(in chapterID: ChapterID, fromOffsets: IndexSet, toOffset: Int) {
         outlineCommands(.flushNow).moveEpisodes(in: chapterID, fromOffsets: fromOffsets, toOffset: toOffset)
@@ -363,10 +346,6 @@ extension AppState {
         defer { editorProgressAlreadyTracked = false }
         saveCoordinator.markDirty()
         saveCoordinator.scheduleDebouncedSave()
-    }
-
-    func advanceEditorContentGenerationForSurfaceTransition() {
-        editorContentGeneration &+= 1
     }
 
     /// 選択中章のメモを更新する。メモは短文想定の補助情報なので SwiftUI 側の

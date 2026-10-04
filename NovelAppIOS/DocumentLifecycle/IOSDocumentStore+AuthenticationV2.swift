@@ -8,11 +8,6 @@ private enum IOSDocumentStoreAuthenticationError: Error { case unavailable }
 
 extension IOSDocumentStore {
     @discardableResult
-    func beginAccountTransitionRequest() async -> UUID? {
-        await accountTransitionCoordinator.beginRequest()
-    }
-
-    @discardableResult
     func transitionFuminiwaSession(to session: FuminiwaSession?, authState: IOSAuthUIState, requestOwner: UUID? = nil) async -> Bool {
         await accountTransitionCoordinator.transition(to: session, state: authState, owner: requestOwner)
     }

@@ -152,13 +152,15 @@ account / fence変更をまたぐACK、catalog、history、worker完了を新sco
 
 macOSの[AppDependencies](../NovelApp/Application/AppDependencies.swift)と各Appのcomposition rootが具体実装を組み立てる。通常appとapp-hosted testは`FUMINIWA_TEST_COMPOSITION`で分離する。v2の物理modeはproduction / test / previewであり、testへproduction root・URL・vaultを渡さない。
 
-### 5.2 AppState
+### 5.2 WorkspaceModelとApp adapter
 
-macOSは`NovelApp/AppState.swift`、iOSは`NovelAppIOS/DocumentLifecycle/IOSDocumentStore.swift`が画面の状態を持つ。機能処理は既存の責務別extensionに置く。作品操作と非同期確認は呼出時のsession / WorkID / account scopeを保持し、完了時に検査する。
+`NovelWorkspace.WorkspaceModel`は`@MainActor @Observable`の共通状態を持つ。document、章／話選択、WorkspaceSessionToken、account scope／generation、添付setと表示一覧、保存状態、SyncUIState／競合、棚の同期行・catalog・loading／取り込み状態、keep-bothのwrite freeze、AssistantRequestCenterを両OSで共有する。AppState／IOSDocumentStoreはそれぞれ一つのmodelを所有し、既存名のcomputed forwarderはmodelのObservationを読む。モデル自体は保存・通信を開始しない。
 
-共通App層は[D-111](DECISIONS.md#d-111-共通app層の段階移設2026-10-04)に従い、非UIのNovelWorkspaceと共有SwiftUIのNovelWorkspaceUIへ段階移設する。AppState／IOSDocumentStoreは後続のWorkspaceHost portを介する薄いadapterへ整理し、OS固有のcomposition／gateはAppに残す。既知の意味差はD-111で個別に判断し、移設だけで統合しない。
+`AppState`／`IOSDocumentStore`はmodelと共通coordinator／commandへの薄いadapterである。`ProjectFeatureCommands`、`WorkspaceAttachmentCommands`、`WritingAssistantHostFactory`／`WorkReplacementHostFactory`、`LibraryCoordinator`、`CheckpointCoordinator`／`V2DocumentSaveCoordinator`、`WorkOpenCoordinator`、`AdoptionCoordinator`、`ConflictCoordinator`、`OutlineCommands`／`EpisodeTransition`、`ManuscriptCopyCommand`、`AccountTransitionCoordinator`へ機能処理を委譲し、`SyncSessionController`が非同期taskの所有権を持つ。共有SwiftUIはNovelWorkspaceUIに置く。[D-111](DECISIONS.md#d-111-共通app層の段階移設2026-10-04)。
 
-app側identityは`WorkspaceSessionToken`（generation／workID／install済みdocumentID）と`WorkspaceAccountScope`（accountID／fence／serverInstanceID／protocolEpoch／generation）を両OSで共有する。account無効化ごとにgenerationを進め、全fieldで古いcompletionを拒否する。gate固有の`NovelSyncV2Application.DocumentSessionToken`は別型として維持する。
+startup、終了・window／toolbar・MCP、iOSのscene／background・navigation departure・private working copy、IMEとdocument gate、provider／Keychain／HTTP compositionはAppに残す。Macの機能選択・棚の起動画面用表示identity／availabilityと、iOSの画面内機能選択は寿命・型が異なるため共有状態にしない。OS別の保存policy・通知・gateの意味差をこの整理で変えない。
+
+app側identityは`WorkspaceSessionToken`（generation／workID／install済みdocumentID）と`WorkspaceAccountScope`（accountID／fence／serverInstanceID／protocolEpoch／generation）を共有する。account無効化ごとにmodelのgenerationを進め、全fieldで古いcompletionを拒否する。iOSのcurrent sessionはstartup eligibilityを確認してからmodelのpayload／active WorkIDで投影し、Macのinstall済みtokenは従来の更新境界を維持する。gate固有の`NovelSyncV2Application.DocumentSessionToken`は別型のまま保つ。
 
 ### 5.3 ContentView
 

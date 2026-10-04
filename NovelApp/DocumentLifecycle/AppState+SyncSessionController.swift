@@ -45,8 +45,8 @@ extension AppState {
     }
 
     var snapshotSyncV2AccountScopeGeneration: UInt64 {
-        get { syncSessionController.accountGeneration }
-        set { syncSessionController.accountGeneration = newValue }
+        get { workspaceModel.accountGeneration }
+        set { workspaceModel.accountGeneration = newValue }
     }
 }
 

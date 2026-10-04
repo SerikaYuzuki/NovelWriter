@@ -108,7 +108,7 @@ struct IOSWorkSearchIntegrationTests {
         #expect(await !(search.replace(using: failingSnapshot)))
         #expect(store.document == beforeFailure)
         let accountHost = store.workReplacementHost
-        store.syncSessionController.accountGeneration &+= 1
+        store.workspaceModel.accountGeneration &+= 1
         #expect(!accountHost.validate())
         let host = store.workReplacementHost
         store.advanceDocumentSessionGeneration()

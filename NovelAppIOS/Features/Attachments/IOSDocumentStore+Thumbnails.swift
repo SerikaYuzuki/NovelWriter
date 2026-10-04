@@ -12,10 +12,6 @@ extension IOSDocumentStore {
         workspaceAttachments[owner.fileName]?.bytes
     }
 
-    func removeThumbnailWithOwner(_ owner: ThumbnailOwner) {
-        installWorkspaceAttachments(workspaceAttachments.removing(named: owner.fileName))
-    }
-
     func setThumbnail(_ bytes: Data?, owner: ThumbnailOwner, session: WorkspaceSessionToken,
                       account: WorkspaceAccountScope) async -> Bool {
         await documentOperationGate.perform {
