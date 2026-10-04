@@ -1,5 +1,6 @@
 import Foundation
 import NovelCore
+import NovelWorkspace
 
 extension IOSDocumentStore {
     func selectEpisodeAfterDeviceSyncDeparture(chapterID: ChapterID, episodeID: EpisodeID) async -> Bool {
@@ -71,18 +72,7 @@ extension IOSDocumentStore {
         }
     }
 
-    private func performEditingDeparture(_ operation: () -> Bool) async -> Bool {
-        guard let session = currentDocumentSessionToken else { return false }
-        let account = snapshotSyncV2AccountScope
-        return await documentOperationGate.perform {
-            guard self.currentDocumentSessionToken == session, self.snapshotSyncV2AccountScope == account,
-                  !self.isDocumentTransitionInProgress, !self.syncV2AccountTransitionInProgress,
-                  self.syncV2KeepBothPendingWorkID == nil else { return false }
-            guard await self.prepareForEditorSurfaceDeparture(),
-                  self.currentDocumentSessionToken == session, self.snapshotSyncV2AccountScope == account,
-                  !self.isDocumentTransitionInProgress, !self.syncV2AccountTransitionInProgress,
-                  self.syncV2KeepBothPendingWorkID == nil, !Task.isCancelled else { return false }
-            return operation()
-        }
+    private func performEditingDeparture(_ operation: @MainActor () -> Bool) async -> Bool {
+        await EpisodeTransition(host: self).perform(operation: operation)
     }
 }
