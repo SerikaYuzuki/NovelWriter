@@ -33,7 +33,6 @@ macOSの滑らかなカーソルを通常EditorKitへ組み込み、端末の執
 - Apple通知: 規範`/v1/auth/providers/apple/notifications`に対し、`auth_http.rs`は`/v1/auth/apple/notifications`を登録している。規範へ揃える際はApple側の登録先も確認する。[通知契約](auth/v1/apple-notification.md)。
 - LAN CA export: `Scripts/export-sync-v2-staging-ca.sh`のedge固定名が現行role-splitと異なり、Sync epoch検査も不足する。[LAN手順](SNAPSHOT_SYNC_V2_STAGING.md)。
 
-
 いずれも今回の文書更新では実装修正していない。
 
 2026-09-26の実装・全体検証・サーバー反映と端末インストールは[受入記録](PROTECTION_AI_ACCEPTANCE.md)を参照する。
@@ -139,9 +138,5 @@ Gは通常autosaveを一回で区切り、保存中の追加入力は入力停�
 30万字/150行の一覧字数処理は、既存の2回走査7.80msから1回のキャッシュ参照0.037msへ（10回中央値、変更話1件、warm cache。SwiftUI描画全体は含めない）。指定iPhone 17 Pro Maxシミュレータで10万字の話は、通常文字入力のshouldChange 0.005ms、didChange 2.308ms、合計中央値2.314ms・最大2.802ms（5回warm-up後20回）。UITextStorageの置換は別に0.035ms。実キーボード・IME・App側モデル反映・レイアウト全体は含まない。5ms目安を下回るため、EditorKitの全文取得・比較は測定だけとし、実装を変更しない。実機と長時間IME・Undo、二端末AI同期は別途受入する。
 
 再計測は`cd NovelKit && FUMINIWA_TYPING_BENCHMARK=1 swift test -c release --filter 'typingEnergyCheckpointBenchmark|typingEnergyOutlineCountBenchmark'`。iOSのdelegate計測はEditorKitの`IOSTextAdapterIntegrationTests`に含む（destinationは指定端末）。
-
-今回の追加依頼後の最終の重たい検証は成功。NovelKit全774件、macOS App全236件、Pro MaxのEditorKit全87件・iOS App全194件、Python／Swift／Rust conformance、SwiftFormat／SwiftLint、指定UDIDでの`./Scripts/check.sh`全体が通った。PostgreSQL integrationは既存ゲートに従い明示SKIP。最初のcheckpoint軽量化の検証では、既存の150ms download期限テストがlostResponseで一度失敗した。単独再実行は成功し、大文書テストの引数を直列化した全体再実行でも成功した。タイミング依存の原因は未確定。
-
-追加レビューの途中では、競合解決テストが単独でも`safeBoundaryRejected`となった。open読込中に別connectionのremote状態が更新され、stampの安定性照合をopenの成功条件へ追加していたことが原因。完全読込後のcache記帳は失敗してもopenを失敗に変えないよう修正し、回帰テストと全体検証が成功した。新規`NovelTiming`のApp依存許可リストとiOS専用3テストのinitializerも更新した。指定Simulatorの別xcodebuildを検出する保護が一度停止し、現在は5秒ごとに空きを再確認してiOS検証を進める。サーバー側に起因するRust失敗はなかった。今回追加したruntime注入テストのpreview構成引数漏れと、新規テストの201文字の行がSwiftLint上限を超えた点は修正し、全体再実行が成功した。時間設定のUserDefaultsテストはmacOS／iOS両方で通った。
 
 修正前のHEADを同じworktree内の一時packageとして実行し、1千／10万／30万／約100万字と添付・resource有無の8条件で修正後とsnapshot/object ID、manifest bytes、entries、works/history、intent/resource行を比較して一致した。実行ごとのoccurrence／intent UUIDと時刻だけ正規化した。一時package・比較用生成物・今回のビルド生成物は除いた。実account・実原稿・実DB・サーバー稼働反映・実機受入は対象外。
