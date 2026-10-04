@@ -23,7 +23,6 @@ struct IOSAccountTransitionConformanceTests {
 
 @MainActor
 private final class IOSAccountTransitionHost: AccountTransitionHost {
-    let profile = AuthCharacterizationProfile.iOS
     let fixture: AccountTransitionFixture
     let state: IOSDocumentStore
     let configuration: TestRuntimeConfiguration
@@ -104,6 +103,10 @@ private final class IOSAccountTransitionHost: AccountTransitionHost {
             operation: { _, _ in try await Task.sleep(for: .seconds(60)) }
         )
         #expect(started)
+    }
+
+    func refresh() async -> Bool {
+        await state.refreshFuminiwaSession()
     }
 
     func restore() async {

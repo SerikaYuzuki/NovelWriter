@@ -43,6 +43,7 @@
 | D-042 | 通常の開発依頼は実装・品質改善。価格・法務・販促は明示依頼の範囲。必要なデプロイは対象・backup・反映後を確認して進める |
 | D-114 | 話ごとの本文履歴と単話復元を共有層に実装し、復元前checkpointは手動保存として記録する |
 | D-111 | 共通App層をNovelWorkspace／NovelWorkspaceUIへ段階移設し、両OSの意味差は明示判断して統合する |
+| D-115 | 認証のaccount transitionをiOSモデルの共通Coordinatorへ統合し、12差分を明示解決する |
 | D-076 | 責務別の構造、Swift 6境界、swift-testing。Swift sourceは400行で確認、600行で警告、800行超は分割する |
 | D-078 | 現行Auth v1はApple-only、opaque AccountID/session/Fence。内容保護はserverReadableV1、E2EEではない。[AUTH](AUTH.md) |
 | D-081〜D-083 / D-085 | PostgreSQLの初期化・bootstrap・migration owner・runtimeを分離。runtimeにDDLを与えず、sequenceはUSAGEのみ。既存migrationと対象識別を保つ |
@@ -178,7 +179,7 @@ P9完了：`OutlineCommands`へ章／話の追加・改名・削除・配列順�
 
 `ManuscriptCopyCommand`と本文を持たない共通notice／resultへ範囲の再解決・Editor確定本文優先・plain text生成・失敗対応を集約。pasteboard書込はportからAppのNSPasteboard／UIPasteboardへ委譲し、Macの5秒通知とiOSの短い文言・promptを維持する。Macはコピーでmodelを書かず、iOSは話／章のコピー時に既存の確定本文同期を維持する。iOSの選択コピーもIME変換中は拒否する安全側へ揃える（非active Editorからの明示選択コピーは従来どおり許可）。共通のCRUD・順序・遷移失敗／旧scope・copyテストをfake hostへ移し、Appには選択・本文・SQLite／native editing position・離脱ID・改名dialog・copy adapterテストを残す。EditorKit実装、本文編集／Undo経路とwire／schemaは変更しない。
 
-P10a／P10b完了：同じ18認証シナリオをtest-only `AccountTransitionHost`のfakeと両App adapterへ適用し、IME前のremote lease、SQLite checkpoint、UI／work・AI退役、回復、旧epoch fail-closedをcharacterizeした。`AuthComposition`へKeychain／HTTP／Apple・Google providerの組立を共有化し、service名・item format・clientPlatformとOS別認証flowは維持した。[OS差の全一覧と検証証跡](auth/p10-characterization.md)をP10cへ引き継ぐ。D8のiOSモデルへの統合はP10c／P10dで行い、この段階では適用しない。
+P10完了：`AuthComposition`に続き、`AccountTransitionCoordinator`へrequest window、remote suspension lease、abandon recovery、復元／Apple・Google sign-in／sign-out／A→B／refresh／revoke journal retry／旧epoch fail-closedを統合した。両AppはIME・SQLite checkpoint、document gate、UI投影とOS別providerのadapterを持つ。Macのinteractive countは共通Coordinatorの短い準備／transition状態から導出する。18シナリオのfakeと両Appは、Apple入口のcompositionを除き同じ期待値を使う。D8と12差分の判断は[D-115](#d-115-認証account-transitionの統合2026-10-04)、現在の安全境界と検証入口は[AUTH](AUTH.md)へ集約した。
 
 片方の意味を暗黙に採用しない。以下は後続phaseの統合方針であり、P1では適用しない。
 
@@ -191,7 +192,7 @@ P10a／P10b完了：同じ18認証シナリオをtest-only `AccountTransitionHos
 | D5 | P8dで解決。表示時projectionと編集世代が変わった選択は両OSで拒否 | 厳しいiOSを採用し、編集世代の照合も完全一致に揃える |
 | D6 | 棚mergeでpending-deletion行を保持し、削除済みlocal行を落とすのはiOSだけ | iOSを採用（2026-10-04オーナー決定、P3）。NovelWorkspaceのpure functionへ統合し、削除待ち行を保持、削除済みIDはlocal／remote／保持行から除外する |
 | D7 | P8cで解決。safe-adoption gateの意味差を保持する | `WorkspaceAdoptionPort`へ各OSのsession／arm／disarmを注入。gate実装は統合しない |
-| D8 | MacはauthOperationGate＋owner＋count、iOSはrequest window＋lease＋abandon recovery＋revoke retry＋old-epoch fail-closed | iOSモデルをcoreにする |
+| D8 | P10で解決。両OSが共通AccountTransitionCoordinatorを使用する | iOSのrequest window＋lease＋abandon recovery＋journal retryを採用。12差分はD-115 |
 | D9 | P5で解決。Macは操作時flush／入力中debounce、iOSはdebounce | 操作ごとのsave policy parameterで既存挙動を維持 |
 | D10 | P7で解決。committed-text取得をWorkspaceEditorHostのメソッドへ統合 | Macの注入closure／iOSのEditorCommandSessionはadapterで維持 |
 | D11 | P6で解決。両OSのpayloadを共通のordered・fileName一意setへ統合 | 表示順とOS別一意名を維持、保存境界を注入 |
@@ -222,3 +223,27 @@ SQLiteのsnapshot_entriesとsnapshots、および同じaccount bindingの検証�
 単話復元はNovelWorkspaceのEpisodeRestoreSessionで、既存WorkReplacementHostのdocument gate → IME確定とローカル保存 → 確認時本文との一致 → explicit checkpoint → 共通WritingEdit検査・永続Undo journal → 1つのEpisodeTextChangeをEditorKitへ適用 → ローカル保存、の順に実行する。checkpoint失敗時は本文を変えない。native Undoを1回にし、他の話は変更しない。競合未解決・IME変換中・話削除・Work/session/account変更では拒否する。話が存在しなければ作品全体履歴へ案内する。作品全体のrestore経路は呼ばない。
 
 新しいreasonは追加せず、復元前checkpointは「手動保存」と表示する。schema/wire/fixtureは変更しない。history_occurrencesのWork別indexは現行schemaの厳密なattestationに影響するため、今回は追加しない。
+
+
+## D-115: 認証account transitionの統合（2026-10-04）
+
+D-111 P10のオーナー決定。`NovelWorkspace.AccountTransitionCoordinator`を両OSの唯一の認証transition coreとし、iOSのrequest window、lease、abandon recovery、revoke journal retry、旧epoch fail-closedを採用する。Appはprovider compositionとIME／SQLite／document gate／画面投影を担当する。
+
+| # | 決定 | 理由 |
+| --- | --- | --- |
+| 1 | AppleはMac production browser、iOS nativeを維持する | 配布・OSの認証入口はcompositionの値であり、統合対象のflowではない |
+| 2 | 両OSともiOSのpreflight→旧scope退役→destination反映を使う | vault交換前に確定本文を旧scopeへ保存する |
+| 3 | 同一scopeのtoken refreshはgenerationとwork／AI requestを保つ | 通常のtoken更新で進行中の処理を取消しない |
+| 4 | 未ログインからのexchange失敗は理由付きfailedを表示する | 認証画面自身が理由を示し、別noticeを重ねない |
+| 5 | 未ログインからの取消はsignedOutへ戻す | 利用者の取消をエラーにしない |
+| 6 | sessionを復元できたexchange失敗も理由を残す | 回復成功で失敗理由を隠さない |
+| 7 | exchange中のsign-outは終了後にqueue実行する | 利用者のsign-out意思を落とさない |
+| 8 | revokeは独立taskで実行し、callerとleaseを解放する | 遅い通信やofflineでローカル操作を止めない |
+| 9 | pending revokeはjournalだけをretryし、新しいBを保つ | Aの再送で後続sessionを消さない |
+| 10 | 旧epochの直接transitionはpark後failed、戻り値falseとする | callerが成功としてremoteを再開しない |
+| 11 | 旧epochのlaunch restoreはpark後に旧vault sessionを除く | 使用不能なsessionを次回起動へ残さない |
+| 12 | restore時のApple credential revoked／notFound／transferredはsignedOutとする | Appleの失効を尊重する。照合の一時失敗は有効sessionを退役させない |
+
+leaseは最初のIME／dirty checkpointより先に取得し、拒否・取消・回復・失敗を含む各経路で解放する。認証UIへsessionをpublishするのはdurable account boundary後だけ。同一scopeのrefreshはこの境界を開かない。取消後のcleanupは取得時のrequest ownerに限定し、後続requestを解放しない。
+
+sign-outはネットワーク待ちの前に既存vaultのrevoke journalを確定し、独立taskは`resumePendingRevoke()`だけを使う。新しいsessionへのsign-out再帰を避け、vault formatの変更も行わない。ブラウザ由来sessionにはnative Apple credential-state照合を適用しない。

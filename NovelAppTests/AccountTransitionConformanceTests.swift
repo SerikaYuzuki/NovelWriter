@@ -23,7 +23,6 @@ struct MacAccountTransitionConformanceTests {
 
 @MainActor
 private final class MacAccountTransitionHost: AccountTransitionHost {
-    let profile = AuthCharacterizationProfile.macOS
     let fixture: AccountTransitionFixture
     let state: AppState
     let configuration: TestRuntimeConfiguration
@@ -105,6 +104,10 @@ private final class MacAccountTransitionHost: AccountTransitionHost {
         #expect(started)
     }
 
+    func refresh() async -> Bool {
+        await state.refreshFuminiwaSession()
+    }
+
     func restore() async {
         await state.restoreFuminiwaSession()
     }
@@ -121,9 +124,15 @@ private final class MacAccountTransitionHost: AccountTransitionHost {
         await state.signOutFromFuminiwa()
     }
 
-    func settleRevoke() async {}
-    // macOS has no launch/foreground pending-revoke retry entry point today.
-    func retryRevoke() async {}
+    func settleRevoke() async {
+        await state.authRevokeRetryTask?.value
+    }
+
+    func retryRevoke() async {
+        state.resumePendingAuthRevoke()
+        await settleRevoke()
+    }
+
     func transition(_ session: FuminiwaSession?) async -> Bool {
         await state.transitionFuminiwaSession(to: session, authState: session.map { .signedIn(accountID: $0.accountID) } ?? .signedOut)
     }

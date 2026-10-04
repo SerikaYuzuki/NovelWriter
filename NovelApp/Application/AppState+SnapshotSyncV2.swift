@@ -248,11 +248,8 @@ extension AppState {
                     self.snapshotSyncV2Application === application && CheckpointCoordinator.matches(context, host: self)
                 },
                 beforeWake: {
-                    if let coordinator {
-                        // Pending revoke stays behind the auth gate, outside local saving.
-                        try? await self.authOperationGate.perform {
-                            try await coordinator.resumePendingRevoke()
-                        }
+                    if coordinator != nil {
+                        self.resumePendingAuthRevoke()
                     }
                 },
                 afterWake: {

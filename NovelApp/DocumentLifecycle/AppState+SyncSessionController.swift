@@ -48,11 +48,6 @@ extension AppState {
         get { syncSessionController.accountGeneration }
         set { syncSessionController.accountGeneration = newValue }
     }
-
-    var authOperationOwner: UUID? {
-        get { syncSessionController.accountOwner }
-        set { syncSessionController.accountOwner = newValue }
-    }
 }
 
 extension AppState {

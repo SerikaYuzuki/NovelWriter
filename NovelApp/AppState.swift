@@ -156,17 +156,15 @@ final class AppState {
     #else
     @ObservationIgnored let documentOperationGate = DocumentOperationGate()
     #endif
-    @ObservationIgnored let authOperationGate = AuthOperationGate()
-    /// Counts interactive auth requests from invocation until the serialized
-    /// operation fully commits. This is separate from the presentation-only
-    /// `authUIState` so queued requests close replacement boundaries early.
-    @ObservationIgnored var interactiveAuthOperationCount = 0
-    @ObservationIgnored var interactiveAuthOperationOwners: Set<UUID> = []
-    /// Represents the one queued or active interactive Apple sign-in request.
-    /// It is deliberately independent from `interactiveAuthOperationCount`:
-    /// a request waiting behind sign-out must not block local work, while a
-    /// duplicate tap must not enqueue a second Apple exchange.
-    @ObservationIgnored var pendingSignInRequest = false
+    @ObservationIgnored lazy var accountTransitionCoordinator = AccountTransitionCoordinator(host: self)
+    var interactiveAuthOperationCount: Int {
+        accountTransitionCoordinator.preparing || accountTransitionCoordinator.inProgress ? 1 : 0
+    }
+
+    var authRevokeRetryTask: Task<Void, Never>? {
+        accountTransitionCoordinator.revokeTask
+    }
+
     @ObservationIgnored var terminationTask: Task<Bool, Never>?
     @ObservationIgnored var bootstrapTask: Task<Void, Never>?
     @ObservationIgnored var manuscriptCopyNoticeDismissTask: Task<Void, Never>?

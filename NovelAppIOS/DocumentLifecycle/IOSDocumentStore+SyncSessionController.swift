@@ -45,23 +45,23 @@ extension IOSDocumentStore {
     }
 
     var syncV2AccountTransitionRequestOwner: UUID? {
-        get { syncSessionController.accountOwner }
-        set { syncSessionController.accountOwner = newValue }
+        get { accountTransitionCoordinator.requestOwner }
+        set { accountTransitionCoordinator.requestOwner = newValue }
     }
 
     var syncV2AccountTransitionRequested: Bool {
-        get { syncSessionController.accountTransitionRequested }
-        set { syncSessionController.accountTransitionRequested = newValue }
+        get { accountTransitionCoordinator.requested }
+        set { accountTransitionCoordinator.requested = newValue }
     }
 
     var syncV2AccountTransitionInProgress: Bool {
-        get { syncSessionController.accountTransitionInProgress }
-        set { syncSessionController.accountTransitionInProgress = newValue }
+        get { accountTransitionCoordinator.inProgress }
+        set { accountTransitionCoordinator.inProgress = newValue }
     }
 
     var syncV2RemoteSuspensionToken: SyncV2AccountTransitionRemoteSuspensionToken? {
-        get { syncSessionController.remoteSuspension }
-        set { syncSessionController.remoteSuspension = newValue }
+        get { accountTransitionCoordinator.remoteSuspension }
+        set { accountTransitionCoordinator.remoteSuspension = newValue }
     }
 
     func matchesSyncAccount(_ expected: WorkspaceAccountScope?) -> Bool {

@@ -14,11 +14,10 @@ enum AuthCharacterizationScenario: String, CaseIterable, Sendable {
     case revokedCredentialRestore, pendingRevoke, queuedSignOut, revokeSuspension
 }
 
-/// This is a characterization port, not the future P10c transition service.
+/// Test observations for the shared core and real app adapters.
 /// The very same driver is compiled into the package and both app test bundles.
 @MainActor
 protocol AccountTransitionHost: AnyObject {
-    var profile: AuthCharacterizationProfile { get }
     var fixture: AccountTransitionFixture { get }
     var session: FuminiwaSession? { get }
     var uiState: WorkspaceAuthUIState { get }
@@ -28,6 +27,7 @@ protocol AccountTransitionHost: AnyObject {
     var failureNotice: String? { get }
     var localOperationsAllowed: Bool { get }
     func seedDirtyUIAndRequests() async
+    func refresh() async -> Bool
     func restore() async
     func signIn(_ provider: AuthProvider) async
     func signOut() async
@@ -37,33 +37,6 @@ protocol AccountTransitionHost: AnyObject {
     func persistedTitle() async throws -> String?
     func isWorkParked() async throws -> Bool
     func requestsCancelled() async -> Bool
-}
-
-enum AuthCharacterizationProfile {
-    case reference, macOS, iOS
-    var refreshInvalidates: Bool {
-        self == .macOS
-    }
-
-    var oldEpochTransitionSucceeds: Bool {
-        self == .macOS
-    }
-
-    var removesOldEpochVault: Bool {
-        self == .macOS
-    }
-
-    var consultsCredentialState: Bool {
-        self == .macOS
-    }
-
-    var queuesSignOut: Bool {
-        self == .macOS
-    }
-
-    var cancellationWithoutSession: WorkspaceAuthUIState {
-        self == .macOS ? .signedOut : .failed("Appleでのサインインがキャンセルされました")
-    }
 }
 
 @MainActor
