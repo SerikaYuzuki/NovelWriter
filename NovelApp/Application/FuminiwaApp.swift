@@ -359,21 +359,10 @@ struct FuminiwaApp: App {
         }
 
         Settings {
-            TabView {
-                EditorSettingsView().environment(editorSettings)
-                    .tabItem { Label("執筆", systemImage: "textformat") }
-                NavigationStack {
-                    AssistantSettingsView(defaults: appState.userDefaults,
-                                          writingHost: appState.writingAssistantHost,
-                                          mcpController: appState.writingMCPController)
-                }
-                .tabItem { Label("AI支援", systemImage: "sparkles") }
-                Form {
-                    DeviceLabelSettingsView(defaults: appState.userDefaults)
-                    AccountAccessView().environment(appState)
-                }.formStyle(.grouped)
-                    .tabItem { Label("アカウント", systemImage: "person.crop.circle") }
-            }.frame(width: 520, height: 620)
+            AppSettingsView()
+                .environment(editorSettings)
+                .environment(appState)
+                .frame(width: 520, height: 620)
         }
     }
 }
