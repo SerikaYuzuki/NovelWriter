@@ -27,13 +27,6 @@ func acceptsSnapshotSyncV2ConflictResult(_ result: SyncV2TypedResult) -> Bool {
     }
 }
 
-func acceptsSnapshotSyncV2RemoteOnlyOpen(
-    _ opened: SyncV2OpenedWork,
-    requestedWorkID: WorkID
-) -> Bool {
-    opened.workID == requestedWorkID
-}
-
 extension IOSDocumentStore {
     /// Retires asynchronous remote-only work before a new document operation
     /// can change the session. The task itself must not clear a newer task's

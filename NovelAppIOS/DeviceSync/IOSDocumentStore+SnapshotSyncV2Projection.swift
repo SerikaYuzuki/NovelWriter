@@ -132,61 +132,42 @@ extension IOSDocumentStore {
         operationToken: UUID
     ) async {
         let context = CheckpointCoordinator.context(of: self)
-        let changes = await application.stateChanges(for: workID, until: .now.advanced(by: .seconds(30)))
-        for await event in changes {
-            guard event.concerns(workID) else { continue }
-            guard !Task.isCancelled, CheckpointCoordinator.matches(context, host: self),
-                  !isSyncV2RemoteAccountTransitionActive,
-                  snapshotSyncV2ReprojectionToken == operationToken,
-                  matchesSyncAccount(expectedAccountScope),
-                  syncV2ActiveWorkID == workID else { return }
-            guard let state = await application.uiState(workID: workID) else {
-                await refreshSnapshotSyncV2Projection(
-                    workID: workID,
-                    expectedAccountScope: expectedAccountScope,
-                    operationToken: operationToken
-                )
-                return
-            }
-            guard CheckpointCoordinator.matches(context, host: self),
-                  snapshotSyncV2ReprojectionToken == operationToken,
-                  matchesRemoteSyncAccount(expectedAccountScope),
-                  syncV2ActiveWorkID == workID else { return }
-            applySnapshotSyncV2State(state)
-            switch state.remoteProgress {
-            case .pending, .syncing:
-                continue
-            case .readyForSafeAdoption:
-                if let automaticAdoption,
-                   let current = automaticAdoptionExpectation(for: workID, validatingEditorSurface: true),
-                   automaticAdoption.isCurrent(current),
-                   await adoptPendingSnapshotSyncV2(
-                       expectedSession: automaticAdoption.session,
-                       expectedEditGeneration: automaticAdoption.editGeneration,
-                       expectedAccountScope: automaticAdoption.account,
-                       automatically: true
-                   ) {
-                    return
+        var adopted = false
+        await AdoptionCoordinator(application: application).reproject(
+            host: self, workID: workID,
+            isCurrent: {
+                !self.isSyncV2RemoteAccountTransitionActive
+                    && self.snapshotSyncV2ReprojectionToken == operationToken
+                    && self.matchesRemoteSyncAccount(expectedAccountScope) && self.syncV2ActiveWorkID == workID
+            }, receive: { state in
+                guard let state else { return false }
+                self.applySnapshotSyncV2State(state)
+                switch state.remoteProgress {
+                case .pending, .syncing:
+                    return true
+                case .readyForSafeAdoption:
+                    if let automaticAdoption,
+                       let current = self.automaticAdoptionExpectation(for: workID, validatingEditorSurface: true),
+                       automaticAdoption.isCurrent(current),
+                       await self.adoptPendingSnapshotSyncV2(
+                           expectedSession: automaticAdoption.session,
+                           expectedEditGeneration: automaticAdoption.editGeneration,
+                           expectedAccountScope: automaticAdoption.account, automatically: true
+                       ) {
+                        adopted = true
+                        return false
+                    }
+                    return false
+                default:
+                    return false
                 }
-                await refreshSnapshotSyncV2Projection(
-                    workID: workID,
-                    expectedAccountScope: expectedAccountScope,
-                    operationToken: operationToken
-                )
-                return
-            default:
-                await refreshSnapshotSyncV2Projection(
-                    workID: workID,
-                    expectedAccountScope: expectedAccountScope,
-                    operationToken: operationToken
-                )
-                return
             }
-        }
+        )
+        guard !adopted, !Task.isCancelled, CheckpointCoordinator.matches(context, host: self),
+              snapshotSyncV2ReprojectionToken == operationToken,
+              matchesRemoteSyncAccount(expectedAccountScope) else { return }
         await refreshSnapshotSyncV2Projection(
-            workID: workID,
-            expectedAccountScope: expectedAccountScope,
-            operationToken: operationToken
+            workID: workID, expectedAccountScope: expectedAccountScope, operationToken: operationToken
         )
     }
 

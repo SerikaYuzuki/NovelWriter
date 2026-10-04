@@ -220,6 +220,19 @@ extension AppState {
         return true
     }
 
+    func workspaceWorkOpenCoordinator(_ application: SyncV2Application) -> WorkOpenCoordinator {
+        var coordinator = WorkOpenCoordinator(application: application)
+        #if FUMINIWA_TEST_COMPOSITION
+        if let snapshotSyncV2OpenLocalOverride {
+            coordinator.openLocal = { try await snapshotSyncV2OpenLocalOverride(application, $0) }
+        }
+        if let snapshotSyncV2OpenOverride {
+            coordinator.download = { try await snapshotSyncV2OpenOverride(application, $0) }
+        }
+        #endif
+        return coordinator
+    }
+
     @discardableResult
     func openLibraryWork(_ work: StartupLibraryWork) async -> Bool {
         guard let application = snapshotSyncV2Application,
@@ -229,6 +242,7 @@ extension AppState {
             return await task.value
         }
         let accountScope = snapshotSyncV2AccountScopeToken
+        let expected = CheckpointCoordinator.context(of: self)
         snapshotSyncLibraryOpenFailure = nil
         operationMessage = nil
         // Selecting another shelf item explicitly retires any older remote
@@ -240,6 +254,7 @@ extension AppState {
         return await documentOperationGate.perform { [weak self] in
             guard let self,
                   permitsLibraryWorkOpening,
+                  CheckpointCoordinator.matches(expected, host: self),
                   matchesSnapshotSyncV2AccountScope(accountScope),
                   editorCommandSession.prepareForDocumentTransition() else { return false }
             defer { editorCommandSession.resumeAfterDocumentTransition() }
@@ -249,37 +264,32 @@ extension AppState {
                 guard await saveNow() else { return false }
             }
             do {
-                guard matchesSnapshotSyncV2AccountScope(accountScope) else { return false }
-                #if FUMINIWA_TEST_COMPOSITION
-                let opened = if let snapshotSyncV2OpenLocalOverride {
-                    try await snapshotSyncV2OpenLocalOverride(application, work.workID)
-                } else {
-                    try await application.openLocal(workID: work.workID)
+                let prepared = operationContext
+                let coordinator = workspaceWorkOpenCoordinator(application)
+                guard let opened = try await coordinator.readLocal(workID: work.workID, isCurrent: {
+                    prepared.isCurrent(self.operationContext) && self.matchesSnapshotSyncV2AccountScope(accountScope)
+                }) else { return false }
+                let installed = try await coordinator.installAtPreparedBoundary(
+                    opened, workID: work.workID, host: self, createsSession: true,
+                    isCurrent: { self.matchesSnapshotSyncV2AccountScope(accountScope) },
+                    install: { opened, session in
+                        guard let value = opened.document,
+                              self.installV2Document(value, workID: opened.workID, createdAt: opened.documentCreatedAt,
+                                                     attachments: opened.attachments, resources: opened.resources,
+                                                     expectedWorkID: work.workID) else {
+                            self.snapshotSyncLibraryOpenFailure = .fatal(.invalidLocalState)
+                            self.operationMessage = "作品データを検証できませんでした。端末の版は変更していません。"
+                            return false
+                        }
+                        self.snapshotSyncV2Session = session
+                        self.startupState = .ready
+                        return true
+                    }, project: { self.applySnapshotSyncV2State($0) }
+                )
+                if installed {
+                    scheduleAutomaticServerAdoption(expectedAccountScope: accountScope)
                 }
-                #else
-                let opened = try await application.openLocal(workID: work.workID)
-                #endif
-                guard matchesSnapshotSyncV2AccountScope(accountScope) else { return false }
-                guard let openedDocument = opened.document else { throw SyncV2ApplicationError.workNotFound }
-                let newSnapshotSession = await application.beginSession(workID: opened.workID)
-                guard matchesSnapshotSyncV2AccountScope(accountScope) else { return false }
-                guard installV2Document(
-                    openedDocument,
-                    workID: opened.workID,
-                    createdAt: opened.documentCreatedAt,
-                    attachments: opened.attachments,
-                    resources: opened.resources,
-                    expectedWorkID: work.workID
-                ) else {
-                    snapshotSyncLibraryOpenFailure = .fatal(.invalidLocalState)
-                    operationMessage = "作品データを検証できませんでした。端末の版は変更していません。"
-                    return false
-                }
-                snapshotSyncV2Session = newSnapshotSession
-                startupState = .ready
-                scheduleAutomaticServerAdoption(expectedAccountScope: accountScope)
-                await refreshSnapshotSyncV2UIState()
-                return true
+                return installed
             } catch {
                 guard matchesSnapshotSyncV2AccountScope(accountScope) else { return false }
                 reportSnapshotSyncV2OpenFailure(error)
@@ -312,21 +322,15 @@ extension AppState {
                 self?.finishRemoteOnlyOpen(operationToken: operationToken)
             }
             do {
-                #if FUMINIWA_TEST_COMPOSITION
-                let opened = if let snapshotSyncV2OpenOverride = self?.snapshotSyncV2OpenOverride {
-                    try await snapshotSyncV2OpenOverride(application, work.workID)
-                } else {
-                    try await application.open(workID: work.workID)
-                }
-                #else
-                let opened = try await application.open(workID: work.workID)
-                #endif
-                guard opened.document != nil else { throw SyncV2ApplicationError.workNotFound }
-                guard !Task.isCancelled,
-                      let self,
-                      snapshotSyncV2RemoteOnlyOpenToken == operationToken,
-                      matchesSnapshotSyncV2AccountScope(accountScope) else { return false }
-                libraryImportPhases[work.workID] = ImportPhase(stage: .opening)
+                guard let self else { return false }
+                let coordinator = workspaceWorkOpenCoordinator(application)
+                guard let opened = try await coordinator.downloadRemoteOnly(
+                    workID: work.workID,
+                    isCurrent: { self.snapshotSyncV2RemoteOnlyOpenToken == operationToken
+                        && self.matchesSnapshotSyncV2AccountScope(accountScope)
+                    },
+                    opening: { self.libraryImportPhases[work.workID] = ImportPhase(stage: .opening) }
+                ) else { return false }
                 var validationRejected = false
                 let installed = await documentOperationGate.perform { [weak self] in
                     guard let self,
@@ -343,32 +347,26 @@ extension AppState {
                     if expectedWorkID != nil {
                         guard await saveNow() else { return false }
                     }
-                    guard await (try? application.isCurrentLocalVersion(opened)) == true else { return false }
-                    guard !Task.isCancelled,
-                          snapshotSyncV2RemoteOnlyOpenToken == operationToken,
-                          matchesSyncOperation(operation),
-                          snapshotSyncV2Session == expectedSnapshotSession else { return false }
-                    let newSnapshotSession = await application.beginSession(workID: opened.workID)
-                    guard !Task.isCancelled,
-                          snapshotSyncV2RemoteOnlyOpenToken == operationToken,
-                          matchesSyncOperation(operation),
-                          snapshotSyncV2Session == expectedSnapshotSession else { return false }
-                    guard installV2Document(
-                        openedDocument,
-                        workID: opened.workID,
-                        createdAt: opened.documentCreatedAt,
-                        attachments: opened.attachments,
-                        resources: opened.resources,
-                        expectedWorkID: work.workID
-                    ) else {
-                        validationRejected = true
-                        operationMessage = "取得した作品データを検証できませんでした。現在の作品は変更していません。"
-                        return false
-                    }
-                    snapshotSyncV2Session = newSnapshotSession
-                    startupState = .ready
-                    await refreshSnapshotSyncV2UIState()
-                    return true
+                    return await (try? coordinator.installAtPreparedBoundary(
+                        opened, workID: work.workID, host: self, verifiesLocalVersion: true, createsSession: true,
+                        isCurrent: { self.snapshotSyncV2RemoteOnlyOpenToken == operationToken
+                            && self.matchesSyncOperation(operation)
+                            && self.snapshotSyncV2Session == expectedSnapshotSession
+                        },
+                        install: { opened, session in
+                            guard self.installV2Document(
+                                openedDocument, workID: opened.workID, createdAt: opened.documentCreatedAt,
+                                attachments: opened.attachments, resources: opened.resources, expectedWorkID: work.workID
+                            ) else {
+                                validationRejected = true
+                                self.operationMessage = "取得した作品データを検証できませんでした。現在の作品は変更していません。"
+                                return false
+                            }
+                            self.snapshotSyncV2Session = session
+                            self.startupState = .ready
+                            return true
+                        }, project: { self.applySnapshotSyncV2State($0) }
+                    )) == true
                 }
                 reportRemoteOnlyOpenResult(
                     installed: installed, validationRejected: validationRejected, work: work,
