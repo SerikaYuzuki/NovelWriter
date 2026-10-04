@@ -3,6 +3,7 @@ import NovelCore
 import NovelSyncV2
 import NovelSyncV2Application
 import NovelSyncV2PortableBridge
+import NovelWorkspaceUI
 
 extension IOSDocumentStore {
     func performCoordinatedDocumentSave(_ value: NovelDocument) async throws {

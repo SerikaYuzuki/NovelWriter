@@ -2,7 +2,13 @@ import NovelSyncV2
 import NovelSyncV2Application
 import SwiftUI
 
-struct ProtectedWorksView: View {
+public struct ProtectedWorksView: View {
+    public init(application: SyncV2Application, contextID: String, refreshed: @escaping () async -> Void) {
+        self.application = application
+        self.contextID = contextID
+        self.refreshed = refreshed
+    }
+
     let application: SyncV2Application
     let contextID: String
     let refreshed: () async -> Void
@@ -20,7 +26,7 @@ struct ProtectedWorksView: View {
         let request: SyncV2RecoveryRequest
     }
 
-    var body: some View {
+    public var body: some View {
         NavigationStack {
             VStack(alignment: .leading, spacing: 12) {
                 Text("選んだ内容を新しい作品として取り出します。元の作品は残ります。")

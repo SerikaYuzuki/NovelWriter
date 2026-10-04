@@ -3,12 +3,20 @@ import NovelCore
 import NovelSyncV2
 
 /// Read-only Markdown travels through the existing snapshot attachment contract.
-struct AssistantFeedback: Identifiable, Equatable, Sendable {
-    let id: UUID
-    let purpose: AssistantPurpose
-    let scopeTitle: String
-    let createdAt: Date
-    let markdown: String
+public struct AssistantFeedback: Identifiable, Equatable, Sendable {
+    public init(id: UUID, purpose: AssistantPurpose, scopeTitle: String, createdAt: Date, markdown: String) {
+        self.id = id
+        self.purpose = purpose
+        self.scopeTitle = scopeTitle
+        self.createdAt = createdAt
+        self.markdown = markdown
+    }
+
+    public let id: UUID
+    public let purpose: AssistantPurpose
+    public let scopeTitle: String
+    public let createdAt: Date
+    public let markdown: String
 
     private struct Header: Codable {
         var version = 1
@@ -18,15 +26,15 @@ struct AssistantFeedback: Identifiable, Equatable, Sendable {
         let createdAt: Date
     }
 
-    var fileName: String {
+    public var fileName: String {
         "fuminiwa-feedback-\(id.uuidString).md"
     }
 
-    var title: String {
+    public var title: String {
         "\(purpose.rawValue) · \(scopeTitle)"
     }
 
-    func attachment() throws -> SyncAttachment {
+    public func attachment() throws -> SyncAttachment {
         guard purpose != .proofreading, !markdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               markdown.utf8.count <= 8_000_000 else { throw AssistantError.invalidResponse }
         let header = Header(id: id, purpose: purpose, scopeTitle: scopeTitle, createdAt: createdAt)
@@ -35,7 +43,7 @@ struct AssistantFeedback: Identifiable, Equatable, Sendable {
         return SyncAttachment(attachmentId: id, fileName: fileName, bytes: bytes)
     }
 
-    func temporaryFile() throws -> URL {
+    public func temporaryFile() throws -> URL {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true,
                                                 attributes: [.posixPermissions: 0o700])
@@ -45,7 +53,7 @@ struct AssistantFeedback: Identifiable, Equatable, Sendable {
         return url
     }
 
-    static func decode(fileName: String, bytes: Data) -> Self? {
+    public static func decode(fileName: String, bytes: Data) -> Self? {
         guard fileName.hasPrefix("fuminiwa-feedback-"), fileName.hasSuffix(".md"), bytes.count <= 8_100_000,
               let text = String(data: bytes, encoding: .utf8), let separator = text.range(of: " -->\n\n"),
               text.hasPrefix("<!-- fuminiwa-feedback-v1 "),
@@ -58,7 +66,7 @@ struct AssistantFeedback: Identifiable, Equatable, Sendable {
         return value
     }
 
-    static func list(_ attachments: [SyncAttachment]) -> [Self] {
+    public static func list(_ attachments: [SyncAttachment]) -> [Self] {
         attachments.compactMap { decode(fileName: $0.fileName, bytes: $0.bytes) }
             .sorted { $0.createdAt == $1.createdAt ? $0.id.uuidString < $1.id.uuidString : $0.createdAt > $1.createdAt }
     }

@@ -1,5 +1,6 @@
 #if os(macOS)
 import Foundation
+import NovelWorkspaceUI
 import NovelWritingSupport
 
 extension WritingMCPProtocol {

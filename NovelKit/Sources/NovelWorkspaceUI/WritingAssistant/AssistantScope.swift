@@ -2,17 +2,17 @@ import Foundation
 import NovelCore
 
 /// Scope identifiers stay local; only explicitly selected titles and text are sent.
-enum AssistantScope: Hashable {
+public enum AssistantScope: Hashable {
     case current
     case chapter(ChapterID)
     case episode(EpisodeID)
     case episodes(Set<EpisodeID>)
 
-    func forPurpose(_ purpose: AssistantPurpose) -> AssistantScope {
+    public func forPurpose(_ purpose: AssistantPurpose) -> AssistantScope {
         purpose == .proofreading ? .current : self
     }
 
-    func selectedEpisodeIDs(chapters: [Chapter], currentID: EpisodeID?) -> Set<EpisodeID> {
+    public func selectedEpisodeIDs(chapters: [Chapter], currentID: EpisodeID?) -> Set<EpisodeID> {
         switch self {
         case .current: Set(currentID.map { [$0] } ?? [])
         case let .chapter(id): Set(chapters.first(where: { $0.id == id })?.episodes.map(\.id) ?? [])
@@ -21,7 +21,7 @@ enum AssistantScope: Hashable {
         }
     }
 
-    mutating func setSelected(_ ids: Set<EpisodeID>, to selected: Bool, chapters: [Chapter], currentID: EpisodeID?) {
+    public mutating func setSelected(_ ids: Set<EpisodeID>, to selected: Bool, chapters: [Chapter], currentID: EpisodeID?) {
         var result = selectedEpisodeIDs(chapters: chapters, currentID: currentID)
         if selected {
             result.formUnion(ids)
@@ -31,7 +31,7 @@ enum AssistantScope: Hashable {
         self = currentID.map { result == [$0] } == true ? .current : .episodes(result)
     }
 
-    func capture(chapters: [Chapter], currentID: EpisodeID?, current: () throws -> AssistantManuscript) throws -> AssistantManuscript {
+    public func capture(chapters: [Chapter], currentID: EpisodeID?, current: () throws -> AssistantManuscript) throws -> AssistantManuscript {
         switch self {
         case let .episodes(ids):
             return try captureSelection(ids, chapters: chapters, currentID: currentID, current: current)

@@ -3,14 +3,21 @@ import NovelSyncV2Application
 import NovelUI
 import SwiftUI
 
-struct SnapshotDifferenceLine: View {
+public struct SnapshotDifferenceLine: View {
+    public init(application: SyncV2Application, workID: WorkID, before: SnapshotID?, after: SnapshotID) {
+        self.application = application
+        self.workID = workID
+        self.before = before
+        self.after = after
+    }
+
     let application: SyncV2Application
     let workID: WorkID
     let before: SnapshotID?
     let after: SnapshotID
     @State private var line = "確認中…"
 
-    var body: some View {
+    public var body: some View {
         Text(line).font(FuminiwaType.rowSecondary).lineLimit(1)
             .foregroundStyle(FuminiwaColor.textSecondary.color)
             .task(id: SnapshotDifferenceTaskID(workID: workID, before: before, after: after)) {
@@ -47,14 +54,21 @@ private struct SnapshotDifferenceTaskID: Hashable {
 }
 
 /// Preview navigation reads the selected immutable body only when it is opened.
-struct SnapshotDifferencePreview: View {
+public struct SnapshotDifferencePreview: View {
+    public init(application: SyncV2Application, workID: WorkID, snapshotID: SnapshotID, difference: SnapshotDifference) {
+        self.application = application
+        self.workID = workID
+        self.snapshotID = snapshotID
+        self.difference = difference
+    }
+
     let application: SyncV2Application
     let workID: WorkID
     let snapshotID: SnapshotID
     let difference: SnapshotDifference
     @Environment(\.dismiss) private var dismiss
 
-    var body: some View {
+    public var body: some View {
         NavigationStack {
             List(difference.episodes) { episode in
                 NavigationLink {

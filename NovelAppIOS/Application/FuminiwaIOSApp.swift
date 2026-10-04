@@ -1,17 +1,19 @@
 import Foundation
 import NovelSyncV2Application
 import NovelSyncV2Runtime
+import NovelWorkspaceUI
 import SwiftUI
 
 @main
 struct FuminiwaIOSApp: App {
-    @State private var connectivityRecovery = ConnectivityRecovery()
+    @State private var connectivityRecovery: ConnectivityRecovery
     @State private var store: IOSDocumentStore
     @AppStorage private var appearanceRawValue: String
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
         #if FUMINIWA_TEST_COMPOSITION
+        _connectivityRecovery = State(initialValue: ConnectivityRecovery(monitorFactory: { nil }))
         let configuration: TestRuntimeConfiguration
         do {
             configuration = try ProcessInfo.processInfo.arguments.contains("--local-ui-test")
@@ -34,6 +36,7 @@ struct FuminiwaIOSApp: App {
             runtimeComposition: .test(configuration)
         )
         #else
+        _connectivityRecovery = State(initialValue: ConnectivityRecovery())
         let privateWorkingCopyLocation = try? IOSPrivateWorkingCopyLocation.prepareDefault()
         let defaults = UserDefaults.standard
         let store = IOSDocumentStore(

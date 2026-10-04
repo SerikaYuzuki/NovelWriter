@@ -4,7 +4,24 @@ import NovelUI
 import SwiftUI
 
 /// Shared history row interaction. Fetching never holds the editor operation gate.
-struct HistoryFetchControls: View {
+public struct HistoryFetchControls: View {
+    public init(application: SyncV2Application, workID: WorkID, snapshotID: SnapshotID?,
+                progressNote: String? = nil, rowDate: Date? = nil, rowKind: String? = nil,
+                historyItem: SyncV2HistoryItem? = nil, userDefaults: UserDefaults, announcesStatus: Bool = true,
+                showsRestoreInitially: Bool = false, restore: (() async -> Void)? = nil) {
+        self.application = application
+        self.workID = workID
+        self.snapshotID = snapshotID
+        self.progressNote = progressNote
+        self.rowDate = rowDate
+        self.rowKind = rowKind
+        self.historyItem = historyItem
+        self.userDefaults = userDefaults
+        self.announcesStatus = announcesStatus
+        self.restore = restore
+        _showsRestore = State(initialValue: showsRestoreInitially)
+    }
+
     @Environment(\.snapshotHistoryContext) private var context
     let application: SyncV2Application
     let workID: WorkID
@@ -13,7 +30,7 @@ struct HistoryFetchControls: View {
     var rowDate: Date?
     var rowKind: String?
     var historyItem: SyncV2HistoryItem?
-    var userDefaults: UserDefaults = .standard
+    let userDefaults: UserDefaults
     var announcesStatus = true
     var restore: (() async -> Void)?
     @State private var state: SyncV2HistoryFetchState = .paused
@@ -21,7 +38,7 @@ struct HistoryFetchControls: View {
     @State private var showsRestore = false
     @State private var confirmsNetwork = false
 
-    var body: some View {
+    public var body: some View {
         Group {
             if let rowDate, let rowKind {
                 HStack(spacing: Spacing.group) {
@@ -181,14 +198,3 @@ struct HistoryFetchControls: View {
         } catch { state = .suspended }
     }
 }
-
-#if FUMINIWA_TEST_COMPOSITION
-extension HistoryFetchControls {
-    /// Uses the same presented sheet in isolated visual acceptance tests.
-    func presentingRestoreForCapture() -> Self {
-        var result = self
-        result._showsRestore = State(initialValue: true)
-        return result
-    }
-}
-#endif

@@ -7,13 +7,14 @@ import NovelSyncV2Application
 import NovelSyncV2Runtime
 import NovelTiming
 import NovelWorkspace
+import NovelWorkspaceUI
 import SwiftUI
 
 @main
 struct FuminiwaApp: App {
     @NSApplicationDelegateAdaptor(ApplicationDelegate.self) private var applicationDelegate
     @State private var didBootstrap = false
-    @State private var connectivityRecovery = ConnectivityRecovery()
+    @State private var connectivityRecovery: ConnectivityRecovery
     @State private var appState: AppState
     @State private var editorSettings: EditorSettings
     @State private var documentPanelPresenter: DocumentPanelPresenter
@@ -25,6 +26,7 @@ struct FuminiwaApp: App {
     init() {
         let editorCommandSession = EditorCommandSession()
         #if FUMINIWA_TEST_COMPOSITION
+        _connectivityRecovery = State(initialValue: ConnectivityRecovery(monitorFactory: { nil }))
         let configuration: TestRuntimeConfiguration
         do {
             configuration = try ProcessInfo.processInfo.arguments.contains("--local-ui-test")
@@ -47,6 +49,7 @@ struct FuminiwaApp: App {
             editorCommandSession: editorCommandSession
         )
         #else
+        _connectivityRecovery = State(initialValue: ConnectivityRecovery())
         let defaults = UserDefaults.standard
         let dependencies = Self.makeProductionDependencies(
             userDefaults: defaults,

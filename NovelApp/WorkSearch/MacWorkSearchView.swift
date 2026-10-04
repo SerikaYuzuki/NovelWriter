@@ -1,5 +1,6 @@
 import NovelTextAnalysis
 import NovelUI
+import NovelWorkspaceUI
 import SwiftUI
 
 struct MacWorkSearchView: View {

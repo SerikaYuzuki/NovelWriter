@@ -3,6 +3,7 @@ import NovelCore
 import NovelTextAnalysis
 import NovelThumbnail
 import NovelUI
+import NovelWorkspaceUI
 import SwiftUI
 import UniformTypeIdentifiers
 

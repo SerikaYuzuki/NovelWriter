@@ -2,6 +2,7 @@
 import Foundation
 import NovelCore
 import NovelThumbnail
+import NovelWorkspaceUI
 
 extension AppState {
     var assistantFeedback: [AssistantFeedback] {

@@ -1,6 +1,7 @@
 #if os(macOS)
 import Foundation
 import NovelCore
+import NovelWorkspaceUI
 import NovelWritingSupport
 
 @MainActor

@@ -2,12 +2,18 @@ import NovelTextAnalysis
 import NovelWorkspace
 import SwiftUI
 
-struct TextCheckControls: View {
+public struct TextCheckControls: View {
+    public init(session: TextCheckSession, canCheck: Bool, onCheck: @escaping () -> Void) {
+        self.session = session
+        self.canCheck = canCheck
+        self.onCheck = onCheck
+    }
+
     @Bindable var session: TextCheckSession
     let canCheck: Bool
     let onCheck: () -> Void
 
-    var body: some View {
+    public var body: some View {
         Picker("対象", selection: $session.allWork) {
             Text("作品全体").tag(true)
             Text("現在の話").tag(false)
@@ -42,9 +48,13 @@ struct TextCheckControls: View {
     }
 }
 
-struct TextCheckIgnoredList: View {
+public struct TextCheckIgnoredList: View {
+    public init(session: TextCheckSession) {
+        self.session = session
+    }
+
     @Bindable var session: TextCheckSession
-    var body: some View {
+    public var body: some View {
         List {
             if session.ignored.isEmpty {
                 Text("無視した指摘はありません。")

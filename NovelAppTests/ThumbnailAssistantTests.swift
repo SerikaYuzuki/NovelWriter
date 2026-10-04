@@ -5,6 +5,7 @@ import NovelSyncV2
 import NovelSyncV2Application
 import NovelSyncV2Runtime
 import NovelThumbnail
+import NovelWorkspaceUI
 import NovelWritingSupport
 import Testing
 

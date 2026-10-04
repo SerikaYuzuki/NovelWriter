@@ -1,6 +1,7 @@
 import Foundation
 @testable import FUMINIWA
 import NovelCore
+import NovelWorkspaceUI
 import NovelWritingSupport
 import Testing
 
