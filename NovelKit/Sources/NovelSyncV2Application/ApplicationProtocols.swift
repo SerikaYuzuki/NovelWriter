@@ -107,6 +107,7 @@ public protocol SyncV2LocalKernel: Sendable {
     /// conflict UI without a network round trip.
     func activeConflict(workID: WorkID) async throws -> SyncV2ConflictProjection?
     func historyFetchState(workID: WorkID) async throws -> SyncV2HistoryFetchState
+    func episodeBodyVersions(workID: WorkID, episodeKey: String) async throws -> [SnapshotID: SnapshotEntry]
     func localSnapshotManifest(workID: WorkID, snapshotID: SnapshotID) async throws -> SnapshotManifest?
     func localSnapshotObject(workID: WorkID, snapshotID: SnapshotID, entry: SnapshotEntry) async throws -> Data
     func snapshotAvailability(workID: WorkID, snapshotID: SnapshotID) async throws -> SyncV2SnapshotAvailability

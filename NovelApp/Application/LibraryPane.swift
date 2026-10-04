@@ -403,7 +403,6 @@ private extension LibraryPane {
                       appState.currentSnapshotSyncV2WorkID == work.workID,
                       appState.matchesSnapshotSyncV2AccountScope(account) else { return }
                 let session = appState.documentSessionToken
-                await appState.refreshSnapshotHistory()
                 guard appState.documentSessionToken == session,
                       appState.matchesSnapshotSyncV2AccountScope(account) else { return }
                 NotificationCenter.default.post(name: .presentWorkHistory, object: session)
@@ -519,7 +518,8 @@ struct SnapshotHistorySheet: View {
             VStack(alignment: .leading, spacing: Spacing.medium) {
                 Text("\(appState.document.title)の履歴")
                     .font(.title2.weight(.semibold))
-                if appState.snapshotSyncHistory.isEmpty {
+                if appState.snapshotSyncHistory.isEmpty, !appState.snapshotSyncHistoryLoading,
+                   appState.snapshotSyncHistoryFailure == nil {
                     ContentUnavailableView(
                         "履歴はありません",
                         systemImage: "clock.arrow.circlepath",
@@ -560,6 +560,12 @@ struct SnapshotHistorySheet: View {
                     .listStyle(.plain)
                     .scrollContentBackground(.hidden)
                 }
+                if appState.snapshotSyncHistoryLoading {
+                    ProgressView("古い履歴を読み込み中…")
+                }
+                if let failure = appState.snapshotSyncHistoryFailure {
+                    Text(failure).font(.caption).foregroundStyle(.secondary)
+                }
             }
             .padding(Spacing.large)
             .background(FuminiwaColor.paper.color)
@@ -567,6 +573,7 @@ struct SnapshotHistorySheet: View {
             .accessibilityIdentifier("snapshotSyncV2.historySheet")
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("閉じる", action: dismiss) } }
         }
+        .task(id: appState.workSearchScope) { await appState.refreshSnapshotHistory() }
         .onChange(of: appState.documentSessionToken) { _, _ in dismiss() }
         .onChange(of: appState.snapshotSyncV2AccountScopeToken) { _, _ in dismiss() }
     }

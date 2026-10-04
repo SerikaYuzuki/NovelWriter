@@ -11,6 +11,19 @@ public extension SyncV2Application {
         cursor: String? = nil,
         pageSize: Int = 100
     ) async throws -> SyncV2HistoryPage {
+        try await readHistoryPage(workID: workID, cursor: cursor, pageSize: pageSize, locallyAvailableSnapshots: [])
+    }
+}
+
+enum HistoryReadPhase: Sendable { case local, online }
+
+extension SyncV2Application {
+    /// Episode metadata already proves these bodies readable. Keep the same
+    /// occurrence merge/cursor, avoiding a second SQL/actor round trip per row.
+    func readHistoryPage(workID: WorkID, cursor: String?, pageSize: Int,
+                         locallyAvailableSnapshots: Set<SnapshotID>,
+                         timing: (@Sendable (HistoryReadPhase, Duration) -> Void)? = nil,
+                         initialLocalPage: SyncV2LocalHistoryPage? = nil) async throws -> SyncV2HistoryPage {
         guard (1 ... 500).contains(pageSize) else {
             throw SyncV2ApplicationError.invalidHistoryCursor
         }
@@ -20,7 +33,16 @@ public extension SyncV2Application {
             expectedScopeGeneration: requestScopeGeneration
         )
 
+        if cursor == nil, let initialLocalPage {
+            state.localAvailable = true
+            state.localItems = initialLocalPage.items.map { HistoryCursor.Entry($0) }
+            state.localCursor = initialLocalPage.nextCursor
+            state.localFinished = initialLocalPage.nextCursor == nil
+        }
+        try Task.checkCancellation()
         if state.localItems.isEmpty, !state.localFinished {
+            let start = ContinuousClock.now
+            defer { timing?(.local, start.duration(to: .now)) }
             do {
                 let page = try await kernel.localHistoryPage(
                     workID: workID,
@@ -40,7 +62,10 @@ public extension SyncV2Application {
             }
         }
 
+        try Task.checkCancellation()
         if state.remoteItems.isEmpty, !state.remoteFinished {
+            let start = ContinuousClock.now
+            defer { timing?(.online, start.duration(to: .now)) }
             do {
                 let page = try await remote.historyPage(
                     workID: workID,
@@ -78,10 +103,15 @@ public extension SyncV2Application {
             throw SyncV2ApplicationError.invalidHistoryCursor
         }
 
+        try Task.checkCancellation()
         let page = projectHistoryPage(state: &state, pageSize: pageSize)
         var items: [SyncV2HistoryItem] = []
         for var item in page.items {
-            item.snapshotAvailability = await (try? kernel.snapshotAvailability(workID: workID, snapshotID: item.snapshotID)) ?? .unknown
+            item.snapshotAvailability = if locallyAvailableSnapshots.contains(item.snapshotID) {
+                .local
+            } else {
+                await (try? kernel.snapshotAvailability(workID: workID, snapshotID: item.snapshotID)) ?? .unknown
+            }
             items.append(item)
         }
         guard historyScopeGeneration == requestScopeGeneration else { throw SyncV2ApplicationError.invalidHistoryCursor }
@@ -98,18 +128,33 @@ private func projectHistoryPage(
         ? .available : .unavailable
     let onlineAvailability: SyncV2HistoryAvailability = state.remoteAvailable
         ? .available : .unavailable
-    var local = state.localItems
-    var remote = state.remoteItems
+    let local = state.localItems
+    let remote = state.remoteItems
+    var localIndex = 0
+    var remoteIndex = 0
     var result: [SyncV2HistoryItem] = []
-    while result.count < pageSize, !local.isEmpty || !remote.isEmpty {
-        let takeLocal: Bool = if local.isEmpty {
+    while result.count < pageSize, localIndex < local.count || remoteIndex < remote.count {
+        // Refill an exhausted source before consuming the other source: its
+        // next page may contain newer rows. Array offsets avoid removeFirst O(n²).
+        if localIndex == local.count, !state.localFinished {
+            break
+        }
+        if remoteIndex == remote.count, !state.remoteFinished {
+            break
+        }
+        let takeLocal: Bool = if localIndex == local.count {
             false
-        } else if remote.isEmpty {
+        } else if remoteIndex == remote.count {
             true
         } else {
-            HistoryCursor.Entry.order(local[0], before: remote[0])
+            HistoryCursor.Entry.order(local[localIndex], before: remote[remoteIndex])
         }
-        let entry = takeLocal ? local.removeFirst() : remote.removeFirst()
+        let entry = takeLocal ? local[localIndex] : remote[remoteIndex]
+        if takeLocal {
+            localIndex += 1
+        } else {
+            remoteIndex += 1
+        }
         result.append(
             SyncV2HistoryItem(
                 occurrenceID: entry.occurrenceID,
@@ -125,8 +170,8 @@ private func projectHistoryPage(
             )
         )
     }
-    state.localItems = local
-    state.remoteItems = remote
+    state.localItems = Array(local.dropFirst(localIndex))
+    state.remoteItems = Array(remote.dropFirst(remoteIndex))
     let nextCursor: String? = state.hasMore ? state.encode() : nil
     return SyncV2HistoryPage(
         items: result,
