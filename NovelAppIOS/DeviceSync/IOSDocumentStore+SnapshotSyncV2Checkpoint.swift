@@ -35,7 +35,8 @@ extension IOSDocumentStore {
         resources: [PortableResource]? = nil,
         acknowledgeLocalCommit: Bool = false
     ) async -> Bool {
-        guard let application = snapshotSyncV2Application,
+        guard syncV2KeepBothPendingWorkID == nil,
+              let application = snapshotSyncV2Application,
               syncV2ActiveWorkID != nil else { return false }
         guard let syncAttachments = currentV2Attachments() else {
             operationErrorMessage = "資料の本文を読み込めないため、端末への保存を中止しました。"

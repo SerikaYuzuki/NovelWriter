@@ -17,8 +17,9 @@ extension AppState: WorkspaceLibraryHost {
         true
     }
 
-    func permitsLibraryMutation(_: WorkspaceLibraryMutation, workID _: WorkID) -> Bool {
+    func permitsLibraryMutation(_: WorkspaceLibraryMutation, workID: WorkID) -> Bool {
         !isDocumentTransitionInProgress && !isTerminationPending && interactiveAuthOperationCount == 0
+            && (syncV2KeepBothPendingWorkID == nil || workID != currentSnapshotSyncV2WorkID)
     }
 
     func libraryMutationBoundary(

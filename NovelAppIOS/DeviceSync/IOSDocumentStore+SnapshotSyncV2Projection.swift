@@ -38,7 +38,7 @@ extension IOSDocumentStore {
         syncV2PortableCreatedAt = portableMirror.portableCreatedAt
         syncV2PortableResources = portableMirror.resources
         userDefaults.set(opened.workID.rawValue.uuidString, forKey: Self.lastWorkIDKey)
-        syncV2KeepBothPendingWorkID = nil
+        clearKeepBothHandoff()
         selectedChapterID = retainedEpisode?.chapterID ?? retainedChapter?.id ?? value.chapters.first?.id
         selectedEpisodeID = retainedEpisode?.episode.id ?? retainedChapter?.episodes.first?.id ?? value.chapters.first?.episodes.first?.id
         advanceDocumentSessionGeneration()

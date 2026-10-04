@@ -172,15 +172,17 @@ P8c完了：`WorkOpenCoordinator`へlocal open、gate外のremote-only download�
 
 D7は`WorkspaceAdoptionPort`のsession／arm／disarmへ注入して解決し、`MacSyncV2DocumentGate`とiOSの`ProductionDocumentGate`は統合しない。document operation gate、IME／保存、背景時間、task owner、automatic attemptの再試行方針、選択保持とportable payload検証はApp adapterに残す。Macの同一内容adoptionでは本文・Undoを再installしない。Mac startupStateの書込時判断、startInLibrary、workNotFound→fresh workはAppに残し、保存済み作品の起動openだけ共有処理を呼ぶ。requested WorkIDの純粋テストをpackageへ移し、fake hostで順序・遅延完了・失敗時原稿保持・再投影を検証する。両OS固有のadoption restart／install validation／transition／library refresh／bootstrapテストはAppに保持する。
 
+P8d完了：`ConflictCoordinator`へ表示時projectionと編集世代を固定した競合選択、keep-bothのwrite freeze→SQLite準備→返却clone install→transport再開、作品全体の保存→復元→再open→install、およびConflict Undoを集約。D3はMacを採用し、iOSもgate内でIME確定した未保存本文をローカル保存・履歴保全してから全体復元する。D4はiOSを採用してMacにも元作品のwrite freezeを追加し、handoffできない場合は書込み保留を残し、「もう一度開く」で同じ複製を再installできる。「作品一覧に戻る」や別作品openでは元作品のcheckpointを省略して離脱し、一覧への退役または検証済みinstall後に保留を解除する。D5は表示時projectionと編集世代の完全一致を両OSで必須とし、gate内で別のprojectionを読み直して選択を流用しない。各await完了でWorkID／installed session／account全field／保存後の編集世代を再確認し、旧結果・読込失敗では表示原稿を保持する。IME／document gate、platform sessionとpayload検証、worker／reprojectionの所有権はadapterへ残す。単話復元（EpisodeRestoreSession、D-114）は別の共通編集・永続Undo経路を維持する。純粋な選択・順序・照合テストをpackageへ移し、Macのfreeze／古い選択とiOSの未保存全体復元にadapterテストを置く。
+
 片方の意味を暗黙に採用しない。以下は後続phaseの統合方針であり、P1では適用しない。
 
 | 差 | 現状 | 推奨・判断 |
 | --- | --- | --- |
 | D1 | P4で解決。旧iOSはaccountGenerationが増えず、同一bindingでの無効化前completionをaccount scopeだけで拒否できなかった | 全5field（accountID／fence／serverInstanceID／protocolEpoch／generation）を照合し、両OSで無効化ごとにgenerationを増やす |
 | D2 | P8bで解決。Macもcheckpoint完了後にWorkID／session／accountを再検証する | iOSを採用。旧成功・失敗は現在のsaveState／sync projectionへ反映しない |
-| D3 | 未保存編集がある作品全体復元はMacがgate内で保存後に復元し、iOSは拒否 | Macを採用（2026-10-04オーナー決定）。gate内で保存し、その版を履歴に残してから復元する |
-| D4 | Macのkeep-bothは元作品のwrite freeze（syncV2KeepBothPendingWorkID）がない | iOSを採用 |
-| D5 | conflict choiceはMacがgate内でuiStateを再読取し、iOSは表示時projection＋editing generationを使う | 厳しいiOSを採用 |
+| D3 | P8dで解決。両OSの作品全体復元はgate内で未保存本文を保存してから復元 | Macを採用（2026-10-04オーナー決定）。現在版を履歴に残す |
+| D4 | P8dで解決。両OSで元作品をwrite freezeし、clone install後にtransport再開 | iOSを採用。handoff失敗時は書込み保留を維持し、保存なしの一覧退避と同じ複製への再試行を許可 |
+| D5 | P8dで解決。表示時projectionと編集世代が変わった選択は両OSで拒否 | 厳しいiOSを採用し、編集世代の照合も完全一致に揃える |
 | D6 | 棚mergeでpending-deletion行を保持し、削除済みlocal行を落とすのはiOSだけ | iOSを採用（2026-10-04オーナー決定、P3）。NovelWorkspaceのpure functionへ統合し、削除待ち行を保持、削除済みIDはlocal／remote／保持行から除外する |
 | D7 | P8cで解決。safe-adoption gateの意味差を保持する | `WorkspaceAdoptionPort`へ各OSのsession／arm／disarmを注入。gate実装は統合しない |
 | D8 | MacはauthOperationGate＋owner＋count、iOSはrequest window＋lease＋abandon recovery＋revoke retry＋old-epoch fail-closed | iOSモデルをcoreにする |

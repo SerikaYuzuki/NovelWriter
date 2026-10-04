@@ -91,7 +91,8 @@ final class IOSWorkspaceNavigationCoordinator {
 
     @discardableResult
     func returnToLibrary(using store: IOSDocumentStore) async -> Bool {
-        guard !path.isEmpty, let session = store.currentDocumentSessionToken else { return false }
+        guard !path.isEmpty || store.syncV2KeepBothPendingWorkID != nil,
+              let session = store.currentDocumentSessionToken else { return false }
         let expectedPath = path
         let accountScope = store.snapshotSyncV2AccountScope
         return await store.documentOperationGate.perform {
@@ -114,7 +115,9 @@ final class IOSWorkspaceNavigationCoordinator {
                   store.currentDocumentSessionToken == session,
                   store.snapshotSyncV2AccountScope == accountScope,
                   self.path == expectedPath else { return false }
-            return self.updatePath([]) { _ in true }
+            guard self.updatePath([], beforeEditorDeparture: { _ in true }) else { return false }
+            store.retireFrozenKeepBothWorkForLibrary()
+            return true
         }
     }
 

@@ -567,6 +567,7 @@ func makeMacConflictFixture(
         createdAt: kernel.storage.createdAt
     )
     state.snapshotSyncV2Session = await kernel.application.beginSession(workID: kernel.storage.workID)
+    await state.refreshSnapshotSyncV2UIState()
     return MacConflictFixture(
         configuration: configuration,
         application: kernel.application,

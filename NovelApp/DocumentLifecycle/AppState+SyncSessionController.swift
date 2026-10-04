@@ -60,7 +60,7 @@ extension AppState {
         expected.isCurrent(WorkspaceOperationContext(
             workID: currentSnapshotSyncV2WorkID, session: documentSessionToken,
             account: snapshotSyncV2AccountScopeToken,
-            editGeneration: expected.editGeneration == nil ? nil : editorContentGeneration
+            editGeneration: expected.editGeneration == nil ? nil : documentChangeRevision
         ))
     }
 }

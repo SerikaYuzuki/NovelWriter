@@ -123,36 +123,6 @@ struct IOSSnapshotSyncV2Tests {
         #expect(store.currentDocumentSessionToken?.workID == workID)
     }
 
-    @Test("3択は実際のSyncV2ConflictActionへ写像できる")
-    func conflictChoicesAreTypedActions() {
-        let workID = WorkID(UUID())
-        let local = SnapshotID(data: Data("local".utf8))
-        let remote = SnapshotID(data: Data("remote".utf8))
-        let choices: [SyncV2ConflictChoice] = [.useDevice, .useServer, .keepBoth]
-        #expect(Set(choices).count == 3)
-        for choice in choices {
-            let action = SyncV2ConflictAction(
-                workID: workID,
-                conflictID: UUID(),
-                revision: 1,
-                baseSnapshotID: nil,
-                localSnapshotID: local,
-                remoteSnapshotID: remote,
-                sourceGeneration: 1,
-                choice: choice
-            )
-            #expect(action.choice == choice)
-            #expect(action.workID == workID)
-        }
-    }
-
-    @Test("競合解決のno-opは冪等成功として再投影し、staleだけを再選択に戻す")
-    func conflictResolutionResultIdempotency() {
-        #expect(acceptsSnapshotSyncV2ConflictResult(.queued))
-        #expect(acceptsSnapshotSyncV2ConflictResult(.noChanges))
-        #expect(!acceptsSnapshotSyncV2ConflictResult(.staleConflictAction))
-    }
-
     @Test("resumeはoffline workerを待たずにUIへ戻る")
     func resumeIsNonBlocking() async {
         let environment = makeEnvironment()

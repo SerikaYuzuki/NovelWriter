@@ -301,6 +301,10 @@ final class IOSDocumentStore {
     /// Keep-both reserves a second WorkID before the remote acknowledgement.
     /// Until the candidate is safely opened, the original editor is read-only
     /// so a later autosave cannot accidentally write the source Work again.
+    var syncV2KeepBothHandoff: WorkspaceKeepBothHandoff?
+    #if FUMINIWA_TEST_COMPOSITION
+    var snapshotSyncV2KeepBothInstallOverride: (@MainActor () async -> Bool)?
+    #endif
     var syncV2KeepBothPendingWorkID: WorkID?
 
     var snapshotSyncV2DisplayedConflictSelection: IOSSnapshotSyncV2ConflictSelection? {

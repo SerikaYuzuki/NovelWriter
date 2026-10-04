@@ -1,6 +1,7 @@
 import Foundation
 @testable import FUMINIWAIOS
 import NovelCore
+import NovelSyncV2
 import NovelSyncV2Application
 import NovelSyncV2Runtime
 import Testing
@@ -72,6 +73,36 @@ struct IOSSnapshotSyncV2P1Tests {
         case .pending, .syncing, .offline: break
         default: Issue.record("unexpected post-checkpoint state: \(String(describing: state?.remoteProgress))")
         }
+    }
+
+    @Test("未保存の本文をgate内で保存して履歴に残してから作品全体を復元する")
+    func wholeWorkRestorePreservesUnsavedTextInHistory() async throws {
+        let environment = makeEnvironment()
+        defer { environment.cleanup() }
+        let store = IOSDocumentStore(userDefaults: environment.defaults, libraryRoot: environment.root)
+        await store.bootstrap()
+        #expect(await store.makeNewDocument())
+        let app = try #require(store.snapshotSyncV2Application)
+        let workID = try #require(store.syncV2ActiveWorkID)
+        let snapshot = try #require(try await app.currentSnapshotID(workID: workID))
+        let original = store.document
+        store.updateEpisodeContent("復元直前の未保存本文", chapterID: original.chapters[0].id,
+                                   episodeID: original.chapters[0].episodes[0].id)
+        let unsaved = store.document
+        #expect(store.saveState == .unsaved)
+        #expect(await store.restoreSnapshotSyncV2(snapshotID: snapshot.rawValue))
+        #expect(store.document == original)
+        #expect(store.saveState == .saved)
+        let page = try await app.historyPage(workID: workID, cursor: nil, pageSize: 100)
+        var preserved = false
+        for entry in page.items where entry.source == .local {
+            let body = try await app.snapshotEpisodePreview(workID: workID, snapshotID: entry.snapshotID,
+                                                            episodeID: original.chapters[0].episodes[0].id.rawValue.uuidString.lowercased())
+            if body == unsaved.chapters[0].episodes[0].content {
+                preserved = true
+            }
+        }
+        #expect(preserved)
     }
 
     private func makeEnvironment() -> TestEnvironment {

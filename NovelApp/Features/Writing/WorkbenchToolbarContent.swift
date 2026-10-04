@@ -51,7 +51,7 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
                     Label("作品一覧", systemImage: "books.vertical")
                 }
                 .help("保存して作品一覧に戻る")
-                .disabled(!appState.permitsDocumentTransitionOperation)
+                .disabled(!appState.permitsDocumentDeparture)
                 .accessibilityIdentifier(WorkbenchToolbarItemID.library)
             }
             .customizationBehavior(.default)

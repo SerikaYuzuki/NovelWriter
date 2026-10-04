@@ -17,6 +17,19 @@ struct ContentView: View {
 
     var body: some View {
         rootContent
+            .safeAreaInset(edge: .top) {
+                if appState.syncV2KeepBothPendingWorkID != nil, !appState.isDocumentTransitionInProgress {
+                    KeepBothRecoveryView(
+                        retry: { await appState.retryKeepBothHandoff() },
+                        leave: { await appState.returnToSnapshotLibrary() }
+                    )
+                }
+            }
+            .onChange(of: appState.isDocumentTransitionInProgress) { _, transitioning in
+                if !transitioning, appState.syncV2KeepBothPendingWorkID != nil {
+                    showingConflict = false
+                }
+            }
             .sheet(isPresented: $showingConflict) {
                 if let selection = appState.snapshotSyncV2ConflictSelection,
                    let application = appState.snapshotSyncV2Application {
@@ -37,7 +50,9 @@ struct ContentView: View {
             .alert(
                 "作品の操作",
                 isPresented: Binding(
-                    get: { appState.operationMessage != nil || documentPanelPresenter.alertMessage != nil },
+                    get: { (appState.operationMessage != nil && appState.syncV2KeepBothPendingWorkID == nil)
+                        || documentPanelPresenter.alertMessage != nil
+                    },
                     set: {
                         if !$0 {
                             appState.dismissOperationMessage()

@@ -20,13 +20,6 @@ private func snapshotSyncV2StartupErrorType(_ error: any Error) -> String {
     String(reflecting: type(of: error))
 }
 
-func acceptsSnapshotSyncV2ConflictResult(_ result: SyncV2TypedResult) -> Bool {
-    switch result {
-    case .queued, .noChanges: true
-    default: false
-    }
-}
-
 extension IOSDocumentStore {
     /// Retires asynchronous remote-only work before a new document operation
     /// can change the session. The task itself must not clear a newer task's
@@ -42,7 +35,7 @@ extension IOSDocumentStore {
         libraryImportPhases.removeAll()
         libraryImportFailures.removeAll()
         cancelSnapshotSyncV2BackgroundOperations()
-        syncV2KeepBothPendingWorkID = nil
+        clearKeepBothHandoff()
         libraryRefreshGeneration &+= 1
         remoteCatalogRefreshGeneration &+= 1
         historyRefreshGeneration &+= 1
