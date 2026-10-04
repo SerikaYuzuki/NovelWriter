@@ -18,7 +18,8 @@ extension IOSDocumentStore: WorkspaceLibraryHost {
     }
 
     func permitsLibraryMutation(_ mutation: WorkspaceLibraryMutation, workID: WorkID) -> Bool {
-        switch mutation {
+        guard syncV2KeepBothPendingWorkID == nil || workID != syncV2ActiveWorkID else { return false }
+        return switch mutation {
         case .rename: !isSyncV2AccountTransitionActive
         case .deletion: libraryDeletionDisabledReason(for: workID) == nil
         }
@@ -62,7 +63,7 @@ extension IOSDocumentStore: WorkspaceLibraryHost {
     private func retireDeletedWork() {
         startupState = .library
         syncV2ActiveWorkID = nil
-        syncV2KeepBothPendingWorkID = nil
+        clearKeepBothHandoff()
         document = NovelDocument.newDocument()
         documentURL = libraryRoot
         replaceAttachments([])

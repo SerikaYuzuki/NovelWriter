@@ -1,6 +1,7 @@
 import Foundation
 import NovelSyncV2
 @testable import NovelSyncV2Application
+import NovelWorkspace
 import Testing
 
 struct SnapshotComparisonIntegrationTests {
@@ -35,8 +36,8 @@ struct SnapshotComparisonIntegrationTests {
         _ = try await fixture.edit("chosen version")
         let selected = try #require(try await fixture.app.currentSnapshotID(workID: fixture.workID))
         var restored: [SnapshotID] = []
-        let success = await SnapshotConflictUndo.restore(
-            application: fixture.app, workID: fixture.workID, snapshotID: fixture.baseline,
+        let success = await ConflictCoordinator(application: fixture.app).undo(
+            workID: fixture.workID, snapshotID: fixture.baseline,
             serverChoice: true, isCurrent: { true }, adopt: { false },
             restore: { snapshot in
                 restored.append(snapshot)
@@ -52,8 +53,8 @@ struct SnapshotComparisonIntegrationTests {
     @Test @MainActor func staleUndoDoesNotRestoreAnotherWork() async throws {
         let fixture = try await LeafRuntimeFixture.make()
         var called = false
-        let success = await SnapshotConflictUndo.restore(
-            application: fixture.app, workID: fixture.workID, snapshotID: fixture.baseline,
+        let success = await ConflictCoordinator(application: fixture.app).undo(
+            workID: fixture.workID, snapshotID: fixture.baseline,
             serverChoice: false, isCurrent: { false }, adopt: { false },
             restore: { _ in called = true; return true }
         )

@@ -29,6 +29,9 @@ extension AppState {
         attachments: [SyncAttachment] = [],
         resources: [PortableResource]? = nil
     ) async throws -> SyncV2OperationResult {
+        guard syncV2KeepBothPendingWorkID == nil || workID != currentSnapshotSyncV2WorkID else {
+            throw SyncV2ApplicationError.safeBoundaryRejected
+        }
         #if FUMINIWA_TEST_COMPOSITION
         if let snapshotSyncV2CheckpointOverride {
             return try await snapshotSyncV2CheckpointOverride(
@@ -104,6 +107,7 @@ extension AppState {
         acknowledgeLocalCommit: Bool = false
     ) async -> Bool {
         writingProgress.requestFlush()
+        guard syncV2KeepBothPendingWorkID == nil else { return false }
         guard let application = snapshotSyncV2Application else {
             saveState = .failed
             return false
@@ -176,6 +180,7 @@ extension AppState {
 
     @discardableResult
     func saveNow() async -> Bool {
+        guard syncV2KeepBothPendingWorkID == nil else { return false }
         writingProgress.requestFlush()
         let workID = snapshotSyncV2ActiveWorkID
         let context = CheckpointCoordinator.context(of: self)
@@ -526,6 +531,7 @@ extension AppState {
             workID: workID
         )
         snapshotSyncV2ActiveWorkID = workID
+        clearKeepBothHandoff()
         writingProgress.install(document, workID: workID.rawValue)
         snapshotSyncV2DocumentCreatedAt = Self.normalizedSnapshotSyncV2Date(createdAt)
         userDefaults.removeObject(forKey: "fuminiwa.v2.startInLibrary")

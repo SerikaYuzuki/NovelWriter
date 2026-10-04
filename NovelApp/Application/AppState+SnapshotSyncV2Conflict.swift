@@ -13,6 +13,7 @@ struct SnapshotSyncV2ConflictSelection: Hashable, Sendable {
     let documentSession: WorkspaceSessionToken
     let snapshotSession: NovelSyncV2Application.DocumentSessionToken
     let accountScope: WorkspaceAccountScope
+    let editGeneration: UInt64
     let conflict: SyncV2ConflictProjection
 }
 
@@ -29,6 +30,7 @@ extension AppState {
             documentSession: documentSessionToken,
             snapshotSession: snapshotSession,
             accountScope: snapshotSyncV2AccountScopeToken,
+            editGeneration: documentChangeRevision,
             conflict: conflict
         )
     }
@@ -57,6 +59,12 @@ extension AppState {
         expectedDocumentID: DocumentID?
     ) async -> Bool {
         guard let clone = opened.document else { return false }
+        #if FUMINIWA_TEST_COMPOSITION
+        await snapshotSyncV2BeforeKeepBothInstallOverride?()
+        if let snapshotSyncV2KeepBothInstallOverride {
+            guard await snapshotSyncV2KeepBothInstallOverride() else { return false }
+        }
+        #endif
         let newSession = await application.beginSession(workID: opened.workID)
         guard matchesSnapshotSyncV2Identity(
             workID: sourceSelection.workID,
@@ -64,6 +72,8 @@ extension AppState {
             snapshotSession: sourceSelection.snapshotSession
         ),
             matchesSnapshotSyncV2AccountScope(sourceSelection.accountScope),
+            documentChangeRevision == sourceSelection.editGeneration,
+            syncV2KeepBothPendingWorkID == opened.workID,
             installV2Document(
                 clone,
                 workID: opened.workID,
@@ -74,35 +84,12 @@ extension AppState {
                 expectedDocumentID: expectedDocumentID?.rawValue
             ) else { return false }
         snapshotSyncV2Session = newSession
-        // Keep-both intentionally returns before waking transport. The
-        // clone/session hand-off above is the safety boundary; only after it
-        // is complete may the durable worker resume.
-        Task { @MainActor [weak self] in
-            try? await application.resumePending()
-            await self?.refreshSnapshotSyncV2UIState()
-            await self?.refreshSnapshotLibrary()
-        }
         return true
     }
 
     @discardableResult
     func resolveSnapshotConflict(using choice: SyncV2ConflictChoice) async -> Bool {
-        guard let application = snapshotSyncV2Application,
-              let workID = currentSnapshotSyncV2WorkID,
-              let snapshotSession = snapshotSyncV2Session else { return false }
-        let conflict = if let snapshotSyncConflict {
-            snapshotSyncConflict
-        } else {
-            await application.uiState(workID: workID)?.conflict
-        }
-        guard let conflict else { return false }
-        let selection = SnapshotSyncV2ConflictSelection(
-            workID: workID,
-            documentSession: documentSessionToken,
-            snapshotSession: snapshotSession,
-            accountScope: snapshotSyncV2AccountScopeToken,
-            conflict: conflict
-        )
+        guard let selection = snapshotSyncV2ConflictSelection else { return false }
         return await resolveSnapshotConflict(using: choice, selection: selection)
     }
 
@@ -111,96 +98,71 @@ extension AppState {
         using choice: SyncV2ConflictChoice,
         selection: SnapshotSyncV2ConflictSelection
     ) async -> Bool {
-        guard permitsDocumentTransitionOperation,
+        guard permitsDocumentTransitionOperation, syncV2KeepBothPendingWorkID == nil,
               let application = snapshotSyncV2Application else { return false }
         return await documentOperationGate.perform { [weak self] in
             guard let self,
                   permitsDocumentTransitionOperation,
+                  snapshotSyncV2ConflictSelection == selection,
                   editorCommandSession.prepareForDocumentTransition() else { return false }
             defer { editorCommandSession.resumeAfterDocumentTransition() }
             isDocumentTransitionInProgress = true
             defer { isDocumentTransitionInProgress = false }
-            guard matchesSnapshotSyncV2Identity(
-                workID: selection.workID,
-                documentSession: selection.documentSession,
-                snapshotSession: selection.snapshotSession
-            ),
-                matchesSnapshotSyncV2AccountScope(selection.accountScope),
-                let state = await application.uiState(workID: selection.workID) else { return false }
-            guard matchesSnapshotSyncV2AccountScope(selection.accountScope),
-                  state.conflict == selection.conflict else { return false }
-            let sourceWorkID = selection.workID
-            let conflict = selection.conflict
-            // Conflict choice is not a second save button. The editor must
-            // already be at a durable SQLite checkpoint whose generation is
-            // the one presented by the conflict. If the user has typed since
-            // that checkpoint, preserve the input and leave the conflict
-            // pending for the next explicit save/retry boundary.
-            guard saveState == .saved,
-                  case let .saved(localGeneration, _) = state.localDurability,
-                  localGeneration >= conflict.sourceGeneration,
-                  hasCommittedEditorTextMatchingSelectedEpisode() else {
-                operationMessage = "この端末に保存してから、競合の版を選んでください。"
-                return false
-            }
-            let action = SyncV2ConflictAction(
-                workID: sourceWorkID,
-                conflictID: conflict.conflictID,
-                revision: conflict.revision,
-                baseSnapshotID: conflict.baseSnapshotID,
-                localSnapshotID: conflict.localSnapshotID,
-                remoteSnapshotID: conflict.remoteSnapshotID,
-                sourceGeneration: conflict.sourceGeneration,
-                choice: choice,
-                commandID: conflict.commandID,
-                newWorkID: choice == .keepBoth ? WorkID(UUID()) : nil,
-                newDocumentID: choice == .keepBoth ? DocumentID(UUID()) : nil
+            let context = WorkspaceOperationContext(
+                workID: selection.workID, session: selection.documentSession,
+                account: selection.accountScope, editGeneration: selection.editGeneration
             )
-            do {
-                let result = try await application.resolveConflict(
-                    workID: sourceWorkID,
-                    action: action
-                )
-                guard matchesSnapshotSyncV2Identity(
-                    workID: selection.workID,
-                    documentSession: selection.documentSession,
-                    snapshotSession: selection.snapshotSession
-                ), matchesSnapshotSyncV2AccountScope(selection.accountScope) else {
-                    return false
-                }
-                if result.typedResult == .staleConflictAction {
-                    await refreshSnapshotSyncV2UIState()
-                    return false
-                }
-                if choice == .keepBoth, let opened = result.openedWork {
-                    // The clone is durable in SQLite as part of conflict
-                    // preparation. Switch the editor to that WorkID before
-                    // the original work's remote worker can acknowledge it;
-                    // subsequent autosaves therefore cannot re-dirty the
-                    // source conflict.
-                    guard matchesSnapshotSyncV2Identity(
-                        workID: selection.workID,
-                        documentSession: selection.documentSession,
+            let port = WorkspaceConflictPort(
+                isCurrent: {
+                    self.matchesSnapshotSyncV2Identity(
+                        workID: selection.workID, documentSession: selection.documentSession,
                         snapshotSession: selection.snapshotSession
-                    ),
-                        matchesSnapshotSyncV2AccountScope(selection.accountScope),
-                        await installKeepBothOpenedWork(
-                            opened,
-                            using: application,
-                            sourceSelection: selection,
-                            expectedWorkID: action.newWorkID,
-                            expectedDocumentID: action.newDocumentID
-                        ) else {
-                        operationMessage = "競合の複製を検証できませんでした。元の作品は変更していません。"
-                        return false
+                    ) && self.matchesSnapshotSyncV2AccountScope(selection.accountScope)
+                }, isSaved: {
+                    let saved = self.saveState == .saved && self.hasCommittedEditorTextMatchingSelectedEpisode()
+                    if !saved {
+                        self.operationMessage = "この端末に保存してから、競合の版を選んでください。"
+                    }
+                    return saved
+                }, displayedState: { self.snapshotSyncV2UIState },
+                freeze: { id in
+                    self.syncV2KeepBothPendingWorkID = id
+                    if id == nil {
+                        self.clearKeepBothHandoff()
+                    }
+                }, retainHandoff: { handoff in
+                    self.syncV2KeepBothHandoff = handoff
+                    self.syncV2KeepBothSourceSelection = selection
+                },
+                installClone: { opened, action in
+                    await self.installKeepBothOpenedWork(
+                        opened, using: application, sourceSelection: selection,
+                        expectedWorkID: action.newWorkID, expectedDocumentID: action.newDocumentID
+                    )
+                }, project: { self.applySnapshotSyncV2State($0) },
+                complete: { choice, _ in
+                    if choice == .keepBoth {
+                        self.resumeKeepBothTransport(application)
+                    } else if choice == .useServer {
+                        self.scheduleAutomaticServerAdoption(expectedAccountScope: selection.accountScope)
                     }
                 }
-                await refreshSnapshotSyncV2UIState()
-                if choice == .useServer, result.typedResult != .staleConflictAction {
-                    scheduleAutomaticServerAdoption(expectedAccountScope: selection.accountScope)
+            )
+            do {
+                let resolved = try await ConflictCoordinator(application: application).resolveAtPreparedBoundary(
+                    host: self, selection: WorkspaceConflictSelection(context: context, conflict: selection.conflict),
+                    choice: choice, port: port
+                )
+                if !resolved, syncV2KeepBothPendingWorkID != nil,
+                   currentSnapshotSyncV2WorkID == selection.workID,
+                   matchesSnapshotSyncV2AccountScope(selection.accountScope) {
+                    operationMessage = "競合の複製を安全に開けませんでした。元の作品への書込みを保留しています。"
                 }
-                return true
+                return resolved
             } catch {
+                if syncV2KeepBothPendingWorkID != nil {
+                    operationMessage = "競合の複製を安全に開けませんでした。元の作品への書込みを保留しています。"
+                }
                 return false
             }
         }
@@ -468,50 +430,33 @@ extension AppState {
             defer { editorCommandSession.resumeAfterDocumentTransition() }
             isDocumentTransitionInProgress = true
             defer { isDocumentTransitionInProgress = false }
-            let gateDocumentSession = documentSessionToken
-            let gateWorkID = currentSnapshotSyncV2WorkID
-            let gateSnapshotSession = snapshotSyncV2Session
-            guard gateWorkID == workID,
-                  gateDocumentSession == expectedDocumentSession,
-                  gateSnapshotSession == expectedSnapshotSession,
-                  matchesSnapshotSyncV2AccountScope(expectedAccountScope) else { return false }
-            guard await saveNow() else { return false }
             do {
-                guard matchesSnapshotSyncV2AccountScope(expectedAccountScope) else { return false }
-                _ = try await application.restore(workID: workID, snapshotID: snapshotID)
-                guard matchesSnapshotSyncV2AccountScope(expectedAccountScope) else { return false }
-                // Restore commits a new local SQLite head immediately. Re-open
-                // that head before returning so the editor and attachment list
-                // reflect the restored bytes without waiting for the worker.
-                let opened = try await application.openLocal(workID: workID)
-                guard matchesSnapshotSyncV2Identity(
-                    workID: workID,
-                    documentSession: expectedDocumentSession,
-                    snapshotSession: expectedSnapshotSession
-                ), matchesSnapshotSyncV2AccountScope(expectedAccountScope) else { return false }
-                guard let restored = opened.document else { return false }
-                let newSession = await application.beginSession(workID: opened.workID)
-                guard matchesSnapshotSyncV2Identity(
-                    workID: workID,
-                    documentSession: expectedDocumentSession,
-                    snapshotSession: expectedSnapshotSession
-                ),
-                    matchesSnapshotSyncV2AccountScope(expectedAccountScope),
-                    installV2Document(
-                        restored,
-                        workID: opened.workID,
-                        createdAt: opened.documentCreatedAt,
-                        attachments: opened.attachments,
-                        resources: opened.resources,
-                        expectedWorkID: workID,
-                        expectedDocumentID: expectedDocumentSession.documentID
-                    ) else {
-                    operationMessage = "復元した作品データを検証できませんでした。端末の表示は変更していません。"
-                    return false
-                }
-                snapshotSyncV2Session = newSession
-                await refreshSnapshotSyncV2UIState()
-                return true
+                return try await ConflictCoordinator(application: application).restoreAtPreparedBoundary(
+                    host: self, workID: workID, snapshotID: snapshotID,
+                    isCurrent: {
+                        self.matchesSnapshotSyncV2Identity(
+                            workID: workID, documentSession: expectedDocumentSession,
+                            snapshotSession: expectedSnapshotSession
+                        ) && self.matchesSnapshotSyncV2AccountScope(expectedAccountScope)
+                    }, save: { await self.saveNow() },
+                    install: { opened in
+                        guard let restored = opened.document else { return false }
+                        let context = self.operationContext
+                        let newSession = await application.beginSession(workID: opened.workID)
+                        guard context.isCurrent(self.operationContext),
+                              self.snapshotSyncV2Session == expectedSnapshotSession,
+                              self.installV2Document(
+                                  restored, workID: opened.workID, createdAt: opened.documentCreatedAt,
+                                  attachments: opened.attachments, resources: opened.resources,
+                                  expectedWorkID: workID, expectedDocumentID: expectedDocumentSession.documentID
+                              ) else {
+                            self.operationMessage = "復元した作品データを検証できませんでした。端末の表示は変更していません。"
+                            return false
+                        }
+                        self.snapshotSyncV2Session = newSession
+                        return true
+                    }, project: { self.applySnapshotSyncV2State($0) }
+                )
             } catch {
                 return false
             }

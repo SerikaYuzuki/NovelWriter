@@ -753,7 +753,10 @@ extension IOSDocumentStore {
             return false
         case .notActive: break
         }
-        return await saveNow()
+        return await ConflictCoordinator.saveBeforeDeparture(
+            currentWorkID: syncV2ActiveWorkID, pendingDuplicateID: syncV2KeepBothPendingWorkID,
+            save: { await self.saveNow() }
+        )
     }
 
     func prepareForEditorSurfaceDeparture(clearProofreadingHighlights: Bool = false) async -> Bool {

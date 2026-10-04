@@ -189,17 +189,27 @@ extension AppState {
     @discardableResult
     func returnToSnapshotLibrary() async -> Bool {
         guard snapshotSyncV2Application != nil,
-              permitsDocumentTransitionOperation else { return false }
+              permitsDocumentDeparture else { return false }
+        let expected = CheckpointCoordinator.context(of: self)
         let returned = await documentOperationGate.perform { [weak self] in
             guard let self,
+                  permitsDocumentDeparture,
+                  CheckpointCoordinator.matches(expected, host: self),
                   editorCommandSession.prepareForDocumentTransition() else { return false }
             defer { editorCommandSession.resumeAfterDocumentTransition() }
             isDocumentTransitionInProgress = true
             defer { isDocumentTransitionInProgress = false }
 
-            if saveState != .saved {
-                guard await saveNow() else { return false }
-            }
+            guard await ConflictCoordinator.saveBeforeDeparture(
+                currentWorkID: currentSnapshotSyncV2WorkID, pendingDuplicateID: syncV2KeepBothPendingWorkID,
+                save: {
+                    if self.saveState == .saved {
+                        return true
+                    }
+                    return await self.saveNow()
+                }
+            ), CheckpointCoordinator.matches(expected, host: self) else { return false }
+            retireFrozenKeepBothWorkForLibrary()
             startupState = .documentSelection(
                 .init(
                     works: snapshotSyncLibraryWorks,
@@ -260,9 +270,15 @@ extension AppState {
             defer { editorCommandSession.resumeAfterDocumentTransition() }
             isDocumentTransitionInProgress = true
             defer { isDocumentTransitionInProgress = false }
-            if saveState != .saved {
-                guard await saveNow() else { return false }
-            }
+            guard await ConflictCoordinator.saveBeforeDeparture(
+                currentWorkID: currentSnapshotSyncV2WorkID, pendingDuplicateID: syncV2KeepBothPendingWorkID,
+                save: {
+                    if self.saveState == .saved {
+                        return true
+                    }
+                    return await self.saveNow()
+                }
+            ) else { return false }
             do {
                 let prepared = operationContext
                 let coordinator = workspaceWorkOpenCoordinator(application)
@@ -345,7 +361,10 @@ extension AppState {
                     isDocumentTransitionInProgress = true
                     defer { isDocumentTransitionInProgress = false }
                     if expectedWorkID != nil {
-                        guard await saveNow() else { return false }
+                        guard await ConflictCoordinator.saveBeforeDeparture(
+                            currentWorkID: currentSnapshotSyncV2WorkID, pendingDuplicateID: syncV2KeepBothPendingWorkID,
+                            save: { await self.saveNow() }
+                        ) else { return false }
                     }
                     return await (try? coordinator.installAtPreparedBoundary(
                         opened, workID: work.workID, host: self, verifiesLocalVersion: true, createsSession: true,

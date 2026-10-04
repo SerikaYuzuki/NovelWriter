@@ -33,6 +33,22 @@ struct IOSRootView: View {
                 )
             }
         }
+        .safeAreaInset(edge: .top) {
+            if store.syncV2KeepBothPendingWorkID != nil, !store.isDocumentTransitionInProgress {
+                KeepBothRecoveryView(
+                    retry: {
+                        guard await store.retryKeepBothHandoff() else { return false }
+                        showCurrentProjectHome()
+                        return true
+                    }, leave: { await workspaceNavigation.returnToLibrary(using: store) }
+                )
+            }
+        }
+        .onChange(of: store.isDocumentTransitionInProgress) { _, transitioning in
+            if !transitioning, store.syncV2KeepBothPendingWorkID != nil {
+                store.showsConflictSheet = false
+            }
+        }
         .task(id: AutomaticSyncObservationID(
             session: store.currentDocumentSessionToken,
             account: store.snapshotSyncV2AccountScope,
@@ -196,7 +212,7 @@ struct IOSRootView: View {
 
     private var operationErrorIsPresented: Binding<Bool> {
         Binding(
-            get: { store.operationErrorMessage != nil },
+            get: { store.operationErrorMessage != nil && store.syncV2KeepBothPendingWorkID == nil },
             set: { isPresented in
                 if !isPresented {
                     store.operationErrorMessage = nil

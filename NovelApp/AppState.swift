@@ -102,6 +102,9 @@ final class AppState {
     @ObservationIgnored var attachmentPreviewURLs: [String: URL]
 
     var documentSessionToken: WorkspaceSessionToken
+    var syncV2KeepBothHandoff: WorkspaceKeepBothHandoff?
+    var syncV2KeepBothSourceSelection: SnapshotSyncV2ConflictSelection?
+    var syncV2KeepBothPendingWorkID: WorkID?
     var editorContentGeneration: UInt64
 
     let portableBridge: SyncV2PortableBridge
@@ -122,6 +125,8 @@ final class AppState {
     let snapshotSyncV2OpenLocalOverride: SnapshotSyncV2OpenLocalOverride?
     let snapshotSyncV2LibraryOverride: SnapshotSyncV2LibraryOverride?
     let snapshotSyncV2CatalogOverride: SnapshotSyncV2CatalogOverride?
+    var snapshotSyncV2KeepBothInstallOverride: (@MainActor () async -> Bool)?
+    var snapshotSyncV2BeforeKeepBothInstallOverride: (@MainActor () async -> Void)?
     let snapshotSyncV2AfterStagedRemoteOverride: SnapshotSyncV2AfterStagedRemoteOverride?
     #endif
 
@@ -178,10 +183,18 @@ final class AppState {
     /// Compatibility names used by old menu wiring are deliberately v2-only.
     var permitsDocumentInteraction: Bool {
         startupState.isReady && !isDocumentTransitionInProgress && !isTerminationPending
+            && syncV2KeepBothPendingWorkID == nil
     }
 
     var permitsDocumentChoice: Bool {
         startupState.isReady && !isDocumentTransitionInProgress && !isTerminationPending
+            && syncV2KeepBothPendingWorkID == nil
+    }
+
+    /// Leaving a frozen source is permitted without making it writable.
+    var permitsDocumentDeparture: Bool {
+        startupState.isReady && !isDocumentTransitionInProgress && !isTerminationPending
+            && interactiveAuthOperationCount == 0
     }
 
     /// Replacing/exporting/restoring a document must not race the Apple

@@ -235,7 +235,10 @@ extension IOSDocumentStore {
         }
         do {
             if startupState == .ready {
-                guard await saveNow() else {
+                guard await ConflictCoordinator.saveBeforeDeparture(
+                    currentWorkID: syncV2ActiveWorkID, pendingDuplicateID: syncV2KeepBothPendingWorkID,
+                    save: { await self.saveNow() }
+                ) else {
                     throw IOSPrivateWorkingCopyLocationError.unsafeRoot
                 }
             }
@@ -250,6 +253,7 @@ extension IOSDocumentStore {
 
     @discardableResult
     func saveNow() async -> Bool {
+        guard syncV2KeepBothPendingWorkID == nil else { return false }
         writingProgress.requestFlush()
         guard startupState == .ready else { return false }
         let workID = syncV2ActiveWorkID
@@ -369,7 +373,7 @@ extension IOSDocumentStore {
             : libraryRoot.standardizedFileURL
         if snapshotSyncV2Application != nil {
             syncV2ActiveWorkID = workID
-            syncV2KeepBothPendingWorkID = nil
+            clearKeepBothHandoff()
         }
         replaceAttachments(attachments)
         workspaceAttachments = WorkspaceAttachmentSet()

@@ -471,7 +471,17 @@ struct IOSWorkbenchView: View {
         Binding(
             get: { navigation.path },
             set: { value in
-                if let departure = navigation.editorDeparture(for: value) {
+                if value.isEmpty, store.syncV2KeepBothPendingWorkID != nil {
+                    let originalPath = navigation.path
+                    let session = store.currentDocumentSessionToken
+                    let account = store.snapshotSyncV2AccountScope
+                    Task {
+                        guard navigation.path == originalPath,
+                              store.currentDocumentSessionToken == session,
+                              store.snapshotSyncV2AccountScope == account else { return }
+                        await navigation.returnToLibrary(using: store)
+                    }
+                } else if let departure = navigation.editorDeparture(for: value) {
                     let originalPath = navigation.path
                     let session = store.currentDocumentSessionToken
                     let account = store.snapshotSyncV2AccountScope

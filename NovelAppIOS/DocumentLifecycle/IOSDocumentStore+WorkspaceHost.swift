@@ -11,6 +11,7 @@ extension IOSDocumentStore: WorkspaceAttachmentHost {
     var permitsLocalMutation: Bool {
         startupState == .ready && syncV2ActiveWorkID != nil
             && !isDocumentTransitionInProgress && !syncV2AccountTransitionInProgress
+            && syncV2KeepBothPendingWorkID == nil
     }
 
     func markChanged(policy: WorkspaceSavePolicy) {

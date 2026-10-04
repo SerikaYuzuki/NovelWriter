@@ -4,7 +4,7 @@ extension AppState: WorkspaceAttachmentHost {
     var operationContext: WorkspaceOperationContext {
         WorkspaceOperationContext(
             workID: currentSnapshotSyncV2WorkID, session: documentSessionToken,
-            account: snapshotSyncV2AccountScopeToken, editGeneration: editorContentGeneration
+            account: snapshotSyncV2AccountScopeToken, editGeneration: documentChangeRevision
         )
     }
 

@@ -26,7 +26,7 @@ struct LibraryCommand: View {
             Task { await appState.returnToSnapshotLibrary() }
         }
         .keyboardShortcut("l", modifiers: [.command, .shift])
-        .disabled(!appState.permitsDocumentTransitionOperation)
+        .disabled(!appState.permitsDocumentDeparture)
     }
 }
 
