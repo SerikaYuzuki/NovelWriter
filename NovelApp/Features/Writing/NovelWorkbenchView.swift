@@ -276,7 +276,7 @@ struct NovelWorkbenchView: View {
     private var workbenchDetail: some View {
         workbenchDetailContent
             .background {
-                WorkbenchToolbarPersistence(profile: appState.workspaceSelection.section.rawValue)
+                WorkbenchToolbarPersistence(profile: appState.workspaceSelection.section.rawValue, defaults: appState.userDefaults)
                     .id(appState.workspaceSelection.section)
                     .frame(width: 0, height: 0)
             }
