@@ -211,6 +211,8 @@ jq -e '
   . as $package |
   (transitiveClosure($package; ["NovelCore", "NovelStorage", "EditorKit", "NovelUI", "NovelExport"])
     | index("NovelAI") == null) and
+  (transitiveClosure($package; ["NovelStorage", "NovelSyncV2Runtime", "NovelSyncV2Store", "NovelSyncV2Application", "EditorKit"])
+    | all(. != "NovelWorkspace" and . != "NovelWorkspaceUI")) and
   ([$package.targets[].name] | all(test("Experimental|NovelAI"; "i") | not))
 ' "$package_tmp" >/dev/null
 

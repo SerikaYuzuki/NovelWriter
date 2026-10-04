@@ -4,7 +4,7 @@ import NovelThumbnail
 import NovelWorkspace
 import NovelWorkspaceUI
 
-extension IOSDocumentStore {
+extension IOSDocumentStore: WorkspaceFeedbackHost {
     var assistantFeedback: [AssistantFeedback] {
         attachments.compactMap { attachment in
             guard let bytes = workspaceAttachments[attachment.fileName]?.bytes else { return nil }
@@ -19,14 +19,17 @@ extension IOSDocumentStore {
 
     func saveAssistantFeedback(_ feedback: AssistantFeedback, session: WorkspaceSessionToken,
                                account: WorkspaceAccountScope) async -> Bool {
-        guard feedback.purpose == .impressions else { return false }
+        await AssistantFeedbackSave.save(feedback, host: self, session: session, account: account)
+    }
+
+    func feedbackSaveBoundary(session: WorkspaceSessionToken, account: WorkspaceAccountScope,
+                              operation: @MainActor () async -> Bool) async -> Bool {
         guard currentDocumentSessionToken == session, matchesSyncAccount(account),
               !syncV2AccountTransitionInProgress else { return false }
-        if let existing = assistantFeedback.first(where: { $0.id == feedback.id }) {
-            return existing == feedback
-        }
-        guard let url = try? feedback.temporaryFile() else { return false }
-        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        return await operation()
+    }
+
+    func importFeedbackAttachment(from url: URL, session: WorkspaceSessionToken, account: WorkspaceAccountScope) async -> Bool {
         let saved = await importAttachment(from: url, expectedSession: session, expectedAccountScope: account)
         return saved != nil && currentDocumentSessionToken == session && matchesSyncAccount(account)
     }

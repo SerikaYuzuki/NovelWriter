@@ -160,6 +160,8 @@ P5完了：最小の`WorkspaceHost` portと`ProjectFeatureCommands`へ人物／�
 
 P6完了：`WorkspaceAttachmentSet`と`WorkspaceAttachmentCommands`へ添付の追加・改名・削除・一意名、画像設定とowner削除を集約（D11解決）。読込順を保持、追加は末尾、改名は同じ位置、画像置換は末尾とする（両OSの既存表示順）。重複名のMac ` (2)`／iOS `-2`はparameterで維持。candidate checkpoint後のWorkID／session／account・対象照合を通ってからlive setへ反映し、owner削除は同期的に画像とinstallする。Macのsave／editor排他とpreview URL、iOSのinline gate・IME取得・Files／Photos UI、AI／MCPの画像除外はAppに残す。
 
+P7完了：`WritingAssistantHostFactory`／`WorkReplacementHostFactory`でWorkspaceHostの能力portからhostを生成し、本文capture・範囲検査・編集claim／checkpoint／永続Undoと感想保存の共通処理を集約（D10解決）。Macの注入closureとiOSのEditorCommandSession取得は`captureCommittedText()`を通す。OS別の保存・遷移gate、選択修復、MCP画像hook、iOS背景時間、HTTP／Keychain／設定とpanelはAppに残し、既存挙動を維持する。
+
 片方の意味を暗黙に採用しない。以下は後続phaseの統合方針であり、P1では適用しない。
 
 | 差 | 現状 | 推奨・判断 |
@@ -173,7 +175,7 @@ P6完了：`WorkspaceAttachmentSet`と`WorkspaceAttachmentCommands`へ添付の�
 | D7 | safe-adoption gateが異なる | 統合せず注入 |
 | D8 | MacはauthOperationGate＋owner＋count、iOSはrequest window＋lease＋abandon recovery＋revoke retry＋old-epoch fail-closed | iOSモデルをcoreにする |
 | D9 | P5で解決。Macは操作時flush／入力中debounce、iOSはdebounce | 操作ごとのsave policy parameterで既存挙動を維持 |
-| D10 | committed-text取得はMacが注入closure、iOSがeditorCommandSession直接参照 | portを通す |
+| D10 | P7で解決。committed-text取得をWorkspaceEditorHostのメソッドへ統合 | Macの注入closure／iOSのEditorCommandSessionはadapterで維持 |
 | D11 | P6で解決。両OSのpayloadを共通のordered・fileName一意setへ統合 | 表示順とOS別一意名を維持、保存境界を注入 |
 
 ## D-112: AI校正のチェック項目・理由と感想（2026-10-04）

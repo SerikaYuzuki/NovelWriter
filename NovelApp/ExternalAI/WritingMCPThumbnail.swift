@@ -10,11 +10,9 @@ import NovelWritingSupport
 import UniformTypeIdentifiers
 
 /// Only dedicated MCP tools create these edits; ordinary WritingEdit validation stays unchanged.
-struct WritingMCPThumbnailRequest {
-    let edit: WritingEdit
-    let owner: ThumbnailOwner
-    let image: Data?
+typealias WritingMCPThumbnailRequest = WritingThumbnailEditRequest
 
+extension WritingThumbnailEditRequest {
     static func owner(_ target: [String: Any]) throws -> ThumbnailOwner {
         guard let kind = (target["kind"] as? String).flatMap(ThumbnailOwner.Kind.init(rawValue:)),
               let id = (target["id"] as? String).flatMap(UUID.init(uuidString:)) else { throw WritingError.invalidEdit }

@@ -5,7 +5,7 @@ import NovelCore
 import NovelThumbnail
 import NovelWorkspaceUI
 
-extension AppState {
+extension AppState: WorkspaceFeedbackHost {
     var assistantFeedback: [AssistantFeedback] {
         let names = Set(attachments.map(\.fileName))
         return AssistantFeedback.list(snapshotSyncV2Attachments.filter { names.contains($0.fileName) })
@@ -18,15 +18,16 @@ extension AppState {
 
     func saveAssistantFeedback(_ feedback: AssistantFeedback, session: WorkspaceSessionToken,
                                account: WorkspaceAccountScope) async -> Bool {
-        guard feedback.purpose == .impressions else { return false }
-        return await mutateAssistantFeedback(session: session, account: account) {
-            if let existing = self.assistantFeedback.first(where: { $0.id == feedback.id }) {
-                return existing == feedback
-            }
-            guard let url = try? feedback.temporaryFile() else { return false }
-            defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
-            return await self.addAttachmentWithinSaveBoundary(from: url, expectedSession: session) != nil
-        }
+        await AssistantFeedbackSave.save(feedback, host: self, session: session, account: account)
+    }
+
+    func feedbackSaveBoundary(session: WorkspaceSessionToken, account: WorkspaceAccountScope,
+                              operation: @MainActor () async -> Bool) async -> Bool {
+        await mutateAssistantFeedback(session: session, account: account, operation: operation)
+    }
+
+    func importFeedbackAttachment(from url: URL, session: WorkspaceSessionToken, account _: WorkspaceAccountScope) async -> Bool {
+        await addAttachmentWithinSaveBoundary(from: url, expectedSession: session) != nil
     }
 
     func deleteAssistantFeedback(_ feedback: AssistantFeedback, session: WorkspaceSessionToken,
@@ -43,7 +44,7 @@ extension AppState {
         await documentOperationGate.perform {
             guard self.documentSessionToken == session, self.snapshotSyncV2AccountScopeToken == account,
                   self.permitsDocumentInteraction else { return false }
-            switch self.activeCommittedTextCapture() {
+            switch self.captureCommittedText() {
             case .compositionInProgress: return false
             case let .captured(text):
                 guard let chapterID = self.selectedChapterID, let episodeID = self.selectedEpisodeID else { return false }

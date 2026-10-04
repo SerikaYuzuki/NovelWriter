@@ -37,15 +37,15 @@ let package = Package(
         ),
         .testTarget(
             name: "NovelWorkspaceUITests",
-            dependencies: ["NovelWorkspaceUI", "NovelCore", "NovelSyncV2", "NovelSyncV2Application", "NovelWritingSupport"]
+            dependencies: ["NovelWorkspaceUI", "NovelCore", "NovelSyncV2", "NovelSyncV2Application", "NovelWritingSupport", "EditorKit"]
         ),
         .target(
             name: "NovelWorkspace",
-            dependencies: ["NovelCore", "NovelTextAnalysis", "NovelSyncV2", "NovelSyncV2Application", "NovelWritingSupport", "NovelTiming", "NovelThumbnail"]
+            dependencies: ["NovelCore", "NovelTextAnalysis", "NovelSyncV2", "NovelSyncV2Application", "NovelWritingSupport", "NovelTiming", "NovelThumbnail", "EditorKit"]
         ),
         .testTarget(
             name: "NovelWorkspaceTests",
-            dependencies: ["NovelWorkspace", "NovelCore", "NovelTextAnalysis", "NovelSyncV2", "NovelTiming", "NovelThumbnail"]
+            dependencies: ["NovelWorkspace", "NovelCore", "NovelTextAnalysis", "NovelSyncV2", "NovelTiming", "NovelThumbnail", "EditorKit"]
         ),
         .target(name: "NovelTiming"),
         .testTarget(name: "NovelTimingTests", dependencies: ["NovelTiming"]),

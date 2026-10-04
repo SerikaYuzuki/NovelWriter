@@ -5,7 +5,7 @@ public enum WorkspaceSavePolicy: Equatable, Sendable {
     case debounced
 }
 
-/// Minimum port for local project-feature edits; no editor, sync or authentication operations.
+/// Base local mutation port. Editor and explicit-send capabilities refine it separately.
 @MainActor
 public protocol WorkspaceHost: AnyObject {
     var document: NovelDocument { get set }

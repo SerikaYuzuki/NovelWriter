@@ -1,3 +1,4 @@
+import NovelWorkspaceUI
 import NovelWritingSupport
 import SwiftUI
 
