@@ -37,10 +37,20 @@ private struct TextCheckRuleResults: View {
                     Text(issue.title).font(.headline)
                     // 同数では多数派を決めず、置換を提案しない。
                     if issue.replacement != nil {
-                        Button { onReplace(issue) } label: { Text("置換…").frame(minHeight: 44) }
-                            .accessibilityHint("少数派を検索欄、多数派を置換欄に入れて作品全体検索を開きます")
+                        Button { onReplace(issue) } label: {
+                            Text("置換…")
+                            #if os(iOS)
+                                .frame(minHeight: 44)
+                            #endif
+                        }
+                        .accessibilityHint("少数派を検索欄、多数派を置換欄に入れて作品全体検索を開きます")
                     }
-                    Button { session.ignore(issue) } label: { Text("この組を無視").frame(minHeight: 44) }
+                    Button { session.ignore(issue) } label: {
+                        Text("この組を無視")
+                        #if os(iOS)
+                            .frame(minHeight: 44)
+                        #endif
+                    }
                 }
             }
             ForEach(episodeIDs, id: \.self) { episodeID in
@@ -57,13 +67,19 @@ private struct TextCheckRuleResults: View {
                             Button { onJump(entry.occurrence) } label: {
                                 Text(entry.occurrence.match.context)
                                     .multilineTextAlignment(.leading)
-                                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                #if os(iOS)
+                                    .frame(minHeight: 44)
+                                #endif
                             }
                             .buttonStyle(.plain)
                             .accessibilityLabel("\(entry.occurrence.result.episodeTitle)、\(entry.issue.title)、\(entry.occurrence.match.context)")
                             .accessibilityHint("話を開き、指摘範囲を選択します")
                             Button { session.ignore(entry.issue, occurrence: entry.occurrence) } label: {
-                                Text("無視").frame(minHeight: 44)
+                                Text("無視")
+                                #if os(iOS)
+                                    .frame(minHeight: 44)
+                                #endif
                             }
                             .accessibilityLabel("この指摘を無視")
                         }

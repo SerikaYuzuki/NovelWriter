@@ -63,6 +63,12 @@ struct NovelWorkbenchView: View {
         } panel: {
             assistantPanel
         }
+        .overlay(alignment: .bottom) {
+            if let notice = appState.manuscriptCopyNotice {
+                ManuscriptCopyNoticeView(notice: notice, onDismiss: appState.dismissManuscriptCopyNotice)
+                    .padding()
+            }
+        }
         .animation(Motion.standard(reduceMotion: reduceMotion), value: isAssistantPresented)
         .modifier(WritingSyncPulse(host: appState.writingAssistantHost))
         .navigationTitle(documentDisplayTitle)
@@ -141,7 +147,6 @@ struct NovelWorkbenchView: View {
                 await appState.saveAssistantFeedback(feedback, session: session, account: account)
             },
             writingHost: appState.writingAssistantHost,
-            externalSettings: AnyView(WritingMCPSettingsView(controller: appState.writingMCPController)),
             chapters: appState.document.chapters,
             captureScope: { scope in
                 guard appState.documentSessionToken == session,
@@ -648,31 +653,24 @@ private struct ProjectInfoView: View {
 
     var body: some View {
         SectionSurface(title: "作品情報", systemImage: "book.closed") {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
+            Form {
+                Section {
                     HStack(alignment: .top, spacing: Spacing.outer) {
                         MacThumbnailEditor(owner: ThumbnailOwner(.work, appState.document.id), title: appState.document.title)
                         WorkInfoSummary(document: appState.document, showsCover: false)
                     }
                     WritingProgressCard(tracker: appState.writingProgress)
-                    GroupBox("編集") {
-                        VStack(alignment: .leading, spacing: 8) {
-                            WorkbenchLabeledField("作品タイトル") {
-                                TextField("作品タイトル", text: titleBinding)
-                            }
-
-                            WorkbenchLabeledEditor("あらすじ") {
-                                TextEditor(text: synopsisBinding)
-                                    .accessibilityLabel("あらすじ")
-                                    .frame(minHeight: 160)
-                            }
-                        }
-                        .padding(8)
-                    }
                 }
-                .padding(20)
-                .frame(maxWidth: 720, alignment: .leading)
+                Section("編集") {
+                    TextField("作品タイトル", text: titleBinding, axis: .vertical).lineLimit(1 ... 3)
+                }
+                Section("あらすじ") {
+                    TextEditor(text: synopsisBinding)
+                        .accessibilityLabel("あらすじ")
+                        .frame(minHeight: 160, idealHeight: 280)
+                }
             }
+            .formStyle(.grouped)
             .background(FuminiwaColor.paper.color)
         }
     }

@@ -51,6 +51,11 @@ struct ContentView: View {
             .onChange(of: appState.snapshotSyncConflict, initial: true) { _, conflict in
                 showingConflict = conflict != nil
             }
+            .onReceive(NotificationCenter.default.publisher(for: .presentWorkHistory)) { notification in
+                guard let session = notification.object as? DocumentSessionToken,
+                      appState.documentSessionToken == session else { return }
+                showingConflictHistory = true
+            }
             .onReceive(NotificationCenter.default.publisher(for: .presentSnapshotSyncConflict)) { _ in
                 showingConflict = appState.snapshotSyncConflict != nil
             }

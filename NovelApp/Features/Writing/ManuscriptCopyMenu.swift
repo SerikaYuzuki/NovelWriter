@@ -23,16 +23,29 @@ enum ManuscriptCopyMenuTarget: Equatable {
     }
 }
 
-struct ManuscriptCopyMenu: View {
-    let target: ManuscriptCopyMenuTarget
+struct ManuscriptCopyToolbarMenu: View {
+    @Environment(AppState.self) private var appState
 
     var body: some View {
-        ManuscriptCopyMenuContent(target: target)
-            .labelStyle(.iconOnly)
-            .buttonStyle(.borderless)
-            .controlSize(.small)
-            .help(target.menuLabel)
-            .accessibilityLabel(target.menuLabel)
+        // Targets retain the session and selection from this presentation.
+        let session = appState.documentSessionToken
+        let chapterID = appState.selectedChapterID
+        let episodeID = appState.selectedEpisodeID
+        Menu {
+            if let chapterID, let episodeID {
+                ManuscriptCopyContextMenu(target: .episode(episodeID: episodeID, chapterID: chapterID, session: session))
+            }
+            if let chapterID {
+                ManuscriptCopyContextMenu(target: .chapter(chapterID: chapterID, session: session))
+            }
+        } label: {
+            Label("原稿をコピー", systemImage: "doc.on.doc")
+        } primaryAction: {
+            guard let chapterID, let episodeID else { return }
+            appState.copyEpisodeManuscript(episodeID: episodeID, in: chapterID, expectedSession: session)
+        }
+        .help("現在の話をコピー。メニューから章もコピーできます")
+        .disabled(!appState.permitsDocumentInteraction || chapterID == nil || episodeID == nil)
     }
 }
 

@@ -11,12 +11,19 @@ struct TextCheckControls: View {
             Text("作品全体").tag(true)
             Text("現在の話").tag(false)
         }
+        #if os(iOS)
         .frame(minHeight: 44)
+        #endif
         Toggle("会話文（「」『』内）を対象にしない", isOn: $session.excludeDialogue)
             .accessibilityHint("表記ゆれと人物名だけに適用します")
+        #if os(iOS)
             .frame(minHeight: 44)
+        #endif
         Button(action: onCheck) {
-            Label("チェック", systemImage: "text.badge.checkmark").frame(minHeight: 44)
+            Label("チェック", systemImage: "text.badge.checkmark")
+            #if os(iOS)
+                .frame(minHeight: 44)
+            #endif
         }
         .disabled(session.isChecking || !canCheck)
         .accessibilityIdentifier("textCheck.run")
@@ -44,8 +51,13 @@ struct TextCheckIgnoredList: View {
             ForEach(session.ignored.keys.sorted(), id: \.self) { key in
                 VStack(alignment: .leading) {
                     Text(session.ignored[key] ?? "")
-                    Button { session.restoreIgnored(key) } label: { Text("無視を解除").frame(minHeight: 44) }
-                        .accessibilityHint("次回のチェックで再び表示します")
+                    Button { session.restoreIgnored(key) } label: {
+                        Text("無視を解除")
+                        #if os(iOS)
+                            .frame(minHeight: 44)
+                        #endif
+                    }
+                    .accessibilityHint("次回のチェックで再び表示します")
                 }
             }
         }

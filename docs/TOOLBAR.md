@@ -4,16 +4,16 @@
 
 ## 1. 現在の所有者と状態
 
-[`NovelWorkbenchView`](../NovelApp/Features/Writing/NovelWorkbenchView.swift)のdetailが`.toolbar(id: "novelwriter.workbench.v8")`を所有し、[`WorkbenchToolbarContent`](../NovelApp/Features/Writing/WorkbenchToolbarContent.swift)が項目を作る。Outlineの章追加・話追加・話名変更などは同ファイルの`WorkbenchOutlineToolbarContent`からcontent列へ提供する。各列のscopeを保つことでOSがSidebar／Outline両方のtracking separatorを作る。独立した二本目のtoolbarや保存・同期処理を作らない。`EditorSearchSession`やpopoverの表示はwindow内の一時状態とし、作品へ保存しない。
+[`NovelWorkbenchView`](../NovelApp/Features/Writing/NovelWorkbenchView.swift)のdetailが`.toolbar(id: "novelwriter.workbench.v9")`を所有し、[`WorkbenchToolbarContent`](../NovelApp/Features/Writing/WorkbenchToolbarContent.swift)が項目を作る。Outlineの章追加・話追加・話名変更などは同ファイルの`WorkbenchOutlineToolbarContent`からcontent列へ提供する。各列のscopeを保つことでOSがSidebar／Outline両方のtracking separatorを作る。独立した二本目のtoolbarや保存・同期処理を作らない。`EditorSearchSession`やpopoverの表示はwindow内の一時状態とし、作品へ保存しない。
 
 `AppState+SnapshotSyncV2`、`ExplicitSyncButton`、`WorkbenchSyncStatus`へ接続している。
 
 ## 2. 既定レイアウト
 
-- Sidebar上: 標準開閉。作品一覧へ戻る入口は移動可能な通常項目としてdetail側へ置く。IME確定・端末保存に成功してから同じwindowで一覧へ戻る。
+- Sidebar上: 標準開閉。作品一覧へ戻る入口はdetail側のnavigation placementへ置き、macOS 14〜25でも先頭側を保つ。IME確定・端末保存に成功してから同じwindowで一覧へ戻る。
 - Outline上: そのsection固有の章／人物／ノート／資料追加。作品名はOutline上に置かず、本文領域上端の見出しとして表示する。
-- 執筆のOutline上: 章追加、話追加、話名変更の順。Editor上: 作品一覧、可変余白、話メモ、履歴、保存して同期、書き出し、プロットカード、話内検索、右端にAI支援。
-- 同期操作と状態を一つのボタンへまとめ、「同期中」「同期済み」「通信待ち」「同期失敗」等を文字で示す。端末内作品や未確認の状態を同期済みと表示しない。
+- 執筆のOutline上: 章追加、話追加、話名変更の順。Editor上: 作品一覧、可変余白、話メモ、プロットカード表示Toggle、スナップショット／履歴、書き出し、原稿コピー、話内検索、同期状態、右端にAI支援。
+- 全モードのdetailを「作品一覧 → 可変余白 → モード固有操作 → 作品共通操作 → 執筆時のみ話内検索 → 同期状態 → 執筆時のみAI支援」の順に揃える。プロットカード追加はOutlineへ置く。同期操作と状態は一つのボタンへまとめ、形＋色で示す（D-110）。状態名はhelp／accessibilityに残し、標準の「アイコンとテキスト」表示では文字も出す。端末内作品や未確認の状態を同期済みと表示しない。
 - 保存・同期状態を下部へ重複させず、選択章名はOutlineで示す。
 
 幅不足は標準overflowと列幅調整で扱い、独自の二段目toolbarやoverflowを作らない。同期前の確認表示は`NovelWorkbenchView`側で所有し、overflow内のボタンを表示元にしない。
@@ -24,13 +24,15 @@
 
 | ID | 操作 | 配置・カスタマイズ |
 | --- | --- | --- |
-| `workbench.library` | 保存して同じwindowの作品一覧へ戻る | 移動・削除可 |
+| `workbench.library` | 保存して同じwindowの作品一覧へ戻る | navigation placement、OS標準の制約に従う |
 | `workbench.episode.add` | 選択章へ話を追加 | 執筆時、移動・削除可 |
-| `workbench.snapshot.sync` | 状態を文字表示し、クリックで保存・同期。競合時は確認画面 | 全section、移動・削除可。macOS 26.1以降は表示優先度high |
+| `workbench.snapshot.sync` | 状態を記号＋色で表示し、クリックで保存・同期。競合時は確認画面 | 全section、移動・削除可。macOS 26.1以降は表示優先度high |
 | `workbench.episode.rename` | 選択中の話の名前を変更 | 執筆時、移動・削除可 |
 | `workbench.writing.assistant` | AI支援右パネル開閉 | 執筆時、移動・削除可 |
 | `workbench.chapter.memo` | 話メモpopover | 移動・削除可 |
 | `workbench.snapshot.save` | スナップショット保存・履歴 | 移動・削除可 |
+| `workbench.manuscript.copy` | 現在話をコピー、メニューで話／章を選択 | 執筆時のみ有効、移動・削除可 |
+| `workbench.search` | 話内検索 | 執筆時のみ、移動・削除可 |
 | `workbench.export` | 書き出す… | 移動・削除可 |
 | `workbench.plot.card.rail` | 選択章のプロットカード参照pane | 移動・削除可 |
 | `workbench.chapter.add` | 章追加 | 執筆／プロット時、移動・削除可 |
@@ -43,9 +45,11 @@
 
 ## 4. カスタマイズ方針
 
+v9で既定配置を更新し、保存済みのtoolbar配置を一度リセットする。その後の変更は保持する。
+
 個別`ToolbarItem(id:)`で独立した移動／削除を許し、複数操作を一つのgroupへまとめない。OSの`ToolbarCommands()`と標準context menuを使用し、順序を`NovelDocument`、package、同期データへ保存しない。
 
-アプリ固有の操作は全て通常項目として移動・削除を許す。Sidebar開閉、列区切りなどOSが管理する構造は標準の制約に従う。選択不足は必要な操作をdisabledにし、stable IDを作り直さない。未実装機能はdisabled placeholderで出さない。
+アプリ固有の操作は個別項目として標準のカスタマイズを使う。作品一覧はnavigation placementの標準制約に従う。Sidebar開閉、列区切りなどOSが管理する構造は標準の制約に従う。選択不足は必要な操作をdisabledにし、stable IDを作り直さない。未実装機能はdisabled placeholderで出さない。
 
 ## 5. ツールバー外の入口
 
@@ -94,7 +98,7 @@ native toolbarの配置は端末UserDefaultsへsection別に保持し、window�
 
 作品情報・人物詳細・世界観ノート詳細の画像menuから設定／置換／削除する。画像のcontext menuも同じ操作を提供し、画像wellへのファイルdrag & dropは同じ切り抜きsheetへ進む。toolbar項目は追加しない。棚では表紙と既存の同期記号・文言を併存させる。[保存契約](sync/v2/thumbnails.md)。
 
-作品一覧のヘッダーにアプリ名・新規・Importを置く。表紙／一覧切替、⌘F検索、表紙の矢印キー選択、Return／double clickでopenに対応する。⌘⇧Lは同じwindowで一覧へ戻る。閉じたwindowは標準Windowメニューから再表示する。
+作品一覧のヘッダーはアプリ名と説明だけとし、native toolbarに新しい作品…（primaryAction）、作品を取り込む…、更新、別作品として復元…、表紙／一覧Pickerを置く。履歴…は作品行の右クリックからその作品を開いて表示し、sheet見出しに作品名を示す。棚検索は既存欄を維持する。表紙／一覧切替、⌘F検索、表紙の矢印キー選択、Return／double clickでopenに対応する。⌘⇧Lは同じwindowで一覧へ戻る。閉じたwindowは標準Windowメニューから再表示する。
 
 執筆補助バー（EditorAccessoryBar）の右端に「話 3,210字 · 今日 +1,240字」を表示する。操作ボタン群だけをdisabledにし、数値は保持する。手入力で区切りに到達すると約5秒「10万字に到達しました」へ置き換え、VoiceOverへ通知する。アニメーションは付けない。下部status barをプロットカードだけに限定する表示条件は変更しない。
 

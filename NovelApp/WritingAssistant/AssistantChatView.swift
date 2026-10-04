@@ -92,7 +92,8 @@ struct AssistantChatView: View {
                         }
                     }.labelsHidden().disabled(requestTask != nil)
                 }
-                Button("新しい会話") { conversationId = nil }.disabled(requestTask != nil)
+                Button("新しい会話", systemImage: "square.and.pencil") { conversationId = nil }
+                    .labelStyle(.iconOnly).help("新しい会話").disabled(requestTask != nil)
                 Button("変更履歴", systemImage: "clock.arrow.circlepath") { showingEdits = true }.labelStyle(.iconOnly)
                 Button("指示", systemImage: "slider.horizontal.3") { showingPrompts = true }.labelStyle(.iconOnly)
             }
@@ -141,7 +142,7 @@ struct AssistantChatView: View {
                 ForEach(ChatEditScope.allCases) { Text($0.rawValue).tag($0) }
             }.disabled(requestTask != nil)
             TextField("相談・生成・修正を依頼", text: $input, axis: .vertical)
-                .lineLimit(2 ... 6).textFieldStyle(.roundedBorder)
+                .lineLimit(2 ... 10).textFieldStyle(.roundedBorder)
             HStack {
                 Text("編集許可はこの依頼だけに使います。").font(.caption2).foregroundStyle(.secondary)
                 Spacer()
@@ -157,13 +158,13 @@ struct AssistantChatView: View {
         .sheet(isPresented: $showingEdits) {
             NavigationStack {
                 WritingEditHistoryView(host: host)
-                    .toolbar { Button("閉じる") { showingEdits = false } }
+                    .toolbar { ToolbarItem(placement: .cancellationAction) { Button("閉じる") { showingEdits = false } } }
             }.frame(minWidth: 350, minHeight: 440)
         }
         .sheet(isPresented: $showingPrompts) {
             NavigationStack {
                 WritingPromptsView(host: host, defaults: defaults)
-                    .toolbar { Button("閉じる") { showingPrompts = false } }
+                    .toolbar { ToolbarItem(placement: .cancellationAction) { Button("閉じる") { showingPrompts = false } } }
             }.frame(minWidth: 350, minHeight: 460)
         }
         .modifier(WritingSyncVisibility(host: host))

@@ -131,7 +131,7 @@ private struct CharacterSheetView: View {
                     HStack(alignment: .top, spacing: 12) {
                         WorkbenchLabeledField("役割") {
                             HStack(spacing: 8) {
-                                TextField("役割", text: profileBinding(.role))
+                                TextField("役割", text: profileBinding(.role), axis: .vertical).lineLimit(1 ... 3)
                                 Menu {
                                     ForEach(roleChoices, id: \.self) { role in
                                         Button(role) {
@@ -144,10 +144,10 @@ private struct CharacterSheetView: View {
                             }
                         }
                         WorkbenchLabeledField("年齢") {
-                            TextField("年齢", text: profileBinding(.age))
+                            TextField("年齢", text: profileBinding(.age), axis: .vertical).lineLimit(1 ... 3)
                         }
                         WorkbenchLabeledField("性別") {
-                            TextField("性別", text: profileBinding(.gender))
+                            TextField("性別", text: profileBinding(.gender), axis: .vertical).lineLimit(1 ... 3)
                         }
                     }
                 }
@@ -155,23 +155,23 @@ private struct CharacterSheetView: View {
                 sheetSection("口調") {
                     HStack(alignment: .top, spacing: 12) {
                         WorkbenchLabeledField("一人称") {
-                            TextField("一人称", text: profileBinding(.firstPerson))
+                            TextField("一人称", text: profileBinding(.firstPerson), axis: .vertical).lineLimit(1 ... 3)
                         }
                         WorkbenchLabeledField("二人称") {
-                            TextField("二人称", text: profileBinding(.secondPerson))
+                            TextField("二人称", text: profileBinding(.secondPerson), axis: .vertical).lineLimit(1 ... 3)
                         }
                     }
-                    labeledEditor("口調・話し方", text: profileBinding(.speechStyle), minHeight: 90)
+                    labeledEditor("口調・話し方", text: profileBinding(.speechStyle))
                 }
 
                 sheetSection("設定") {
-                    labeledEditor("外見", text: profileBinding(.appearance), minHeight: 90)
-                    labeledEditor("性格", text: profileBinding(.personality), minHeight: 90)
-                    labeledEditor("背景・経歴", text: profileBinding(.background), minHeight: 110)
+                    labeledEditor("外見", text: profileBinding(.appearance))
+                    labeledEditor("性格", text: profileBinding(.personality))
+                    labeledEditor("背景・経歴", text: profileBinding(.background))
                 }
 
                 sheetSection("自由メモ") {
-                    labeledEditor("メモ", text: selectedCharacterMemoBinding, minHeight: 140)
+                    labeledEditor("メモ", text: selectedCharacterMemoBinding)
                 }
 
                 sheetSection("登場章") {
@@ -204,12 +204,12 @@ private struct CharacterSheetView: View {
                                        color: character.colorHex.flatMap { Color(hex: $0) })
                 }
                 VStack(alignment: .leading, spacing: Spacing.small) {
-                    TextField("名前", text: selectedCharacterNameBinding)
+                    TextField("名前", text: selectedCharacterNameBinding, axis: .vertical).lineLimit(1 ... 3)
                         .font(.title2.weight(.semibold)).textFieldStyle(.plain)
                         .foregroundStyle(FuminiwaColor.textPrimary.color)
                         .onSubmit { appState.commitCharacterEditing() }
                     WorkbenchLabeledField("ふりがな") {
-                        TextField("ふりがな", text: selectedCharacterKanaBinding)
+                        TextField("ふりがな", text: selectedCharacterKanaBinding, axis: .vertical).lineLimit(1 ... 3)
                             .textFieldStyle(.roundedBorder).frame(maxWidth: 220)
                             .onSubmit { appState.commitCharacterEditing() }
                     }
@@ -232,24 +232,10 @@ private struct CharacterSheetView: View {
         }
     }
 
-    @State private var showsCustomColor = false
-
     private var colorControls: some View {
         HStack(spacing: 12) {
-            Button { showsCustomColor = true } label: {
-                Image(systemName: "paintpalette").font(.caption2)
-                    .frame(width: 16, height: 16)
-                    .background(FuminiwaColor.surface.color, in: Circle())
-                    .overlay(Circle().strokeBorder(FuminiwaColor.separator.color))
-                    .frame(width: 24, height: 24)
-            }
-            .buttonStyle(.plain)
-            .help("カスタムカラー")
-            .accessibilityLabel("カスタムカラー")
-            .popover(isPresented: $showsCustomColor) {
-                ColorPicker("カスタムカラー", selection: selectedCharacterColorBinding, supportsOpacity: false)
-                    .padding(Spacing.medium)
-            }
+            ColorPicker("カスタムカラー", selection: selectedCharacterColorBinding, supportsOpacity: false)
+                .fixedSize()
 
             CharacterColorPresetPicker(
                 selectedHex: appState.selectedCharacter?.colorHex,
@@ -272,10 +258,10 @@ private struct CharacterSheetView: View {
         .overlay(RoundedRectangle(cornerRadius: Radius.card).strokeBorder(FuminiwaColor.separator.color, lineWidth: 0.5))
     }
 
-    private func labeledEditor(_ title: String, text: Binding<String>, minHeight: CGFloat) -> some View {
+    private func labeledEditor(_ title: String, text: Binding<String>) -> some View {
         WorkbenchLabeledEditor(title) {
             TextEditor(text: text)
-                .frame(minHeight: minHeight)
+                .frame(minHeight: 160, idealHeight: 240)
         }
     }
 

@@ -31,7 +31,10 @@ struct WorkSearchResults: View {
                                 Text(match.context)
                                     .foregroundStyle(.primary)
                                     .multilineTextAlignment(.leading)
-                                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                #if os(iOS)
+                                    .frame(minHeight: 44)
+                                #endif
                             }
                             .buttonStyle(.plain)
                             .accessibilityHint("話を開き、一致箇所を選択します")

@@ -42,7 +42,7 @@ struct PlotBoardView: View {
                         editingCardRequest = nil
                     }
                 )
-                .frame(width: 420, height: 420)
+                .frame(minWidth: 420, idealWidth: 520, minHeight: 420, idealHeight: 560)
             }
             .confirmationDialog(
                 "プロットカードを削除しますか？",
@@ -344,8 +344,8 @@ struct PlotAndFlagSplitView: View {
                     minWidth: nil,
                     idealWidth: nil,
                     maxWidth: .infinity,
-                    minHeight: 220,
-                    idealHeight: 240,
+                    minHeight: 300,
+                    idealHeight: 360,
                     maxHeight: .infinity
                 )
         }
@@ -494,13 +494,13 @@ private struct PlotCardDetailSheet: View {
                     }
                 }
 
-                WorkbenchLabeledEditor("メモ") {
+                Section("メモ") {
                     PlotCardMemoEditor(
                         editorID: card.id,
                         initialText: memoDraft,
                         text: $memoDraft
                     )
-                    .frame(minHeight: 180)
+                    .frame(minHeight: 160, idealHeight: 280)
                 }
             }
             .formStyle(.grouped)

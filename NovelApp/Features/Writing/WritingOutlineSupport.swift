@@ -97,7 +97,6 @@ enum OutlineSaveStateVisibility {
 
 struct OutlineChapterRow: View {
     let chapter: Chapter
-    let expectedSession: DocumentSessionToken
     let showsSaveState: Bool
 
     var body: some View {
@@ -114,12 +113,6 @@ struct OutlineChapterRow: View {
                     .monospacedDigit()
                 Text("\(presentation.characterCount)字")
                     .monospacedDigit()
-                ManuscriptCopyMenu(
-                    target: .chapter(
-                        chapterID: chapter.id,
-                        session: expectedSession
-                    )
-                )
             }
             .font(.caption)
             .foregroundStyle(.secondary)
@@ -139,7 +132,6 @@ struct OutlineEpisodeRow: View {
 
     let episode: Episode
     let chapterID: ChapterID
-    let expectedSession: DocumentSessionToken
     let showsSaveState: Bool
 
     var body: some View {
@@ -165,14 +157,6 @@ struct OutlineEpisodeRow: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             }
-
-            ManuscriptCopyMenu(
-                target: .episode(
-                    episodeID: episode.id,
-                    chapterID: chapterID,
-                    session: expectedSession
-                )
-            )
         }
         .padding(.vertical, 4)
     }

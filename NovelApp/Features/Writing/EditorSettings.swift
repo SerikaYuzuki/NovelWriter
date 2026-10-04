@@ -234,7 +234,6 @@ enum AppAppearance: String, CaseIterable, Identifiable {
 
 struct EditorSettingsView: View {
     @Environment(EditorSettings.self) private var settings
-    @State private var showingAssistantSettings = false
 
     var body: some View {
         @Bindable var settings = settings
@@ -301,20 +300,11 @@ struct EditorSettingsView: View {
                         .background(Color(hex: settings.backgroundColorHex) ?? FuminiwaColor.paper.color)
                         .accessibilityLabel("本文のプレビュー。窓辺に、一冊の本を開く。")
                 }
-                settingsCard("AI支援") {
-                    Button("AI支援の設定…") { showingAssistantSettings = true }
-                }
             }
             .padding(20)
             .frame(maxWidth: 720, alignment: .leading)
         }
         .background(FuminiwaColor.paper.color)
-        .sheet(isPresented: $showingAssistantSettings) {
-            VStack {
-                AssistantSettingsView(defaults: settings.userDefaults)
-                Button("閉じる") { showingAssistantSettings = false }.padding()
-            }.frame(width: 520, height: 620)
-        }
     }
 
     private func settingsCard(_ title: String, @ViewBuilder content: () -> some View) -> some View {
