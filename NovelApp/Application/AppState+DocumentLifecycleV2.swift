@@ -37,13 +37,7 @@ extension AppState {
     }
 
     func setSelection(chapterID: ChapterID?, episodeID: EpisodeID?) {
-        selectedChapterID = chapterID
-        selectedEpisodeID = episodeID
-        if let chapterID {
-            plotOutlineSelection = .chapter(chapterID)
-        } else {
-            plotOutlineSelection = .unassigned
-        }
+        outlineCommands().setSelection(chapterID: chapterID, episodeID: episodeID)
     }
 
     func preferredEpisodeID(in chapterID: ChapterID) -> EpisodeID? {
@@ -67,88 +61,39 @@ extension AppState {
     }
 
     func selectProjectSectionAfterTransition(_ section: ProjectSection) async -> Bool {
-        await documentOperationGate.perform { [weak self] in
-            guard let self,
-                  editorCommandSession.prepareForDocumentTransition() else { return false }
-            defer { editorCommandSession.resumeAfterDocumentTransition() }
-            isDocumentTransitionInProgress = true
-            defer { isDocumentTransitionInProgress = false }
-            workspaceSelection = WorkspaceSelection(section: section)
+        await EpisodeTransition(host: self).perform(saveAfter: true) {
+            self.workspaceSelection = WorkspaceSelection(section: section)
             if section == .worldbuilding {
-                ensureWorldNoteSelection()
+                self.ensureWorldNoteSelection()
             }
-            return await saveNow()
+            return true
         }
     }
 
     func selectEpisodeAfterTransition(_ episodeID: EpisodeID, in chapterID: ChapterID) async -> Bool {
-        await documentOperationGate.perform { [weak self] in
-            guard let self,
-                  editorCommandSession.prepareForDocumentTransition() else { return false }
-            defer { editorCommandSession.resumeAfterDocumentTransition() }
-            isDocumentTransitionInProgress = true
-            defer { isDocumentTransitionInProgress = false }
-            guard document.chapters.contains(where: { chapter in
-                chapter.id == chapterID && chapter.episodes.contains(where: { $0.id == episodeID })
-            }) else { return false }
-            selectedChapterID = chapterID
-            selectedEpisodeID = episodeID
-            plotOutlineSelection = .chapter(chapterID)
-            return await saveNow()
+        await EpisodeTransition(host: self).perform(saveAfter: true) {
+            self.outlineCommands(prepared: true).selectEpisode(episodeID, in: chapterID)
         }
     }
 
     func selectChapterAfterTransition(_ chapterID: ChapterID) async -> Bool {
-        await documentOperationGate.perform { [weak self] in
-            guard let self,
-                  editorCommandSession.prepareForDocumentTransition() else { return false }
-            defer { editorCommandSession.resumeAfterDocumentTransition() }
-            isDocumentTransitionInProgress = true
-            defer { isDocumentTransitionInProgress = false }
-            guard document.chapters.contains(where: { $0.id == chapterID }) else { return false }
-            selectedChapterID = chapterID
-            selectedEpisodeID = preferredEpisodeID(in: chapterID)
-            plotOutlineSelection = .chapter(chapterID)
-            return await saveNow()
+        await EpisodeTransition(host: self).perform(saveAfter: true) {
+            self.document.chapters.contains(where: { $0.id == chapterID }) && self.outlineCommands(prepared: true).selectChapter(chapterID)
         }
     }
 
     func addChapterAfterTransition() async -> Bool {
         guard permitsDocumentChoice else { return false }
-        return await documentOperationGate.perform { [weak self] in
-            guard let self,
-                  editorCommandSession.prepareForDocumentTransition() else { return false }
-            defer { editorCommandSession.resumeAfterDocumentTransition() }
-            isDocumentTransitionInProgress = true
-            defer { isDocumentTransitionInProgress = false }
-            let title = "第\(document.chapters.count + 1)章"
-            let chapterID = document.addChapter(title: title)
-            setSelection(chapterID: chapterID, episodeID: nil)
-            saveCoordinator.markDirty()
-            return await saveNow()
+        return await EpisodeTransition(host: self).perform(saveAfter: true) {
+            self.outlineCommands(prepared: true).addChapter()
         }
     }
 
     func addEpisodeAfterTransition(to chapterID: ChapterID? = nil) async -> Bool {
         guard permitsDocumentChoice else { return false }
-        return await documentOperationGate.perform { [weak self] in
-            guard let self,
-                  editorCommandSession.prepareForDocumentTransition() else { return false }
-            defer { editorCommandSession.resumeAfterDocumentTransition() }
-            isDocumentTransitionInProgress = true
-            defer { isDocumentTransitionInProgress = false }
-            let targetChapterID = chapterID ?? selectedChapterID
-            guard let targetChapterID,
-                  let chapter = document.chapters.first(where: { $0.id == targetChapterID }) else {
-                return false
-            }
-            let title = "第\(chapter.episodes.count + 1)話"
-            guard let episodeID = document.addEpisode(to: targetChapterID, title: title) else {
-                return false
-            }
-            setSelection(chapterID: targetChapterID, episodeID: episodeID)
-            saveCoordinator.markDirty()
-            return await saveNow()
+        let targetChapterID = chapterID ?? selectedChapterID
+        return await EpisodeTransition(host: self).perform(saveAfter: true) {
+            self.outlineCommands(prepared: true).addEpisode(to: targetChapterID)
         }
     }
 
@@ -156,28 +101,8 @@ extension AppState {
         id: ChapterID,
         expectedSession: WorkspaceSessionToken
     ) async -> Bool {
-        guard documentSessionToken == expectedSession else { return false }
-        return await documentOperationGate.perform { [weak self] in
-            guard let self,
-                  editorCommandSession.prepareForDocumentTransition() else { return false }
-            defer { editorCommandSession.resumeAfterDocumentTransition() }
-            isDocumentTransitionInProgress = true
-            defer { isDocumentTransitionInProgress = false }
-            guard document.chapters.count > 1,
-                  let originalIndex = document.chapters.firstIndex(where: { $0.id == id }),
-                  document.removeChapter(id: id) != nil else { return false }
-            if selectedChapterID == id {
-                let fallbackIndex = min(originalIndex, document.chapters.count - 1)
-                let fallbackID = document.chapters.indices.contains(fallbackIndex)
-                    ? document.chapters[fallbackIndex].id
-                    : nil
-                setSelection(chapterID: fallbackID, episodeID: fallbackID.flatMap(preferredEpisodeID(in:)))
-            }
-            if case let .chapter(focusedID) = plotOutlineSelection, focusedID == id {
-                plotOutlineSelection = selectedChapterID.map { .chapter($0) } ?? .unassigned
-            }
-            saveCoordinator.markDirty()
-            return await saveNow()
+        await EpisodeTransition(host: self).perform(saveAfter: true, expectedSession: expectedSession) {
+            self.outlineCommands(prepared: true).deleteChapter(id, expectedSession: expectedSession)
         }
     }
 
@@ -186,31 +111,18 @@ extension AppState {
         from chapterID: ChapterID,
         expectedSession: WorkspaceSessionToken
     ) async -> Bool {
-        guard documentSessionToken == expectedSession else { return false }
-        return await documentOperationGate.perform { [weak self] in
-            guard let self,
-                  editorCommandSession.prepareForDocumentTransition() else { return false }
-            defer { editorCommandSession.resumeAfterDocumentTransition() }
-            isDocumentTransitionInProgress = true
-            defer { isDocumentTransitionInProgress = false }
-            guard let sourceChapter = document.chapters.first(where: { $0.id == chapterID }),
-                  let originalIndex = sourceChapter.episodes.firstIndex(where: { $0.id == id }),
-                  document.removeEpisode(id: id, from: chapterID) != nil else { return false }
-            if selectedEpisodeID == id {
-                let remaining = document.chapters.first(where: { $0.id == chapterID })?.episodes ?? []
-                let fallbackIndex = min(originalIndex, max(remaining.count - 1, 0))
-                let fallbackID = remaining.indices.contains(fallbackIndex) ? remaining[fallbackIndex].id : nil
-                setSelection(chapterID: chapterID, episodeID: fallbackID)
-            }
-            saveCoordinator.markDirty()
-            return await saveNow()
+        await EpisodeTransition(host: self).perform(saveAfter: true, expectedSession: expectedSession) {
+            self.outlineCommands(prepared: true).deleteEpisodes([id], in: chapterID, expectedSession: expectedSession)
         }
     }
 
     func moveChaptersAfterTransition(fromOffsets: IndexSet, toOffset: Int) async {
-        guard permitsDocumentInteraction else { return }
-        moveChapters(fromOffsets: fromOffsets, toOffset: toOffset)
-        _ = await saveNow()
+        let order = document.chapters.map(\.id)
+        _ = await EpisodeTransition(host: self).perform(saveAfter: true) {
+            guard self.document.chapters.map(\.id) == order else { return false }
+            self.outlineCommands(prepared: true).moveChapters(fromOffsets: fromOffsets, toOffset: toOffset)
+            return true
+        }
     }
 
     func moveEpisodesAfterTransition(
@@ -218,9 +130,12 @@ extension AppState {
         fromOffsets: IndexSet,
         toOffset: Int
     ) async {
-        guard permitsDocumentInteraction else { return }
-        moveEpisodes(in: chapterID, fromOffsets: fromOffsets, toOffset: toOffset)
-        _ = await saveNow()
+        let order = document.chapters.first(where: { $0.id == chapterID })?.episodes.map(\.id)
+        _ = await EpisodeTransition(host: self).perform(saveAfter: true) {
+            guard self.document.chapters.first(where: { $0.id == chapterID })?.episodes.map(\.id) == order else { return false }
+            self.outlineCommands(prepared: true).moveEpisodes(in: chapterID, fromOffsets: fromOffsets, toOffset: toOffset)
+            return true
+        }
     }
 
     func moveEpisodeAfterTransition(
@@ -229,14 +144,9 @@ extension AppState {
         to destinationChapterID: ChapterID,
         before targetEpisodeID: EpisodeID? = nil
     ) async -> Bool {
-        guard permitsDocumentInteraction,
-              moveEpisode(
-                  id: episodeID,
-                  from: sourceChapterID,
-                  to: destinationChapterID,
-                  before: targetEpisodeID
-              ) else { return false }
-        return await saveNow()
+        await EpisodeTransition(host: self).perform(saveAfter: true) {
+            self.outlineCommands(prepared: true).moveEpisode(episodeID, from: sourceChapterID, to: destinationChapterID, before: targetEpisodeID)
+        }
     }
 
     func selectPlotOutlineAfterTransition(_ selection: PlotOutlineSelection) async {

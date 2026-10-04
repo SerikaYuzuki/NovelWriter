@@ -29,27 +29,11 @@ extension AppState {
         in chapterID: ChapterID,
         expectedSession: WorkspaceSessionToken
     ) -> Bool {
-        let episodeStillExists = document.chapters.first(where: { $0.id == chapterID })?
-            .episodes.contains(where: { $0.id == episodeID }) == true
-        let isCurrentSelection = isCurrentManuscriptCopyContext(expectedSession) &&
-            workspaceSelection.section == .structure &&
-            selectedChapterID == chapterID &&
-            selectedEpisodeID == episodeID &&
-            episodeStillExists
-        guard isCurrentSelection else {
-            return failManuscriptCopy(.staleContext)
-        }
-
-        switch activeCommittedTextCapture() {
-        case .captured:
-            return copyManuscript(
-                source: .selection(text: selectedText)
-            )
-        case .compositionInProgress:
-            return failManuscriptCopy(.compositionInProgress)
-        case .notActive:
-            return failManuscriptCopy(.staleContext)
-        }
+        let outcome = ManuscriptCopyCommand(host: self).copy(
+            .selection(text: selectedText, chapterID: chapterID, episodeID: episodeID), expectedSession: expectedSession
+        )
+        presentManuscriptCopyNotice(outcome)
+        return outcome == .success
     }
 
     /// 指定話のタイトルと本文だけを含む原稿をコピーする。
@@ -59,35 +43,11 @@ extension AppState {
         in chapterID: ChapterID,
         expectedSession: WorkspaceSessionToken
     ) -> Bool {
-        guard isCurrentManuscriptCopyContext(expectedSession) else {
-            return failManuscriptCopy(.staleContext)
-        }
-        guard let chapter = document.chapters.first(where: { $0.id == chapterID }) else {
-            return failManuscriptCopy(.staleContext)
-        }
-        guard let episode = chapter.episodes.first(where: { $0.id == episodeID }) else {
-            return failManuscriptCopy(.staleContext)
-        }
-
-        let content: String
-        if workspaceSelection.section == .structure,
-           selectedChapterID == chapterID,
-           selectedEpisodeID == episodeID {
-            switch activeCommittedTextCapture() {
-            case let .captured(committedText):
-                content = committedText
-            case .compositionInProgress:
-                return failManuscriptCopy(.compositionInProgress)
-            case .notActive:
-                content = episode.content
-            }
-        } else {
-            content = episode.content
-        }
-
-        return copyManuscript(
-            source: .episode(title: episode.title, content: content)
+        let outcome = ManuscriptCopyCommand(host: self).copy(
+            .episode(chapterID: chapterID, episodeID: episodeID), expectedSession: expectedSession
         )
+        presentManuscriptCopyNotice(outcome)
+        return outcome == .success
     }
 
     /// 指定章のタイトルと、配列順の全話タイトル／本文だけを含むコピー文字列をコピーする。
@@ -96,86 +56,15 @@ extension AppState {
         chapterID: ChapterID,
         expectedSession: WorkspaceSessionToken
     ) -> Bool {
-        guard isCurrentManuscriptCopyContext(expectedSession) else {
-            return failManuscriptCopy(.staleContext)
-        }
-        guard let chapter = document.chapters.first(where: { $0.id == chapterID }) else {
-            return failManuscriptCopy(.staleContext)
-        }
-
-        var activeEpisodeContent: (id: EpisodeID, text: String)?
-        let selectedEpisodeBelongsToChapter = selectedEpisodeID.map { selectedEpisodeID in
-            chapter.episodes.contains(where: { $0.id == selectedEpisodeID })
-        } ?? false
-        let activeEpisodeID = workspaceSelection.section == .structure &&
-            selectedChapterID == chapterID && selectedEpisodeBelongsToChapter
-            ? selectedEpisodeID
-            : nil
-        if let activeEpisodeID {
-            switch activeCommittedTextCapture() {
-            case let .captured(committedText):
-                activeEpisodeContent = (activeEpisodeID, committedText)
-            case .compositionInProgress:
-                return failManuscriptCopy(.compositionInProgress)
-            case .notActive:
-                break
-            }
-        }
-
-        let episodes = chapter.episodes.map { episode in
-            ManuscriptCopyEpisode(
-                title: episode.title,
-                content: activeEpisodeContent?.id == episode.id
-                    ? activeEpisodeContent?.text ?? episode.content
-                    : episode.content
-            )
-        }
-        return copyManuscript(
-            source: .chapter(title: chapter.title, episodes: episodes)
-        )
+        let outcome = ManuscriptCopyCommand(host: self).copy(.chapter(chapterID), expectedSession: expectedSession)
+        presentManuscriptCopyNotice(outcome)
+        return outcome == .success
     }
 
     func dismissManuscriptCopyNotice() {
         manuscriptCopyNoticeDismissTask?.cancel()
         manuscriptCopyNoticeDismissTask = nil
         manuscriptCopyNotice = nil
-    }
-
-    private func isCurrentManuscriptCopyContext(_ expectedSession: WorkspaceSessionToken) -> Bool {
-        permitsDocumentInteraction && documentSessionToken == expectedSession
-    }
-
-    @discardableResult
-    private func copyManuscript(
-        source: ManuscriptCopySource
-    ) -> Bool {
-        do {
-            let prompt = try ManuscriptCopyBuilder.make(source: source)
-            guard clipboardWriter.writePlainText(prompt.text) else {
-                return failManuscriptCopy(.clipboardWriteFailed)
-            }
-            presentManuscriptCopyNotice(.success)
-            return true
-        } catch let error as ManuscriptCopyError {
-            return failManuscriptCopy(copyFailure(for: error))
-        } catch {
-            return failManuscriptCopy(.copyPreparationFailed)
-        }
-    }
-
-    private func copyFailure(for error: ManuscriptCopyError) -> ManuscriptCopyFailure {
-        switch error {
-        case .emptyContent:
-            .emptyContent
-        case .sourceCharacterLimitExceeded, .sourceUTF8ByteLimitExceeded, .outputUTF8ByteLimitExceeded:
-            .contentTooLarge
-        }
-    }
-
-    @discardableResult
-    private func failManuscriptCopy(_ failure: ManuscriptCopyFailure) -> Bool {
-        presentManuscriptCopyNotice(.failure(failure))
-        return false
     }
 
     private func presentManuscriptCopyNotice(_ outcome: ManuscriptCopyOutcome) {
@@ -295,11 +184,10 @@ extension AppState {
     /// 章を選択する。最後に選択していた話、なければ先頭の話も選択する。
     /// 選択が変わるたびに即座に保存する(docs/DESIGN.md 6.4)。
     func selectChapter(_ id: ChapterID?) {
-        guard permitsDocumentInteraction else { return }
-        guard id != selectedChapterID else { return }
-        guard permitsDocumentInteraction else { return }
-        setSelection(chapterID: id, episodeID: id.flatMap(preferredEpisodeID(in:)))
-        flushSaveImmediately()
+        guard permitsDocumentInteraction, id != selectedChapterID else { return }
+        if outlineCommands().selectChapter(id) {
+            flushSaveImmediately()
+        }
     }
 
     /// プロット画面の章Outline選択を更新する。章を選んだときは執筆側の章選択も揃える。
@@ -318,71 +206,35 @@ extension AppState {
 
     /// 話を選択する。`chapterID` を省略した場合は現在の章を対象にする。
     func selectEpisode(_ id: EpisodeID?, in chapterID: ChapterID? = nil) {
-        guard permitsDocumentInteraction else { return }
-        let targetChapterID = chapterID ?? selectedChapterID
-        guard let targetChapterID else { return }
-        guard targetChapterID == selectedChapterID && id == selectedEpisodeID ||
-            permitsDocumentInteraction else { return }
-        guard let id else {
-            guard document.chapters.first(where: { $0.id == targetChapterID })?.episodes.isEmpty == true else { return }
-            setSelection(chapterID: targetChapterID, episodeID: nil)
+        guard let target = chapterID ?? selectedChapterID else { return }
+        if outlineCommands().selectEpisode(id, in: target) {
             flushSaveImmediately()
-            return
         }
-        guard document.chapters.contains(where: { chapter in
-            chapter.id == targetChapterID && chapter.episodes.contains(where: { $0.id == id })
-        }) else { return }
-        setSelection(chapterID: targetChapterID, episodeID: id)
-        flushSaveImmediately()
     }
 
     // MARK: - 章操作(ロジックは NovelDocument 側のヘルパーに委譲)
 
     /// 章を末尾に追加し、追加した章を選択状態にする。
     func addChapter() {
-        guard permitsDocumentInteraction else { return }
-        guard permitsDocumentInteraction else { return }
-        let title = "第\(document.chapters.count + 1)章"
-        let newID = document.addChapter(title: title)
-        setSelection(chapterID: newID, episodeID: nil)
-        saveCoordinator.markDirty()
-        flushSaveImmediately()
+        _ = outlineCommands(.flushNow).addChapter()
     }
 
     /// 指定章に話を追加し、追加した話を選択する。
     ///
     /// `title` を省略したときは、その章内の通し番号で「第N話」を付ける(UIFIX 2.1)。
     func addEpisode(to chapterID: ChapterID? = nil, title: String? = nil) {
-        guard permitsDocumentInteraction else { return }
-        guard permitsDocumentInteraction else { return }
-        let targetChapterID = chapterID ?? selectedChapterID
-        guard let targetChapterID,
-              let chapter = document.chapters.first(where: { $0.id == targetChapterID }) else { return }
-        let resolvedTitle = title ?? "第\(chapter.episodes.count + 1)話"
-        guard let episodeID = document.addEpisode(to: targetChapterID, title: resolvedTitle) else { return }
-        setSelection(chapterID: targetChapterID, episodeID: episodeID)
-        saveCoordinator.markDirty()
-        flushSaveImmediately()
+        _ = outlineCommands(.flushNow).addEpisode(to: chapterID ?? selectedChapterID, title: title)
     }
 
     /// 選択中話のタイトルを更新する。
     func updateSelectedEpisodeTitle(_ title: String) {
-        guard permitsDocumentInteraction else { return }
         guard let selectedEpisodeID, let selectedChapterID else { return }
-        guard selectedEpisode?.title != title else { return }
-        document.updateEpisodeTitle(title, for: selectedEpisodeID, in: selectedChapterID)
-        saveCoordinator.markDirty()
-        saveCoordinator.scheduleDebouncedSave()
+        outlineCommands(.debounced).renameEpisode(title, id: selectedEpisodeID, in: selectedChapterID)
     }
 
     /// 話のタイトルを更新する。
     func updateEpisodeTitle(_ title: String, for episodeID: EpisodeID, in chapterID: ChapterID) {
-        guard permitsDocumentInteraction else { return }
-        guard let episode = document.chapters.first(where: { $0.id == chapterID })?.episodes.first(where: { $0.id == episodeID }),
-              episode.title != title else { return }
-        document.updateEpisodeTitle(title, for: episodeID, in: chapterID)
-        saveCoordinator.markDirty()
-        saveCoordinator.scheduleDebouncedSave()
+        outlineCommands(.debounced).renameEpisode(title, id: episodeID, in: chapterID)
     }
 
     /// 作品タイトルを更新する。空タイトルも編集中は許可し、保存はデバウンスする。
@@ -420,11 +272,7 @@ extension AppState {
 
     /// 章タイトルを更新する。タイトル編集中は頻繁に呼ばれるため保存はデバウンスする。
     func updateChapterTitle(_ title: String, for id: ChapterID) {
-        guard permitsDocumentInteraction else { return }
-        guard document.chapters.first(where: { $0.id == id })?.title != title else { return }
-        document.updateTitle(title, for: id)
-        saveCoordinator.markDirty()
-        saveCoordinator.scheduleDebouncedSave()
+        outlineCommands(.debounced).renameChapter(title, id: id)
     }
 
     /// タイトル編集の確定時に、未保存分を即時保存へ寄せる。
@@ -443,38 +291,12 @@ extension AppState {
     /// 章を削除し、隣接章へ選択を移す。最後の1章は削除しない。
     @discardableResult
     func deleteChapter(id: ChapterID, expectedSession: WorkspaceSessionToken? = nil) -> Bool {
-        guard permitsMutation(expectedSession: expectedSession) else { return false }
-        if selectedChapterID == id {
-            guard permitsDocumentInteraction else { return false }
-        }
-        guard document.chapters.count > 1 else { return false }
-        guard let originalIndex = document.chapters.firstIndex(where: { $0.id == id }) else { return false }
-        guard document.removeChapter(id: id) != nil else { return false }
-
-        if selectedChapterID == id {
-            let fallbackIndex = min(originalIndex, document.chapters.count - 1)
-            let fallbackChapterID = document.chapters.indices.contains(fallbackIndex) ? document.chapters[fallbackIndex].id : nil
-            setSelection(chapterID: fallbackChapterID, episodeID: fallbackChapterID.flatMap(preferredEpisodeID(in:)))
-        }
-        if case let .chapter(focusedID) = plotOutlineSelection, focusedID == id {
-            if let selectedChapterID {
-                plotOutlineSelection = .chapter(selectedChapterID)
-            } else {
-                plotOutlineSelection = .unassigned
-            }
-        }
-
-        saveCoordinator.markDirty()
-        flushSaveImmediately()
-        return true
+        outlineCommands(.flushNow).deleteChapter(id, expectedSession: expectedSession)
     }
 
     /// 章を並べ替える(`List.onMove` からそのまま呼べる形)。
     func moveChapters(fromOffsets: IndexSet, toOffset: Int) {
-        guard permitsDocumentInteraction else { return }
-        document.moveChapters(fromOffsets: fromOffsets, toOffset: toOffset)
-        saveCoordinator.markDirty()
-        flushSaveImmediately()
+        outlineCommands(.flushNow).moveChapters(fromOffsets: fromOffsets, toOffset: toOffset)
     }
 
     /// 話を削除し、同じ章の隣接話へ選択を移す。
@@ -484,34 +306,13 @@ extension AppState {
         from chapterID: ChapterID? = nil,
         expectedSession: WorkspaceSessionToken? = nil
     ) -> Bool {
-        guard permitsMutation(expectedSession: expectedSession) else { return false }
-        if selectedEpisodeID == episodeID {
-            guard permitsDocumentInteraction else { return false }
-        }
-        let sourceChapterID = chapterID ?? selectedChapterID
-        guard let sourceChapterID,
-              let originalIndex = document.episode(episodeID)?.chapterID == sourceChapterID
-              ? document.chapters.first(where: { $0.id == sourceChapterID })?.episodes.firstIndex(where: { $0.id == episodeID })
-              : nil,
-              document.removeEpisode(id: episodeID, from: sourceChapterID) != nil else { return false }
-
-        if selectedEpisodeID == episodeID {
-            let remaining = document.chapters.first(where: { $0.id == sourceChapterID })?.episodes ?? []
-            let fallbackIndex = min(originalIndex, max(remaining.count - 1, 0))
-            let fallbackEpisodeID = remaining.indices.contains(fallbackIndex) ? remaining[fallbackIndex].id : nil
-            setSelection(chapterID: sourceChapterID, episodeID: fallbackEpisodeID)
-        }
-        saveCoordinator.markDirty()
-        flushSaveImmediately()
-        return true
+        guard let source = chapterID ?? selectedChapterID else { return false }
+        return outlineCommands(.flushNow).deleteEpisodes([episodeID], in: source, expectedSession: expectedSession)
     }
 
     /// 章内の話を並べ替える。
     func moveEpisodes(in chapterID: ChapterID, fromOffsets: IndexSet, toOffset: Int) {
-        guard permitsDocumentInteraction else { return }
-        document.moveEpisodes(in: chapterID, fromOffsets: fromOffsets, toOffset: toOffset)
-        saveCoordinator.markDirty()
-        flushSaveImmediately()
+        outlineCommands(.flushNow).moveEpisodes(in: chapterID, fromOffsets: fromOffsets, toOffset: toOffset)
     }
 
     /// 話を同じ章内または別章へ移動する。
@@ -522,22 +323,7 @@ extension AppState {
         to destinationChapterID: ChapterID,
         before targetEpisodeID: EpisodeID? = nil
     ) -> Bool {
-        guard permitsDocumentInteraction else { return false }
-        if selectedEpisodeID == episodeID, selectedChapterID != destinationChapterID {
-            guard permitsDocumentInteraction else { return false }
-        }
-        guard document.moveEpisode(
-            id: episodeID,
-            from: sourceChapterID,
-            to: destinationChapterID,
-            before: targetEpisodeID
-        ) else { return false }
-        if selectedEpisodeID == episodeID {
-            setSelection(chapterID: destinationChapterID, episodeID: episodeID)
-        }
-        saveCoordinator.markDirty()
-        flushSaveImmediately()
-        return true
+        outlineCommands(.flushNow).moveEpisode(episodeID, from: sourceChapterID, to: destinationChapterID, before: targetEpisodeID)
     }
 
     /// 選択中章の本文を更新する。編集のたびに呼ばれる想定で、モデル更新は即座に行い、

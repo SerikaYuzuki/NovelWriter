@@ -1,4 +1,5 @@
 import Foundation
+import NovelWorkspace
 import UIKit
 import UniformTypeIdentifiers
 
@@ -16,41 +17,5 @@ struct IOSSystemPlainTextClipboardWriter: IOSPlainTextClipboardWriting {
     }
 }
 
-enum IOSManuscriptCopyFailure: Sendable, Equatable {
-    case staleContext
-    case compositionInProgress
-    case emptyContent
-    case contentTooLarge
-    case copyPreparationFailed
-    case clipboardWriteFailed
-}
-
-struct IOSManuscriptCopyNotice: Identifiable, Sendable, Equatable {
-    let id = UUID()
-    let failure: IOSManuscriptCopyFailure?
-
-    static let success = IOSManuscriptCopyNotice(failure: nil)
-
-    var title: String {
-        failure == nil ? "コピーしました" : "コピーできませんでした"
-    }
-
-    var message: String {
-        switch failure {
-        case nil:
-            "クリップボードへコピーしました。"
-        case .staleContext:
-            "対象の作品、章、または話が変わりました。対象を確認して、もう一度コピーしてください。"
-        case .compositionInProgress:
-            "日本語入力の変換を確定してから、もう一度コピーしてください。"
-        case .emptyContent:
-            "対象本文が空です。本文を入力するか、空でない範囲を選択してください。"
-        case .contentTooLarge:
-            "対象が大きすぎるため、内容を切り詰めずコピーを中止しました。"
-        case .copyPreparationFailed:
-            "コピーする文字列を準備できませんでした。"
-        case .clipboardWriteFailed:
-            "システムクリップボードへ書き込めませんでした。"
-        }
-    }
-}
+typealias IOSManuscriptCopyFailure = ManuscriptCopyFailure
+typealias IOSManuscriptCopyNotice = ManuscriptCopyNotice

@@ -174,6 +174,10 @@ D7は`WorkspaceAdoptionPort`のsession／arm／disarmへ注入して解決し、
 
 P8d完了：`ConflictCoordinator`へ表示時projectionと編集世代を固定した競合選択、keep-bothのwrite freeze→SQLite準備→返却clone install→transport再開、作品全体の保存→復元→再open→install、およびConflict Undoを集約。D3はMacを採用し、iOSもgate内でIME確定した未保存本文をローカル保存・履歴保全してから全体復元する。D4はiOSを採用してMacにも元作品のwrite freezeを追加し、handoffできない場合は書込み保留を残し、「もう一度開く」で同じ複製を再installできる。「作品一覧に戻る」や別作品openでは元作品のcheckpointを省略して離脱し、一覧への退役または検証済みinstall後に保留を解除する。D5は表示時projectionと編集世代の完全一致を両OSで必須とし、gate内で別のprojectionを読み直して選択を流用しない。各await完了でWorkID／installed session／account全field／保存後の編集世代を再確認し、旧結果・読込失敗では表示原稿を保持する。IME／document gate、platform sessionとpayload検証、worker／reprojectionの所有権はadapterへ残す。単話復元（EpisodeRestoreSession、D-114）は別の共通編集・永続Undo経路を維持する。純粋な選択・順序・照合テストをpackageへ移し、Macのfreeze／古い選択とiOSの未保存全体復元にadapterテストを置く。
 
+P9完了：`OutlineCommands`へ章／話の追加・改名・削除・配列順の移動と選択修復、`EpisodeTransition`へgate内の離脱準備→ローカル保存→WorkID／session／account照合→選択／操作を集約。macOSの`AfterTransition`とiOSの`AfterDeviceSyncDeparture`は既存APIを保ち、IME確定・resumeとnavigation departure hook、保存policyをApp portへ残す。Macも旧話の保存成功後に切り替え、保存失敗時は選択を保つ。Macの空章追加／第N話／隣接話への削除修復、iOSの初話付き章追加／最初の話の既定タイトル／先頭話への修復をparameterで維持し、offset移動はawait前後の配列順を検査する。
+
+`ManuscriptCopyCommand`と本文を持たない共通notice／resultへ範囲の再解決・Editor確定本文優先・plain text生成・失敗対応を集約。pasteboard書込はportからAppのNSPasteboard／UIPasteboardへ委譲し、Macの5秒通知とiOSの短い文言・promptを維持する。Macはコピーでmodelを書かず、iOSは話／章のコピー時に既存の確定本文同期を維持する。iOSの選択コピーもIME変換中は拒否する安全側へ揃える（非active Editorからの明示選択コピーは従来どおり許可）。共通のCRUD・順序・遷移失敗／旧scope・copyテストをfake hostへ移し、Appには選択・本文・SQLite／native editing position・離脱ID・改名dialog・copy adapterテストを残す。EditorKit実装、本文編集／Undo経路とwire／schemaは変更しない。
+
 片方の意味を暗黙に採用しない。以下は後続phaseの統合方針であり、P1では適用しない。
 
 | 差 | 現状 | 推奨・判断 |
