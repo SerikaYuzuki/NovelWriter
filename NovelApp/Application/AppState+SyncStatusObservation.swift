@@ -27,16 +27,12 @@ extension AppState {
     /// the subscription. A toolbar overflow must not own this lifecycle.
     func observeSnapshotSyncV2Status() async {
         guard let application = snapshotSyncV2Application,
-              let workID = currentSnapshotSyncV2WorkID else { return }
-        let session = documentSessionToken
-        let account = snapshotSyncV2AccountScopeToken
-        for await _ in await application.stateChanges(for: workID) {
-            guard !Task.isCancelled,
-                  documentSessionToken == session,
-                  matchesSnapshotSyncV2AccountScope(account),
-                  snapshotSyncV2Application === application else { return }
-            await refreshSnapshotSyncV2UIState()
-        }
+              currentSnapshotSyncV2WorkID != nil else { return }
+        await workspaceCheckpointCoordinator(application).observe(
+            application: application, host: self,
+            isCurrent: { self.snapshotSyncV2Application === application },
+            apply: { self.applySnapshotSyncV2State($0) }
+        )
     }
 }
 

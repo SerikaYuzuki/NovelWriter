@@ -159,7 +159,10 @@ extension AppState {
             let shouldCheckpoint = acceptedSession == nil ||
                 authSession != nil ||
                 (oldWorkID != nil && saveState != .saved)
-            var checkpointed = !shouldCheckpoint || saveState == .saved || oldWorkID == nil
+            // D2 can retire the save UI after SQLite commits. Do not checkpoint
+            // those same bytes through a destination vault before reconciliation.
+            let committedWithRetiredUI = saveState == .saving && !saveCoordinator.hasUnsavedChanges
+            var checkpointed = !shouldCheckpoint || saveState == .saved || committedWithRetiredUI || oldWorkID == nil
             if !checkpointed {
                 checkpointed = await saveNow()
             }

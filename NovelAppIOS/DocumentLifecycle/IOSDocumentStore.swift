@@ -413,6 +413,10 @@ final class IOSDocumentStore {
     @ObservationIgnored var remoteCatalogRefreshGeneration: UInt64 = 0
     @ObservationIgnored var historyRefreshGeneration: UInt64 = 0
 
+    #if FUMINIWA_TEST_COMPOSITION
+    @ObservationIgnored var workspaceCheckpointOverride: (@MainActor (WorkspaceCheckpointRequest) async throws -> SyncV2OperationResult)?
+    #endif
+
     @ObservationIgnored
     lazy var saveCoordinator: V2DocumentSaveCoordinator = .init(
         timing: timing,
@@ -424,7 +428,7 @@ final class IOSDocumentStore {
             guard let self else { throw CancellationError() }
             try await performCoordinatedDocumentSave(document)
         },
-        saveEventHandler: { [weak self] event in
+        saveEventHandler: WorkspaceSaveEventProjection.handler(host: self) { [weak self] event in
             switch event {
             case .dirty: self?.saveState = .dirty
             case .saving: self?.saveState = .saving

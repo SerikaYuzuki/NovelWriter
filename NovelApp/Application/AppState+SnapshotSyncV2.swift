@@ -20,7 +20,7 @@ extension AppState {
         syncSessionController.cancelBackgroundOperations(remoteOnly: .releaseImmediately)
     }
 
-    private func checkpointSnapshotSyncV2(
+    func checkpointSnapshotSyncV2(
         using application: SyncV2Application,
         workID: WorkID,
         document: NovelDocument,
@@ -100,64 +100,71 @@ extension AppState {
         reason: SyncV2CheckpointReason = .autosave,
         attachments: [SyncAttachment]? = nil,
         resources: [PortableResource]? = nil,
-        portableCreatedAt: Date? = nil
+        portableCreatedAt: Date? = nil,
+        acknowledgeLocalCommit: Bool = false
     ) async -> Bool {
         writingProgress.requestFlush()
         guard let application = snapshotSyncV2Application else {
             saveState = .failed
             return false
         }
+        let workID: WorkID
+        if let currentSnapshotSyncV2WorkID {
+            workID = currentSnapshotSyncV2WorkID
+        } else if !startupState.isReady {
+            // A pre-bootstrap checkpoint is a new local work. Allocate
+            // its WorkID explicitly; the document payload is not the
+            // session identity even during this first assignment.
+            workID = WorkID(UUID())
+        } else {
+            saveState = .failed
+            return false
+        }
+        snapshotSyncV2ActiveWorkID = workID
+        let documentCreatedAt = Self.normalizedSnapshotSyncV2Date(
+            snapshotSyncV2DocumentCreatedAt ?? Date()
+        )
+        snapshotSyncV2DocumentCreatedAt = documentCreatedAt
+        let localResources: [PortableResource]?
         do {
-            let workID: WorkID
-            if let currentSnapshotSyncV2WorkID {
-                workID = currentSnapshotSyncV2WorkID
-            } else if !startupState.isReady {
-                // A pre-bootstrap checkpoint is a new local work. Allocate
-                // its WorkID explicitly; the document payload is not the
-                // session identity even during this first assignment.
-                workID = WorkID(UUID())
+            localResources = if let resources {
+                try SyncV2PortableMetadata.resourcesForLocalMirror(
+                    resources,
+                    portableCreatedAt: portableCreatedAt ?? snapshotSyncV2PortableCreatedAt
+                )
             } else {
-                saveState = .failed
-                return false
+                nil
             }
-            snapshotSyncV2ActiveWorkID = workID
-            let documentCreatedAt = Self.normalizedSnapshotSyncV2Date(
-                snapshotSyncV2DocumentCreatedAt ?? Date()
-            )
-            snapshotSyncV2DocumentCreatedAt = documentCreatedAt
-            let localResources: [PortableResource]?
-            do {
-                localResources = if let resources {
-                    try SyncV2PortableMetadata.resourcesForLocalMirror(
-                        resources,
-                        portableCreatedAt: portableCreatedAt ?? snapshotSyncV2PortableCreatedAt
-                    )
-                } else {
-                    nil
-                }
-            } catch {
-                saveState = .failed
-                return false
-            }
-            let checkpointAttachments = attachments ?? snapshotSyncV2Attachments
-            if snapshotSyncV2Session?.workID != workID {
-                snapshotSyncV2Session = await application.beginSession(workID: workID)
-            }
-            _ = try await checkpointSnapshotSyncV2(
-                using: application,
-                workID: workID,
-                document: document,
-                reason: reason,
-                documentCreatedAt: documentCreatedAt,
-                attachments: checkpointAttachments,
-                resources: localResources
-            )
-            saveState = .saved
-            await refreshSnapshotSyncV2UIState()
-            return true
         } catch {
             saveState = .failed
             return false
+        }
+        let checkpointAttachments = attachments ?? snapshotSyncV2Attachments
+        let context = CheckpointCoordinator.context(of: self)
+        if snapshotSyncV2Session?.workID != workID {
+            let session = await application.beginSession(workID: workID)
+            guard CheckpointCoordinator.matches(context, host: self),
+                  snapshotSyncV2Application === application else { return false }
+            snapshotSyncV2Session = session
+        }
+        switch await workspaceCheckpointCoordinator(application).save(
+            host: self, document: document, reason: reason, createdAt: documentCreatedAt,
+            attachments: checkpointAttachments, resources: localResources,
+            isCurrent: { self.snapshotSyncV2Application === application },
+            applyCommitted: { result in
+                self.applySnapshotSyncV2State(result.state)
+                self.applyCheckpointSaveState(result.state)
+            },
+            applyFailure: { self.saveState = .failed }
+        ) {
+        case .committed:
+            return true
+        case .failed:
+            return false
+        case let .stale(committedLocally):
+            // The revision coordinator records durability even when its old UI
+            // completion is rejected. Public document operations still fail CAS.
+            return acknowledgeLocalCommit && committedLocally
         }
     }
 
@@ -171,16 +178,15 @@ extension AppState {
     func saveNow() async -> Bool {
         writingProgress.requestFlush()
         let workID = snapshotSyncV2ActiveWorkID
-        let session = documentSessionToken
-        let account = snapshotSyncV2AccountScopeToken
-        guard await saveCoordinator.saveNow(), documentSessionToken == session,
-              snapshotSyncV2ActiveWorkID == workID, matchesSnapshotSyncV2AccountScope(account) else { return false }
+        let context = CheckpointCoordinator.context(of: self)
+        guard await saveCoordinator.saveNow(), CheckpointCoordinator.matches(context, host: self) else { return false }
         do {
             if let workID, let application = snapshotSyncV2Application {
                 try await application.promoteCheckpoint(workID: workID)
             }
-            return true
+            return CheckpointCoordinator.matches(context, host: self)
         } catch {
+            guard CheckpointCoordinator.matches(context, host: self) else { return false }
             saveState = .failed
             return false
         }
@@ -228,25 +234,27 @@ extension AppState {
     func resumeSnapshotSyncV2(reason: SyncV2WakeReason = .foreground) async {
         guard let application = snapshotSyncV2Application else { return }
         let coordinator = authSessionCoordinator
+        let context = CheckpointCoordinator.context(of: self)
         Task { @MainActor [weak self] in
-            if let coordinator {
-                // A pending revoke is an old-session lane, not a request to
-                // sign out whatever session may have been saved since. Keep
-                // its replay behind the whole auth gate and never block the
-                // local bootstrap/foreground caller on the network.
-                try? await self?.authOperationGate.perform {
-                    try await coordinator.resumePendingRevoke()
+            guard let self else { return }
+            await workspaceCheckpointCoordinator(application).resume(
+                host: self, reason: reason,
+                isCurrent: {
+                    self.snapshotSyncV2Application === application && CheckpointCoordinator.matches(context, host: self)
+                },
+                beforeWake: {
+                    if let coordinator {
+                        // Pending revoke stays behind the auth gate, outside local saving.
+                        try? await self.authOperationGate.perform {
+                            try await coordinator.resumePendingRevoke()
+                        }
+                    }
+                },
+                afterWake: {
+                    await self.refreshSnapshotSyncV2UIState()
+                    await self.refreshSnapshotLibrary()
                 }
-            }
-            try? await application.wake(reason: reason)
-            // Re-project terminal worker state after the background wake. The
-            // caller has already returned and never waits for the network lane.
-            await self?.refreshSnapshotSyncV2UIState()
-            if let progress = self?.snapshotSyncV2UIState?.remoteProgress,
-               case .readyForSafeAdoption = progress {
-                self?.scheduleAutomaticServerAdoption()
-            }
-            await self?.refreshSnapshotLibrary()
+            )
         }
     }
 
@@ -272,78 +280,48 @@ extension AppState {
     func synchronizeSnapshotSyncV2() async {
         guard canExplicitlySyncCurrentWork,
               let application = snapshotSyncV2Application,
-              let workID = currentSnapshotSyncV2WorkID else { return }
-        let expectedSession = documentSessionToken
-        let expectedAccount = snapshotSyncV2AccountScopeToken
+              currentSnapshotSyncV2WorkID != nil else { return }
         isSnapshotSyncInFlight = true
         defer { isSnapshotSyncInFlight = false }
-        let saved = await documentOperationGate.perform { [weak self] in
-            guard let self, documentSessionToken == expectedSession,
-                  matchesSnapshotSyncV2AccountScope(expectedAccount),
-                  editorCommandSession.prepareForDocumentTransition() else { return false }
-            defer { editorCommandSession.resumeAfterDocumentTransition() }
-            return await saveNow()
-        }
-        guard saved, documentSessionToken == expectedSession,
-              matchesSnapshotSyncV2AccountScope(expectedAccount),
-              currentSnapshotSyncV2WorkID == workID else { return }
-        editorCommandSession.clearProofreadingHighlights()
-        // Cmd-S also serves local-only works. Never add an account binding or
-        // initiate sign-in as a side effect of saving.
-        guard isSignedInToFuminiwa, snapshotSyncCurrentWorkAccountState == .active else {
-            await refreshSnapshotSyncV2UIState()
-            await refreshSnapshotLibrary()
-            return
-        }
-        do {
-            _ = try await application.synchronize(workID: workID)
-        } catch {
-            guard documentSessionToken == expectedSession,
-                  matchesSnapshotSyncV2AccountScope(expectedAccount) else { return }
-            operationMessage = "同期を開始できませんでした。原稿はこの端末に保存されています。"
-        }
-        guard documentSessionToken == expectedSession,
-              matchesSnapshotSyncV2AccountScope(expectedAccount) else { return }
-        await refreshSnapshotSyncV2UIState()
-        await refreshSnapshotLibrary()
+        _ = await workspaceCheckpointCoordinator(application).explicitlySync(
+            host: self,
+            permitsRemoteCompletion: { self.snapshotSyncV2Application === application },
+            saveLocally: { context in
+                await self.documentOperationGate.perform {
+                    guard CheckpointCoordinator.matches(context, host: self),
+                          self.editorCommandSession.prepareForDocumentTransition() else { return false }
+                    defer { self.editorCommandSession.resumeAfterDocumentTransition() }
+                    return await self.saveNow()
+                }
+            },
+            didSave: { self.editorCommandSession.clearProofreadingHighlights() },
+            requestsRemote: { self.isSignedInToFuminiwa && self.snapshotSyncCurrentWorkAccountState == .active },
+            didQueue: { _, _ in
+                await self.refreshSnapshotSyncV2UIState()
+                await self.refreshSnapshotLibrary()
+                return true
+            },
+            localOnly: {
+                await self.refreshSnapshotSyncV2UIState()
+                await self.refreshSnapshotLibrary()
+            },
+            failed: {
+                self.operationMessage = "同期を開始できませんでした。原稿はこの端末に保存されています。"
+                await self.refreshSnapshotSyncV2UIState()
+                await self.refreshSnapshotLibrary()
+            }
+        )
     }
 
     func refreshSnapshotSyncV2UIState() async {
-        let accountScope = snapshotSyncV2AccountScopeToken
         guard let application = snapshotSyncV2Application else {
-            snapshotSyncV2UIState = nil
-            snapshotSyncConflict = nil
+            applySnapshotSyncV2State(nil)
             return
         }
-        guard let workID = currentSnapshotSyncV2WorkID else {
-            snapshotSyncV2UIState = nil
-            snapshotSyncConflict = nil
-            return
-        }
-        let state = await application.uiState(workID: workID)
-        guard matchesSnapshotSyncV2AccountScope(accountScope),
-              currentSnapshotSyncV2WorkID == workID else { return }
-        if state?.remoteProgress == .retryable(.historyIncomplete),
-           snapshotSyncV2UIState?.remoteProgress != state?.remoteProgress {
-            AccessibilityNotification.Announcement(SyncV2HistoryFetchState.conflictWaiting).post()
-        }
-        snapshotSyncV2UIState = state
-        snapshotSyncConflict = state?.conflict
-        if state?.remoteProgress == .authenticationRequired, case .signedIn = authUIState {
-            authUIState = .failed("認証の有効期限が切れました。Appleで再サインインしてください。原稿はこの端末に保存されています。")
-        }
-        if case let .failed(reason) = state?.remoteProgress {
-            if presentedSyncFailures[accountScope]?[workID] != reason {
-                presentedSyncFailures[accountScope, default: [:]][workID] = reason
-                operationMessage = reason.japaneseDescription
-            }
-        } else if state?.lastFailure == nil, state?.remoteProgress == .idle || state?.remoteProgress == .noChanges {
-            presentedSyncFailures[accountScope]?[workID] = nil
-        }
-        if let progress = state?.remoteProgress,
-           case .readyForSafeAdoption = progress {
-            scheduleAutomaticServerAdoption()
-        }
+        await workspaceCheckpointCoordinator(application).project(
+            host: self, isCurrent: { self.snapshotSyncV2Application === application },
+            apply: { self.applySnapshotSyncV2State($0) }
+        )
     }
 
     private func loadStartupSnapshotLibrary() async {

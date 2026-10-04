@@ -166,12 +166,14 @@ P7完了：`WritingAssistantHostFactory`／`WorkReplacementHostFactory`でWorksp
 
 P8a完了：棚のSQLite読取・削除ID・merge、account付きcatalog paging、取り込み監視／取消／端末取得、改名・削除の手順を`LibraryCoordinator`へ集約。`WorkspaceLibraryHost`は既存のOS別IME・保存・document gateと退役を注入し、削除は保存後に編集世代を固定してdurable intentを作り、gate解放後に通信する。MacのstartupState書込時判断、catalog順と削除待ち表示の時機、iOS背景時間を維持。共通の照合・順序テストはfake hostへ移し、SQLite／IME／表示のadapter smokeを残す。open／install・checkpoint・adoption・conflict・authは後続phaseのまま。
 
+P8b完了：`CheckpointCoordinator`へhost document／`WorkspaceOperationContext`からのcheckpoint要求作成、await後のWorkID／installed session／account全field照合、worker wake、明示同期のローカル保存→remote要求、継続state観測を集約。`WorkspaceSyncProjection`はlocal durability→saveStateと履歴待ち通知・認証・失敗の重複抑制を共有する。D2はiOSの意味を採用し、Macも旧work／session／accountのcheckpoint成功・失敗をUIへ反映せず、公開document操作はfalseで返す。`WorkspaceSaveEventProjection`はautosaveの終端通知も照合する。確定済みSQLiteのrevisionはUIの採否と分けて記帳し、Macのaccount reconciliationは保存済みの旧revisionを切替先vaultで再保存しない。編集世代の増加だけではcheckpointを棄却しない。通常保存はApplicationのCOMMIT後worker schedulingだけを使い、追加wake・同期用コピー・network待ちを加えない。IME／document gate、Macの終了とpending revoke、iOSの背景時間・flush・parked lane／adoption／reprojection所有権はApp hookへ残す。純粋な照合・順序・投影はpackageのfake hostで検証し、両adapterにSQLite確定後の遅延完了テストを置く。bootstrap／open／installはP8c、adoption／conflict／authの統合は後続phaseとする。
+
 片方の意味を暗黙に採用しない。以下は後続phaseの統合方針であり、P1では適用しない。
 
 | 差 | 現状 | 推奨・判断 |
 | --- | --- | --- |
 | D1 | P4で解決。旧iOSはaccountGenerationが増えず、同一bindingでの無効化前completionをaccount scopeだけで拒否できなかった | 全5field（accountID／fence／serverInstanceID／protocolEpoch／generation）を照合し、両OSで無効化ごとにgenerationを増やす |
-| D2 | Macのcheckpointはawait後にwork／accountを再検証せず、iOSは再検証する | iOSを採用 |
+| D2 | P8bで解決。Macもcheckpoint完了後にWorkID／session／accountを再検証する | iOSを採用。旧成功・失敗は現在のsaveState／sync projectionへ反映しない |
 | D3 | 未保存編集がある作品全体復元はMacがgate内で保存後に復元し、iOSは拒否 | Macを採用（2026-10-04オーナー決定）。gate内で保存し、その版を履歴に残してから復元する |
 | D4 | Macのkeep-bothは元作品のwrite freeze（syncV2KeepBothPendingWorkID）がない | iOSを採用 |
 | D5 | conflict choiceはMacがgate内でuiStateを再読取し、iOSは表示時projection＋editing generationを使う | 厳しいiOSを採用 |

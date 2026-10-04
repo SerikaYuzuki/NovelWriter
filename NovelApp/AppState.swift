@@ -286,11 +286,11 @@ final class AppState {
             },
             saveOperation: { [weak self] document in
                 guard let self else { throw CancellationError() }
-                guard await checkpointSnapshotSyncV2(document, reason: .autosave) else {
+                guard await checkpointSnapshotSyncV2(document, reason: .autosave, acknowledgeLocalCommit: true) else {
                     throw SyncV2Failure.fatal(.invalidLocalState)
                 }
             },
-            saveEventHandler: { [weak self] event in
+            saveEventHandler: WorkspaceSaveEventProjection.handler(host: self) { [weak self] event in
                 self?.handleSaveEvent(event)
             }
         )
