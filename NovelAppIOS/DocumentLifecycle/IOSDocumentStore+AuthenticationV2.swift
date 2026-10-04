@@ -156,7 +156,13 @@ extension IOSDocumentStore {
         }
         guard let coordinator = authSessionCoordinator else { throw IOSDocumentStoreAuthenticationError.unavailable }
         return try await coordinator.signInBrowser(provider: provider) { url in
-            try await BrowserSignInCoordinator().authorize(url: url)
+            #if FUMINIWA_TEST_COMPOSITION
+            if let authorize = self.testBrowserAuthorization {
+                try await authorize(url)
+                return
+            }
+            #endif
+            try await self.browserAuthorization(url)
         }
     }
 

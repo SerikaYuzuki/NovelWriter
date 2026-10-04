@@ -65,6 +65,7 @@ struct IOSSnapshotSyncV2ConflictSelection: Equatable, Sendable {
 }
 
 private struct IOSDocumentStoreAuthComposition {
+    let browserAuthorization: @MainActor @Sendable (URL) async throws -> Void
     let sessionVault: (any AuthSessionVault)?
     let sessionCoordinator: AuthSessionCoordinator?
     let appleSignInCoordinator: AppleSignInCoordinator?
@@ -82,6 +83,7 @@ private enum IOSDocumentStoreComposition {
     static func makeAuth(userDefaults: UserDefaults) -> IOSDocumentStoreAuthComposition {
         #if FUMINIWA_TEST_COMPOSITION
         return IOSDocumentStoreAuthComposition(
+            browserAuthorization: { try await AuthComposition.authorizeBrowser(url: $0) },
             sessionVault: nil,
             sessionCoordinator: nil,
             appleSignInCoordinator: nil,
@@ -89,24 +91,22 @@ private enum IOSDocumentStoreComposition {
             uiState: .unavailable
         )
         #else
-        #if canImport(Security)
-        let vault: (any AuthSessionVault)? = KeychainAuthSessionVault(
-            service: "dev.serikayuzuki.fuminiwa.sync.ios"
+        let environment = FuminiwaRuntimeEnvironment(userDefaults: userDefaults)
+        let url = environment.syncServerURL
+        let auth = AuthComposition(
+            origin: environment.allowsNetwork && url?.scheme?.lowercased() == "https" ? url : nil,
+            keychainService: "dev.serikayuzuki.fuminiwa.sync.ios",
+            clientPlatform: .ios,
+            appleFlow: .native,
+            phaseObserver: { logIOSAppleAuthenticationPhase($0) }
         )
-        #else
-        let vault: (any AuthSessionVault)? = nil
-        #endif
-        let auth = makeProductionAuthSession(userDefaults: userDefaults, vault: vault)
-        let appleSignIn = AppleSignInCoordinator()
         return IOSDocumentStoreAuthComposition(
-            sessionVault: vault,
-            sessionCoordinator: auth,
-            appleSignInCoordinator: appleSignIn,
-            appleAuthenticationOrchestrator: makeProductionAppleOrchestrator(
-                auth: auth,
-                appleSignIn: appleSignIn
-            ),
-            uiState: auth == nil ? .unavailable : .signedOut
+            browserAuthorization: auth.browserAuthorization,
+            sessionVault: auth.sessionVault,
+            sessionCoordinator: auth.sessionCoordinator,
+            appleSignInCoordinator: auth.appleSignInCoordinator,
+            appleAuthenticationOrchestrator: auth.appleAuthenticationOrchestrator,
+            uiState: auth.sessionCoordinator == nil ? .unavailable : .signedOut
         )
         #endif
     }
@@ -150,63 +150,6 @@ private enum IOSDocumentStoreComposition {
         )
         #endif
     }
-
-    #if !FUMINIWA_TEST_COMPOSITION
-    private static func makeProductionAuthSession(
-        userDefaults: UserDefaults,
-        vault: (any AuthSessionVault)?
-    ) -> AuthSessionCoordinator? {
-        let environment = FuminiwaRuntimeEnvironment(userDefaults: userDefaults)
-        #if canImport(Security)
-        guard environment.allowsNetwork,
-              let vault,
-              let url = environment.syncServerURL,
-              url.scheme?.lowercased() == "https",
-              let configuration = try? AuthClientConfiguration(
-                  origin: url,
-                  clientVersion: "0.1.0",
-                  clientPlatform: .ios
-              ),
-              let transport = try? FuminiwaHTTPAuthTransport(configuration: configuration),
-              let limits = try? AuthLimits(
-                  accessTokenLifetimeSeconds: 900,
-                  authReceiptLifetimeSeconds: 86400,
-                  challengeLifetimeSeconds: 300,
-                  maxCanonicalCommandBytes: 65536,
-                  maxProviderClockSkewSeconds: 300,
-                  refreshTokenLifetimeSeconds: 86400
-              ) else { return nil }
-        return AuthSessionCoordinator(
-            transport: transport,
-            vault: vault,
-            authLimits: limits,
-            platform: .ios
-        )
-        #else
-        return nil
-        #endif
-    }
-
-    private static func makeProductionAppleOrchestrator(
-        auth: AuthSessionCoordinator?,
-        appleSignIn: AppleSignInCoordinator
-    ) -> AppleAuthenticationOrchestrator? {
-        #if canImport(AuthenticationServices)
-        guard let auth else { return nil }
-        return AppleAuthenticationOrchestrator(
-            authSessionCoordinator: auth,
-            authorizationProvider: appleSignIn,
-            credentialStateHandleVault: KeychainAppleCredentialStateHandleVault(),
-            credentialStateProvider: SystemAppleCredentialStateProvider(),
-            phaseObserver: { phase in
-                logIOSAppleAuthenticationPhase(phase)
-            }
-        )
-        #else
-        return nil
-        #endif
-    }
-    #endif
 }
 
 @MainActor
@@ -353,14 +296,23 @@ final class IOSDocumentStore {
     @ObservationIgnored let privateWorkingCopyLocation: IOSPrivateWorkingCopyLocation?
     @ObservationIgnored let backgroundTaskController: any IOSBackgroundTaskControlling
     @ObservationIgnored let clipboardWriter: any IOSPlainTextClipboardWriting
+    @ObservationIgnored let browserAuthorization: @MainActor @Sendable (URL) async throws -> Void
+    #if FUMINIWA_TEST_COMPOSITION
+    @ObservationIgnored var authSessionVault: (any AuthSessionVault)?
+    @ObservationIgnored var authSessionCoordinator: AuthSessionCoordinator?
+    @ObservationIgnored var appleSignInCoordinator: AppleSignInCoordinator?
+    @ObservationIgnored var appleAuthenticationOrchestrator: AppleAuthenticationOrchestrator?
+    #else
     @ObservationIgnored let authSessionVault: (any AuthSessionVault)?
     @ObservationIgnored let authSessionCoordinator: AuthSessionCoordinator?
     @ObservationIgnored let appleSignInCoordinator: AppleSignInCoordinator?
     @ObservationIgnored let appleAuthenticationOrchestrator: AppleAuthenticationOrchestrator?
+    #endif
     #if FUMINIWA_TEST_COMPOSITION
     /// App-hosted tests use the production sign-in entry point with a
     /// suspended exchange.  The seam is test-composition-only and is not
     /// present in the shipped iOS target.
+    @ObservationIgnored var testBrowserAuthorization: (@MainActor @Sendable (URL) async throws -> Void)?
     @ObservationIgnored var testAppleSignInHandler: (@MainActor () async throws -> FuminiwaSession)?
     /// The test runtime's scope resolver uses a fixed server namespace. This
     /// override keeps the adapter test aligned with that isolated runtime;
@@ -465,6 +417,7 @@ final class IOSDocumentStore {
         self.backgroundTaskController = backgroundTaskController
         self.runtimeComposition = runtimeComposition
         let auth = IOSDocumentStoreComposition.makeAuth(userDefaults: userDefaults)
+        browserAuthorization = auth.browserAuthorization
         authSessionVault = auth.sessionVault
         authSessionCoordinator = auth.sessionCoordinator
         appleSignInCoordinator = auth.appleSignInCoordinator

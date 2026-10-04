@@ -7,6 +7,7 @@ import NovelStorage
 import NovelSyncV2
 import NovelSyncV2Application
 import NovelSyncV2PortableBridge
+import NovelWorkspace
 
 #if FUMINIWA_TEST_COMPOSITION
 /// Test-only replacement for the local checkpoint boundary. This symbol is
@@ -88,6 +89,7 @@ struct AppDependencies {
 
     /// Sign in with Apple is an optional account layer. Local editing remains
     /// available when the auth server is unreachable or not configured.
+    let browserAuthorization: @MainActor @Sendable (URL) async throws -> Void
     let authSessionCoordinator: AuthSessionCoordinator?
     let appleSignInCoordinator: AppleSignInCoordinator?
     let appleAuthenticationOrchestrator: AppleAuthenticationOrchestrator?
@@ -115,6 +117,7 @@ struct AppDependencies {
         editorCommandSession: EditorCommandSession = EditorCommandSession(),
         clipboardWriter: any PlainTextClipboardWriting = SystemPlainTextClipboardWriter(),
         activeCommittedTextCapture: (@MainActor () -> EditorCommittedTextCaptureResult)? = nil,
+        browserAuthorization: (@MainActor @Sendable (URL) async throws -> Void)? = nil,
         authSessionCoordinator: AuthSessionCoordinator? = nil,
         appleSignInCoordinator: AppleSignInCoordinator? = nil,
         appleAuthenticationOrchestrator: AppleAuthenticationOrchestrator? = nil,
@@ -134,6 +137,7 @@ struct AppDependencies {
         self.activeCommittedTextCapture = activeCommittedTextCapture ?? {
             editorCommandSession.captureActiveCommittedText()
         }
+        self.browserAuthorization = browserAuthorization ?? { try await AuthComposition.authorizeBrowser(url: $0) }
         self.authSessionCoordinator = authSessionCoordinator
         self.appleSignInCoordinator = appleSignInCoordinator
         self.appleAuthenticationOrchestrator = appleAuthenticationOrchestrator

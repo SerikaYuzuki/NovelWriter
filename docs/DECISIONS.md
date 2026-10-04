@@ -178,6 +178,8 @@ P9完了：`OutlineCommands`へ章／話の追加・改名・削除・配列順�
 
 `ManuscriptCopyCommand`と本文を持たない共通notice／resultへ範囲の再解決・Editor確定本文優先・plain text生成・失敗対応を集約。pasteboard書込はportからAppのNSPasteboard／UIPasteboardへ委譲し、Macの5秒通知とiOSの短い文言・promptを維持する。Macはコピーでmodelを書かず、iOSは話／章のコピー時に既存の確定本文同期を維持する。iOSの選択コピーもIME変換中は拒否する安全側へ揃える（非active Editorからの明示選択コピーは従来どおり許可）。共通のCRUD・順序・遷移失敗／旧scope・copyテストをfake hostへ移し、Appには選択・本文・SQLite／native editing position・離脱ID・改名dialog・copy adapterテストを残す。EditorKit実装、本文編集／Undo経路とwire／schemaは変更しない。
 
+P10a／P10b完了：同じ18認証シナリオをtest-only `AccountTransitionHost`のfakeと両App adapterへ適用し、IME前のremote lease、SQLite checkpoint、UI／work・AI退役、回復、旧epoch fail-closedをcharacterizeした。`AuthComposition`へKeychain／HTTP／Apple・Google providerの組立を共有化し、service名・item format・clientPlatformとOS別認証flowは維持した。[OS差の全一覧と検証証跡](auth/p10-characterization.md)をP10cへ引き継ぐ。D8のiOSモデルへの統合はP10c／P10dで行い、この段階では適用しない。
+
 片方の意味を暗黙に採用しない。以下は後続phaseの統合方針であり、P1では適用しない。
 
 | 差 | 現状 | 推奨・判断 |

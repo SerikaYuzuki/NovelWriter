@@ -46,6 +46,14 @@ extension AppState {
         interactiveAuthOperationCount = interactiveAuthOperationOwners.count
     }
 
+    private func authServerInstanceID(for session: FuminiwaSession) -> String {
+        #if FUMINIWA_TEST_COMPOSITION
+        testServerInstanceIDOverride ?? session.serverInstanceID.uuidString.lowercased()
+        #else
+        session.serverInstanceID.uuidString.lowercased()
+        #endif
+    }
+
     private func accountBinding(
         for session: FuminiwaSession?
     ) -> SyncV2AccountScopeBinding? {
@@ -53,7 +61,7 @@ extension AppState {
             SyncV2AccountScopeBinding(
                 accountID: $0.accountID,
                 accountFence: $0.accountFence,
-                serverInstanceID: $0.serverInstanceID.uuidString.lowercased(),
+                serverInstanceID: authServerInstanceID(for: $0),
                 protocolEpoch: Int64($0.syncProtocolEpoch)
             )
         }
@@ -70,7 +78,7 @@ extension AppState {
         WorkspaceAccountScope(
             accountID: authSession?.accountID,
             accountFence: authSession?.accountFence,
-            serverInstanceID: authSession?.serverInstanceID.uuidString.lowercased(),
+            serverInstanceID: authSession.map { authServerInstanceID(for: $0) },
             protocolEpoch: authSession.flatMap { Int64(exactly: $0.syncProtocolEpoch) },
             generation: snapshotSyncV2AccountScopeGeneration
         )
@@ -445,7 +453,13 @@ extension AppState {
             }
             #endif
             return try await coordinator.signInBrowser(provider: provider) { url in
-                try await BrowserSignInCoordinator().authorize(url: url)
+                #if FUMINIWA_TEST_COMPOSITION
+                if let authorize = self.testBrowserAuthorization {
+                    try await authorize(url)
+                    return
+                }
+                #endif
+                try await self.browserAuthorization(url)
             }
         }
         // A sign-in requested while sign-out is waiting for remote revoke is
