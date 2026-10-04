@@ -23,7 +23,7 @@ struct AssistantChatContextTests {
         default: scope = .episodes([]); expected = []
         }
         let request = try configuration(endpoint).chatRequest(
-            capture: capture, grant: .readOnly, messages: [WritingMessage(role: "user", text: "展開を相談したい")],
+            capture: capture, grant: .wholeWork, messages: [WritingMessage(role: "user", text: "展開を相談したい")],
             apiKey: "unit-test-only", effectivePrompt: "試験指示", referenceScope: scope
         )
         let content = try contextContent(in: request)
@@ -40,7 +40,7 @@ struct AssistantChatContextTests {
                 #expect(actual.content.contains("選択範囲外"))
             }
         }
-        #expect(try content.hasSuffix(WritingRecord.payload(WritingGrant.readOnly)))
+        #expect(try content.hasSuffix(WritingRecord.payload(WritingGrant.wholeWork)))
         #expect(capture.document.chapters == document.chapters)
     }
 
@@ -50,7 +50,7 @@ struct AssistantChatContextTests {
         let chosen = Episode(title: "送る話", content: String(repeating: "選", count: 140_000))
         let chapters = [Chapter(title: "現在の章", episodes: [current]), Chapter(title: "選んだ章", episodes: [chosen])]
         let capture = WritingCapture(workId: UUID(), document: NovelDocument(title: "試験", chapters: chapters), episodeId: current.id)
-        let request = try configuration().chatRequest(capture: capture, grant: .readOnly, messages: [],
+        let request = try configuration().chatRequest(capture: capture, grant: .wholeWork, messages: [],
                                                       apiKey: "unit-test-only", effectivePrompt: "試験", referenceScope: .chapter(chapters[1].id))
         let sent = try sentDocument(in: contextContent(in: request))
         #expect(sent.chapters[1].episodes[0].content == chosen.content)
@@ -62,7 +62,7 @@ struct AssistantChatContextTests {
         let episode = Episode(title: "長文", content: String(repeating: "長", count: 210_000))
         let capture = WritingCapture(workId: UUID(), document: NovelDocument(title: "試験", chapters: [Chapter(title: "章", episodes: [episode])]), episodeId: episode.id)
         #expect {
-            try configuration().chatRequest(capture: capture, grant: .readOnly, messages: [], apiKey: "unit-test-only",
+            try configuration().chatRequest(capture: capture, grant: .wholeWork, messages: [], apiKey: "unit-test-only",
                                             effectivePrompt: "試験", referenceScope: .current)
         } throws: { error in
             if case .chatContextTooLarge = error as? AssistantError {
@@ -97,5 +97,27 @@ struct AssistantChatContextTests {
         let json = try #require(content.components(separatedBy: "今回参照する作品（引用JSON）:\n").last?
             .components(separatedBy: "\n今回だけ許可する範囲:\n").first)
         return try JSONDecoder().decode(NovelDocument.self, from: Data(json.utf8))
+    }
+}
+
+extension AssistantChatContextTests {
+    @Test("相談だけは自然言語の文脈とMarkdown回答を送り、編集用schema・ID・説明を含めない", arguments: ["https://api.openai.com/v1/responses", "https://example.com/v1/chat/completions"])
+    func readOnlyHasNoEditInstructions(endpoint: String) throws {
+        let episode = Episode(title: "再会", content: "本文"), chapter = Chapter(title: "帰郷", episodes: [episode])
+        let document = NovelDocument(title: "試験作品", synopsis: "旅の終わり", chapters: [chapter])
+        let capture = WritingCapture(workId: UUID(), document: document, episodeId: episode.id)
+        let request = try configuration(endpoint).chatRequest(capture: capture, grant: .readOnly,
+                                                              messages: [WritingMessage(role: "user", text: "この台詞どう？")], apiKey: "synthetic",
+                                                              effectivePrompt: AssistantPurpose.advice.defaultPrompt, referenceScope: .current)
+        let data = try #require(request.httpBody), body = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let instruction = (body["instructions"] as? String) ?? (body["messages"] as? [[String: Any]])?.first?["content"] as? String ?? ""
+        #expect(body["text"] == nil); #expect(body["response_format"] == nil)
+        #expect(!instruction.contains("beforeJson")); #expect(!instruction.contains("許可パス"))
+        #expect(instruction.contains("Markdown")); #expect(!instruction.contains("優先順位付きの改善案"))
+        let context = try contextContent(in: request)
+        #expect(context.contains("作品名：試験作品")); #expect(context.contains("あらすじ：旅の終わり"))
+        #expect(context.contains("現在の話：帰郷 / 再会")); #expect(context.contains("送った話の一覧：帰郷 / 再会"))
+        #expect(!context.contains(document.id.uuidString)); #expect(!context.contains(episode.id.description))
+        #expect(!context.contains("今回だけ許可する範囲"))
     }
 }

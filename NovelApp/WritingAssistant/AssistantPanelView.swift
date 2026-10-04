@@ -4,7 +4,7 @@ import NovelWorkspaceUI
 import NovelWritingSupport
 import SwiftUI
 
-/// Requests expire on context change; the host owns guarded native-editor application.
+/// The app owns requests; this view prepares previews and displays durable results.
 struct AssistantPanelView: View {
     let defaults: UserDefaults
     let contextID: String
@@ -30,14 +30,14 @@ struct AssistantPanelView: View {
     @State private var pendingPurpose = AssistantPurpose.proofreading
     @State private var purpose = AssistantPurpose.proofreading
     @State private var answer = ""
-    @State private var unsavedFeedback: AssistantFeedback?
-    @State private var isSavingFeedback = false
     @State private var notice: String?
     @State private var pending: AssistantManuscript?
     @State private var pendingConfiguration: AssistantConfiguration?
     #if os(iOS)
     @State private var showingSettings = false
     #endif
+    @State private var requestEntries: [WritingEnvelope] = []
+    @State private var confirmingProofreading = false
     @State private var requestTask: Task<Void, Never>?
     @State private var requestID: UUID?
 
@@ -59,7 +59,7 @@ struct AssistantPanelView: View {
                 Button("閉じる", systemImage: "xmark", action: close).labelStyle(.iconOnly)
             }
             Picker("用途", selection: $purpose) {
-                ForEach(AssistantPurpose.allCases.filter { $0 != .advice || writingHost != nil }) { Text($0.rawValue).tag($0) }
+                ForEach(AssistantPurpose.allCases.filter { $0 != .advice || writingHost != nil }) { Text($0.label).tag($0) }
             }.pickerStyle(.segmented)
             if purpose == .advice, let writingHost {
                 AssistantChatView(host: writingHost, defaults: defaults, chapters: chapters,
@@ -79,7 +79,7 @@ struct AssistantPanelView: View {
                                     .font(.caption).foregroundStyle(.secondary)
                             }
                         }.frame(maxHeight: 240)
-                    }.disabled(requestTask != nil || isSavingChecklist || (writingHost != nil && !checklistLoaded))
+                    }.disabled((requestTask != nil || inFlight) || isSavingChecklist || (writingHost != nil && !checklistLoaded))
                 } else {
                     AssistantScopeSelector(chapters: chapters, currentID: currentEpisodeID, scope: $scope)
                     DisclosureGroup("一緒に送る参考情報") {
@@ -96,24 +96,33 @@ struct AssistantPanelView: View {
                 }
                 HStack {
                     Button("本文を確認して送信…", action: prepare)
-                        .disabled(requestTask != nil || isSavingChecklist || (purpose == .proofreading && writingHost != nil && !checklistLoaded) || effectiveScope.selectedEpisodeIDs(
+                        .disabled((requestTask != nil || inFlight) || isSavingChecklist || (purpose == .proofreading && writingHost != nil && !checklistLoaded) || effectiveScope.selectedEpisodeIDs(
                             chapters: chapters, currentID: currentEpisodeID
                         ).isEmpty)
                     if writingHost != nil {
-                        Button("指示") { showingPrompts = true }.disabled(requestTask != nil || isSavingChecklist)
+                        Button("指示") { showingPrompts = true }.disabled((requestTask != nil || inFlight) || isSavingChecklist)
                     }
                     if requestTask != nil {
                         ProgressView().controlSize(.small)
-                        Button("中止") { cancel(); notice = "中止しました。" }
+                    }
+                }
+                if let writingHost {
+                    AssistantRequestStatusView(host: writingHost, key: writingHost.requestKey(purpose: purpose), defaults: defaults, rebuild: { prepare() })
+                    if let latestRequest, let metadata = try? latestRequest.record.decoded(AssistantRequestRecord.self) {
+                        if metadata.state == "pending", purpose == .proofreading, metadata.episodeId == currentEpisodeID {
+                            Label("未反映の校正結果があります", systemImage: "doc.badge.clock").font(.caption)
+                            Button("結果を確認して反映…") { confirmingProofreading = true }
+                        } else if !inFlight, ["interrupted", "failed", "cancelled"].contains(metadata.state)
+                            || (metadata.state == "sent" && writingHost.interrupted(latestRequest.record, defaults: defaults)) {
+                            Label("中断した依頼があります", systemImage: "exclamationmark.triangle").font(.caption)
+                            Button("再送", action: retry)
+                        } else if !inFlight, let detail = metadata.detail {
+                            Text(detail).font(.caption).foregroundStyle(.secondary)
+                        }
                     }
                 }
                 if let notice {
                     Text(notice).font(.caption).foregroundStyle(.secondary)
-                }
-                if unsavedFeedback != nil {
-                    Button(isSavingFeedback ? "保存中…" : "回答を保存し直す") {
-                        Task { await persistFeedback() }
-                    }.disabled(isSavingFeedback)
                 }
                 Divider()
                 ScrollView {
@@ -136,7 +145,12 @@ struct AssistantPanelView: View {
         .padding(16)
         .frame(minWidth: 300, idealWidth: 360, maxWidth: .infinity, maxHeight: .infinity)
         .background(FuminiwaColor.paper.color)
-        .task(id: contextID) { await loadChecklist() }
+        .task(id: contextID) { await loadChecklist(); await loadRequestResults() }
+        .onChange(of: writingHost?.requestCenter.revision) { _, _ in Task { await loadRequestResults() } }
+        .confirmationDialog("送信時と同じ本文なら校正を反映しますか？", isPresented: $confirmingProofreading) {
+            Button("反映") { Task { await confirmProofreading() } }
+            Button("キャンセル", role: .cancel) {}
+        } message: { Text("本文が変わっている場合は、変更一覧だけを表示して本文を保ちます。") }
         .sheet(isPresented: $showingPrompts, onDismiss: { Task { await loadChecklist() } }) {
             if let writingHost {
                 NavigationStack {
@@ -161,7 +175,7 @@ struct AssistantPanelView: View {
             VStack(alignment: .leading, spacing: 16) {
                 Text("\(pendingPurpose.rawValue)に送信する本文").font(.headline)
                 if pendingPurpose == .impressions {
-                    Text("回答は「感想」に日時付きで保存し、作品と一緒に同期します。")
+                    Text("回答は「感想」に日時付きで保存し、作品のAI記録として同期します。")
                         .font(.caption)
                 }
                 if pendingPurpose == .proofreading, canApplyProofreading {
@@ -190,10 +204,22 @@ struct AssistantPanelView: View {
             }.padding(20).frame(minWidth: 340, idealWidth: 500, minHeight: 420)
         }
         .onChange(of: contextID) { _, _ in reset(); scope = .current; checklistLoaded = false; feedbackContext = Set(AssistantFeedbackContext.allCases) }
-        .onChange(of: purpose) { _, _ in reset() }
+        .onChange(of: purpose) { _, _ in reset(); Task { await loadRequestResults() } }
         .onChange(of: scope) { _, _ in reset() }
         .onChange(of: chapters.map { $0.id.description + $0.episodes.map(\.id.description).joined() }) { _, _ in reset(); scope = .current }
         .onDisappear { reset() }
+    }
+
+    private var inFlight: Bool {
+        guard let writingHost else { return false }
+        return writingHost.requestCenter.statuses[writingHost.requestKey(purpose: purpose)]?.inFlight == true
+    }
+
+    private var latestRequest: WritingEnvelope? {
+        AssistantRequestRecord.latest(requestEntries).filter {
+            guard let metadata = try? $0.record.decoded(AssistantRequestRecord.self), metadata.purpose == purpose else { return false }
+            return purpose != .proofreading || metadata.episodeId == currentEpisodeID
+        }.max { $0.record.createdAt < $1.record.createdAt }
     }
 
     private var effectiveScope: AssistantScope {
@@ -251,6 +277,7 @@ private extension AssistantPanelView {
     }
 
     private func prepare() {
+        guard requestTask == nil, !inFlight else { return }
         let id = UUID(); requestID = id
         let chosenPurpose = purpose
         requestTask = Task { @MainActor in
@@ -313,84 +340,75 @@ private extension AssistantPanelView {
     }
 
     private func send() {
-        guard let manuscript = pending, let config = pendingConfiguration else { return }
-        pending = nil
-        pendingConfiguration = nil
+        guard !inFlight, let manuscript = pending, let config = pendingConfiguration, let writingHost else { return }
+        pending = nil; pendingConfiguration = nil
         do {
-            let key = try AssistantPreferences(defaults: defaults).key(endpoint: config.endpoint)
-            let requestPurpose = pendingPurpose
-            let shouldApply = canApplyProofreading
-            let effectiveConfig = config
-            let request = try effectiveConfig.request(manuscript: manuscript, apiKey: key)
-            let id = UUID()
-            requestID = id
-            answer = ""; proofreadingResult = nil
-            requestTask = Task { @MainActor in
-                defer {
-                    if requestID == id {
-                        requestTask = nil
-                    }
-                }
-                do {
-                    if let writingHost {
-                        struct RequestRecord: Encodable { let state: String; let effectivePrompt: String; let purpose: String }
-                        try await writingHost.append(WritingRecord(
-                            workId: writingHost.capture().workId,
-                            kind: "request",
-                            key: id.uuidString.lowercased(),
-                            payload: WritingRecord.payload(RequestRecord(
-                                state: "sent",
-                                effectivePrompt: effectiveConfig.prompt,
-                                purpose: requestPurpose.id
-                            ))
-                        ))
-                    }
-                    let result = try await AssistantClient.send(request)
-                    guard !Task.isCancelled, requestID == id else { return }
-                    if requestPurpose == .proofreading {
-                        let revision = try AssistantClient.proofreadChanges(result).application(to: manuscript.content)
-                        proofreadingResult = revision
-                        guard shouldApply, let applyProofreading else {
-                            notice = "変更案を表示しました。本文への反映はできません。"
-                            return
-                        }
-                        guard !revision.accepted.isEmpty else {
-                            notice = revision.rejected.isEmpty ? "修正はありませんでした。" : "適用できる提案はありませんでした。"
-                            return
-                        }
-                        guard applyProofreading(manuscript, revision.replacement) else {
-                            notice = "本文や対象が変わったため反映しませんでした。入力を確定して再実行してください。"
-                            return
-                        }
-                        notice = revision.replacement == manuscript.content ? "本文の変更はありませんでした。" : "校正を反映しました。追加・変更箇所を黄色で表示しています。削除箇所には色が付きません。保存で色を消せます。取り消しも可能です。"
-                    } else {
-                        answer = result
-                        if requestPurpose == .impressions {
-                            unsavedFeedback = AssistantFeedback(id: UUID(), purpose: requestPurpose,
-                                                                scopeTitle: manuscript.title, createdAt: Date(), markdown: result)
-                            await persistFeedback()
-                        }
-                    }
-                } catch {
-                    guard !Task.isCancelled, requestID == id else { return }
-                    notice = (error as? AssistantError)?.localizedDescription ?? "通信できませんでした。接続を確認して再試行してください。"
-                }
+            let captured = try writingHost.capture()
+            let request = try config.request(manuscript: manuscript, apiKey: "validation-only")
+            let metadata = AssistantRequestRecord(purpose: pendingPurpose, documentId: captured.document.id, episodeId: captured.episodeId,
+                                                  scope: manuscript.title, permission: pendingPurpose == .proofreading ? "現在の話を校正" : "感想のみ")
+            if try writingHost.startRequest(metadata: metadata, input: writingHost.savedInput(request), defaults: defaults) {
+                answer = ""; proofreadingResult = nil; notice = nil
             }
         } catch { notice = error.localizedDescription }
     }
 
-    private func persistFeedback() async {
-        guard let feedback = unsavedFeedback, let saveFeedback, !isSavingFeedback else { return }
-        isSavingFeedback = true
-        defer { isSavingFeedback = false }
-        let saved = await saveFeedback(feedback)
-        guard unsavedFeedback?.id == feedback.id else { return }
-        if saved {
-            unsavedFeedback = nil
-            notice = "「感想」に保存しました。"
-        } else {
-            notice = "回答を保存できませんでした。入力を確定して「回答を保存し直す」を押してください。"
+    private func loadRequestResults() async {
+        guard let writingHost else { return }
+        let context = contextID, selectedPurpose = purpose
+        do {
+            let entries = try await writingHost.recoverInterruptedRequests(writingHost.records(false), defaults: defaults)
+            guard context == contextID, selectedPurpose == purpose else { return }
+            requestEntries = entries
+            guard let latestRequest, let metadata = try? latestRequest.record.decoded(AssistantRequestRecord.self),
+                  ["completed", "pending"].contains(metadata.state) else { return }
+            if purpose == .proofreading {
+                if let id = UUID(uuidString: latestRequest.record.key), let saved = writingHost.proofreadingResult(id: id, defaults: defaults) {
+                    let text = (try? capture().content) ?? ""
+                    proofreadingResult = try saved.display(on: text, completed: metadata.state == "completed")
+                }
+            } else {
+                answer = try AssistantRecordChunks.text(entries: entries, key: "result:\(latestRequest.record.key)")
+            }
+        } catch {
+            if !Task.isCancelled {
+                notice = error.localizedDescription
+            }
         }
+    }
+
+    private func retry() {
+        Task { @MainActor in
+            guard let writingHost else { return }
+            do {
+                let entries = try await writingHost.records(false)
+                if let latestRequest {
+                    if try await !writingHost.retry(latestRequest.record, entries: entries, defaults: defaults) {
+                        prepare()
+                    }
+                } else if try await !writingHost.retryLatest(key: writingHost.requestKey(purpose: purpose), defaults: defaults) {
+                    prepare()
+                }
+            } catch { notice = error.localizedDescription }
+        }
+    }
+
+    private func confirmProofreading() async {
+        guard let writingHost, let latestRequest else { return }
+        do {
+            var metadata = try latestRequest.record.decoded(AssistantRequestRecord.self)
+            guard metadata.state == "pending", metadata.episodeId == currentEpisodeID else { return }
+            guard let id = UUID(uuidString: latestRequest.record.key), let saved = writingHost.proofreadingResult(id: id, defaults: defaults) else {
+                throw WritingError.invalidRecord
+            }
+            let current = try capture()
+            guard saved.matches(current.content) else { throw WritingError.changedTarget }
+            metadata.detail = try await writingHost.applyProofreadingResult(metadata: metadata, expectedText: current.content, raw: saved.raw, id: id)
+            metadata.state = "completed"
+            try await writingHost.append(WritingRecord(workId: writingHost.workID, kind: "request", key: latestRequest.record.key,
+                                                       parentId: latestRequest.id, payload: WritingRecord.payload(metadata)))
+            writingHost.requestCenter.changed(); await loadRequestResults()
+        } catch { notice = "本文や対象が変わったため反映できません。変更一覧を確認してください。" }
     }
 
     private func cancel() {
@@ -398,6 +416,6 @@ private extension AssistantPanelView {
     }
 
     private func reset() {
-        cancel(); pending = nil; pendingConfiguration = nil; answer = ""; proofreadingResult = nil; notice = nil; unsavedFeedback = nil
+        cancel(); pending = nil; pendingConfiguration = nil; answer = ""; proofreadingResult = nil; notice = nil; requestEntries = []
     }
 }

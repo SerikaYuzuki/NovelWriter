@@ -9,6 +9,7 @@ import NovelSyncV2PortableBridge
 import NovelSyncV2Runtime
 import NovelTiming
 import NovelWorkspace
+import NovelWorkspaceUI
 import NovelWritingProgress
 import NovelWritingSupport
 import Observation
@@ -249,6 +250,7 @@ final class IOSDocumentStore {
     #endif
 
     let timing: FuminiwaTiming
+    let assistantRequestCenter = AssistantRequestCenter()
     let writingSyncScheduler: WritingSyncScheduler
     let writingProgress: WritingProgressTracker
     var document: NovelDocument

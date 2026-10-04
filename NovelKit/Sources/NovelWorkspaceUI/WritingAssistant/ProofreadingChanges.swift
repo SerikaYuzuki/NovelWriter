@@ -21,12 +21,18 @@ public struct ProofreadingChanges: Decodable, Sendable {
     public struct Rejected: Sendable {
         public let change: ProofreadingChange
         public let explanation: String
+        public init(change: ProofreadingChange, explanation: String) {
+            self.change = change; self.explanation = explanation
+        }
     }
 
     public struct Application: Sendable {
         public let replacement: String
         public let accepted: [ProofreadingChange]
         public let rejected: [Rejected]
+        public init(replacement: String, accepted: [ProofreadingChange], rejected: [Rejected]) {
+            self.replacement = replacement; self.accepted = accepted; self.rejected = rejected
+        }
     }
 
     /// Match against the sent bytes, never against an already modified string.
