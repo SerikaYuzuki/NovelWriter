@@ -152,7 +152,7 @@ struct FuminiwaApp: App {
         Window("ふみにわ", id: "workbench") {
             ContentView()
                 .defaultAppStorage(appState.userDefaults)
-                .environment(appState)
+                .environment(appState).environment(appState.workspaceModel)
                 .environment(editorSettings)
                 .environment(documentPanelPresenter)
                 .environment(snapshotMenuPresenter)
@@ -167,7 +167,7 @@ struct FuminiwaApp: App {
         .windowToolbarStyle(.unified)
         .commands {
             CommandGroup(replacing: .newItem) {
-                LibraryCommand().environment(appState)
+                LibraryCommand().environment(appState).environment(appState.workspaceModel)
                 Divider()
                 Button("新しい作品") {
                     documentPanelPresenter.presentNewDocument()
@@ -222,7 +222,7 @@ struct FuminiwaApp: App {
                 .disabled(!appState.permitsDocumentInteraction || appState.workspaceSelection.section != .structure)
             }
             CommandMenu("アカウント") {
-                switch appState.authUIState {
+                switch appState.workspaceModel.authUIState {
                 case .signedIn:
                     Button("サインアウト") { Task { await appState.signOutFromFuminiwa() } }
                 case .signingIn:
@@ -270,6 +270,7 @@ struct FuminiwaApp: App {
                             Task { await appState.selectProjectSectionAfterTransition(.plot) }
                         }
                     )
+                    .environment(appState.workspaceModel)
                 }
                 .disabled(!appState.permitsDocumentInteraction || appState.selectedChapter == nil)
             }
@@ -337,7 +338,7 @@ struct FuminiwaApp: App {
         Settings {
             AppSettingsView()
                 .environment(editorSettings)
-                .environment(appState)
+                .environment(appState).environment(appState.workspaceModel)
                 .frame(width: 520, height: 620)
         }
     }

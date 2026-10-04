@@ -26,7 +26,7 @@ struct IOSEditingDepartureRegressionTests {
         let release = AsyncStream<Void>.makeStream()
         store.saveCoordinator = V2DocumentSaveCoordinator(
             timing: FuminiwaTiming(autosaveDebounceSeconds: 60, autosavePostSaveWaitSeconds: 60),
-            currentDocument: { store.document },
+            currentDocument: { store.workspaceModel.document },
             saveOperation: { _ in
                 started.continuation.yield(())
                 for await _ in release.stream {

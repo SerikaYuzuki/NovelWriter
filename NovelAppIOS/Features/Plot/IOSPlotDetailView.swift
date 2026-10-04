@@ -3,6 +3,7 @@ import NovelWorkspace
 import SwiftUI
 
 struct IOSPlotDetailView: View {
+    @Environment(WorkspaceModel.self) private var workspace
     let store: IOSDocumentStore
     let selection: IOSPlotSelection?
     let expectedSession: WorkspaceSessionToken?
@@ -16,13 +17,13 @@ struct IOSPlotDetailView: View {
         Group {
             switch selection {
             case let .card(id):
-                if let card = store.document.plotCards.first(where: { $0.id == id }) {
+                if let card = workspace.document.plotCards.first(where: { $0.id == id }) {
                     plotCardForm(card)
                 } else {
                     unavailableView
                 }
             case let .flag(id):
-                if let flag = store.document.flags.first(where: { $0.id == id }) {
+                if let flag = workspace.document.flags.first(where: { $0.id == id }) {
                     flagForm(flag)
                 } else {
                     unavailableView
@@ -60,7 +61,7 @@ struct IOSPlotDetailView: View {
                 ) {
                     Text("章未設定")
                         .tag(nil as ChapterID?)
-                    ForEach(store.document.chapters) { chapter in
+                    ForEach(workspace.document.chapters) { chapter in
                         Text(chapter.title.isEmpty ? "名称未設定の章" : chapter.title)
                             .tag(chapter.id as ChapterID?)
                     }
@@ -134,7 +135,7 @@ struct IOSPlotDetailView: View {
     private func chapterPickerOptions() -> some View {
         Text("章未設定")
             .tag(nil as ChapterID?)
-        ForEach(store.document.chapters) { chapter in
+        ForEach(workspace.document.chapters) { chapter in
             Text(chapter.title.isEmpty ? "名称未設定の章" : chapter.title)
                 .tag(chapter.id as ChapterID?)
         }
@@ -147,10 +148,10 @@ struct IOSPlotDetailView: View {
     ) -> Binding<Value> {
         Binding(
             get: {
-                store.document.plotCards.first(where: { $0.id == id })?[keyPath: keyPath] ?? fallback
+                workspace.document.plotCards.first(where: { $0.id == id })?[keyPath: keyPath] ?? fallback
             },
             set: { newValue in
-                guard var card = store.document.plotCards.first(where: { $0.id == id }) else { return }
+                guard var card = workspace.document.plotCards.first(where: { $0.id == id }) else { return }
                 guard let expectedSession else { return }
                 card[keyPath: keyPath] = newValue
                 _ = store.updatePlotCard(card, expectedSession: expectedSession)
@@ -165,10 +166,10 @@ struct IOSPlotDetailView: View {
     ) -> Binding<Value> {
         Binding(
             get: {
-                store.document.flags.first(where: { $0.id == id })?[keyPath: keyPath] ?? fallback
+                workspace.document.flags.first(where: { $0.id == id })?[keyPath: keyPath] ?? fallback
             },
             set: { newValue in
-                guard var flag = store.document.flags.first(where: { $0.id == id }) else { return }
+                guard var flag = workspace.document.flags.first(where: { $0.id == id }) else { return }
                 guard let expectedSession else { return }
                 flag[keyPath: keyPath] = newValue
                 _ = store.updateFlag(flag, expectedSession: expectedSession)
@@ -203,7 +204,7 @@ struct IOSPlotDetailView: View {
         ContentUnavailableView {
             Label("項目が選択されていません", systemImage: "rectangle.stack")
         } description: {
-            if !store.document.plotCards.isEmpty || !store.document.flags.isEmpty {
+            if !workspace.document.plotCards.isEmpty || !workspace.document.flags.isEmpty {
                 Text("一覧からプロットカードまたは伏線を選択してください。")
             }
         }

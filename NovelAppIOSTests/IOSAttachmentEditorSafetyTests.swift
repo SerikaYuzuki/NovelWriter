@@ -20,8 +20,8 @@ struct IOSAttachmentEditorSafetyTests {
         await store.bootstrap()
         #expect(await store.makeNewDocument())
         let session = try #require(store.currentDocumentSessionToken)
-        let episodeID = try #require(store.selectedEpisodeID)
-        let originalContent = try #require(store.document.episode(episodeID)?.episode.content)
+        let episodeID = try #require(store.workspaceModel.selectedEpisodeID)
+        let originalContent = try #require(store.workspaceModel.document.episode(episodeID)?.episode.content)
         let harness = try await makeEditorHarness(store: store)
         defer { harness.cleanup() }
 
@@ -35,8 +35,8 @@ struct IOSAttachmentEditorSafetyTests {
         )
 
         #expect(attachment == nil)
-        #expect(store.attachments.isEmpty)
-        #expect(store.document.episode(episodeID)?.episode.content == originalContent)
+        #expect(store.workspaceModel.attachments.isEmpty)
+        #expect(store.workspaceModel.document.episode(episodeID)?.episode.content == originalContent)
         #expect(harness.textView.text == composingText)
         #expect(harness.textView.markedTextRange != nil)
         #expect(store.operationErrorMessage == "日本語入力を確定してから、もう一度お試しください。")
@@ -55,27 +55,27 @@ struct IOSAttachmentEditorSafetyTests {
         await store.bootstrap()
         #expect(await store.makeNewDocument())
         let session = try #require(store.currentDocumentSessionToken)
-        let episodeID = try #require(store.selectedEpisodeID)
+        let episodeID = try #require(store.workspaceModel.selectedEpisodeID)
         let harness = try await makeEditorHarness(store: store)
         defer { harness.cleanup() }
         let latestText = "UITextViewだけが持つ確定済みの最新本文"
         harness.textView.text = latestText
-        #expect(store.document.episode(episodeID)?.episode.content != latestText)
+        #expect(store.workspaceModel.document.episode(episodeID)?.episode.content != latestText)
 
         let attachment = try #require(
             await store.importAttachment(from: sourceURL, expectedSession: session)
         )
 
-        #expect(store.attachments == [attachment])
-        #expect(store.document.episode(episodeID)?.episode.content == latestText)
+        #expect(store.workspaceModel.attachments == [attachment])
+        #expect(store.workspaceModel.document.episode(episodeID)?.episode.content == latestText)
 
         let reopened = IOSDocumentStore(
             userDefaults: environment.defaults,
             libraryRoot: environment.root
         )
         await reopened.bootstrap()
-        #expect(reopened.document.episode(episodeID)?.episode.content == latestText)
-        #expect(reopened.attachments == [attachment])
+        #expect(reopened.workspaceModel.document.episode(episodeID)?.episode.content == latestText)
+        #expect(reopened.workspaceModel.attachments == [attachment])
     }
 
     @Test("実UITextViewがIME変換中なら資料削除と原稿変更を拒否する")
@@ -91,14 +91,14 @@ struct IOSAttachmentEditorSafetyTests {
         await store.bootstrap()
         #expect(await store.makeNewDocument())
         let session = try #require(store.currentDocumentSessionToken)
-        let episodeID = try #require(store.selectedEpisodeID)
+        let episodeID = try #require(store.workspaceModel.selectedEpisodeID)
         let attachment = try #require(
             await store.importAttachment(from: sourceURL, expectedSession: session)
         )
         let attachmentURL = try #require(
             store.attachmentPreviewURL(for: attachment, expectedSession: session)
         )
-        let originalContent = try #require(store.document.episode(episodeID)?.episode.content)
+        let originalContent = try #require(store.workspaceModel.document.episode(episodeID)?.episode.content)
         let harness = try await makeEditorHarness(store: store)
         defer { harness.cleanup() }
 
@@ -107,9 +107,9 @@ struct IOSAttachmentEditorSafetyTests {
         #expect(harness.textView.markedTextRange != nil)
 
         #expect(await !(store.deleteAttachment(attachment, expectedSession: session)))
-        #expect(store.attachments == [attachment])
+        #expect(store.workspaceModel.attachments == [attachment])
         #expect(FileManager.default.fileExists(atPath: attachmentURL.path))
-        #expect(store.document.episode(episodeID)?.episode.content == originalContent)
+        #expect(store.workspaceModel.document.episode(episodeID)?.episode.content == originalContent)
         #expect(harness.textView.text == composingText)
         #expect(harness.textView.markedTextRange != nil)
         #expect(store.operationErrorMessage == "日本語入力を確定してから、もう一度お試しください。")
@@ -128,7 +128,7 @@ struct IOSAttachmentEditorSafetyTests {
         await store.bootstrap()
         #expect(await store.makeNewDocument())
         let session = try #require(store.currentDocumentSessionToken)
-        let workID = try #require(store.syncV2ActiveWorkID)
+        let workID = try #require(store.workspaceModel.activeWorkID)
         let application = try #require(store.snapshotSyncV2Application)
         let gate = AttachmentSaveOwnershipGate()
         let blocker = Task { @MainActor in
@@ -158,11 +158,11 @@ struct IOSAttachmentEditorSafetyTests {
         let opened = try await application.openLocal(workID: workID)
         #expect(opened.document?.title == "資料保存中に届いた作品名")
         #expect(opened.attachments.map { $0.fileName } == [attachment.fileName])
-        #expect(store.saveState == .saved)
+        #expect(store.workspaceModel.saveState == .saved)
     }
 
     private func makeEditorHarness(store: IOSDocumentStore) async throws -> EditorHarness {
-        let host = UIHostingController(rootView: IOSEditorPane(store: store, userDefaults: store.userDefaults))
+        let host = UIHostingController(rootView: IOSEditorPane(store: store, userDefaults: store.userDefaults).environment(store.workspaceModel))
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 430, height: 932))
         window.rootViewController = host
         host.view.frame = window.bounds

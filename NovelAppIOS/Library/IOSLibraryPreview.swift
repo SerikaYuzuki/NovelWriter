@@ -14,15 +14,15 @@ extension IOSDocumentStore {
         guard let argument = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("--library-preview=") }) else { return false }
         let mode = String(argument.dropFirst("--library-preview=".count))
         let preview = LibraryPreview(mode: mode)
-        syncV2LibraryItems = preview.items
+        workspaceModel.libraryRows = preview.items
         if let importing = preview.importingWorkID {
             snapshotSyncV2RemoteOnlyOpeningWorkID = importing
             snapshotSyncV2RemoteOnlyOpenStartedAt = Date().addingTimeInterval(-16)
         }
-        libraryImportFailures.merge(preview.importFailures) { _, new in new }
-        libraryImportPhases.merge(preview.importPhases) { _, new in new }
+        workspaceModel.libraryImportFailures.merge(preview.importFailures) { _, new in new }
+        workspaceModel.libraryImportPhases.merge(preview.importPhases) { _, new in new }
         syncV2RemoteCatalogError = preview.failure
-        libraryIsLoading = preview.isLoading
+        workspaceModel.libraryIsLoading = preview.isLoading
         startupState = .library
         return true
     }

@@ -9,39 +9,39 @@ import Testing
 
 @MainActor
 struct WorkspaceModelObservationTests {
-    @Test("共有モデルへの変更はadapterを読む画面のObservationを無効化する")
-    func forwardersTrackSharedState() {
+    @Test("共有モデルの直接参照は変更をObservationで追跡する")
+    func directModelReadsTrackSharedState() {
         let state = AppState(dependencies: AppDependencies(userDefaults: makeIsolatedTestUserDefaults()))
         let documentChanged = OSAllocatedUnfairLock(initialState: false)
         withObservationTracking {
-            _ = state.document.title
+            _ = state.workspaceModel.document.title
         } onChange: {
             documentChanged.withLock { $0 = true }
         }
         state.workspaceModel.document.title = "変更した作品"
         #expect(documentChanged.withLock { $0 })
-        #expect(state.document.title == "変更した作品")
+        #expect(state.workspaceModel.document.title == "変更した作品")
 
         let selectionChanged = OSAllocatedUnfairLock(initialState: false)
         withObservationTracking {
-            _ = state.selectedEpisodeID
+            _ = state.workspaceModel.selectedEpisodeID
         } onChange: {
             selectionChanged.withLock { $0 = true }
         }
         state.workspaceModel.selectedEpisodeID = nil
         #expect(selectionChanged.withLock { $0 })
-        #expect(state.selectedEpisodeID == nil)
+        #expect(state.workspaceModel.selectedEpisodeID == nil)
 
         let saveChanged = OSAllocatedUnfairLock(initialState: false)
         withObservationTracking {
-            _ = state.saveState
+            _ = state.workspaceModel.saveState
         } onChange: {
             saveChanged.withLock { $0 = true }
         }
         state.workspaceModel.saveState = .saving
         #expect(saveChanged.withLock { $0 })
-        #expect(state.saveState == .saving)
-        state.saveState = .saved
+        #expect(state.workspaceModel.saveState == .saving)
+        state.workspaceModel.saveState = .saved
         #expect(state.workspaceModel.saveState == .saved)
         let workID = WorkID(UUID())
         let displayID = UUID()
@@ -58,6 +58,5 @@ struct WorkspaceModelObservationTests {
         state.workspaceModel.libraryRows = []
         #expect(shelfChanged.withLock { $0 })
         #expect(state.snapshotSyncLibraryWorks.isEmpty)
-        #expect(state.assistantRequestCenter === state.workspaceModel.assistantRequestCenter)
     }
 }

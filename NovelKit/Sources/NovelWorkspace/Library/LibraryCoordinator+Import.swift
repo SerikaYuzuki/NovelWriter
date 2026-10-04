@@ -3,8 +3,7 @@ import NovelSyncV2Application
 
 @MainActor
 public protocol WorkspaceLibraryImportHost: WorkspaceLibraryHost {
-    var libraryImportPhases: [WorkID: ImportPhase] { get set }
-    var libraryImportFailures: [WorkID: SyncV2Failure] { get set }
+    var workspaceModel: WorkspaceModel { get }
     var libraryOpeningWorkID: WorkID? { get }
     func announceLibraryImport(_ message: String)
 }
@@ -17,11 +16,11 @@ public extension LibraryCoordinator {
         guard !Task.isCancelled, host.operationContext.account == account else { return false }
         var phases = state.phases
         if let opening = host.libraryOpeningWorkID,
-           phases[opening] == nil, host.libraryImportPhases[opening]?.stage == .opening {
-            phases[opening] = host.libraryImportPhases[opening]
+           phases[opening] == nil, host.workspaceModel.libraryImportPhases[opening]?.stage == .opening {
+            phases[opening] = host.workspaceModel.libraryImportPhases[opening]
         }
-        host.libraryImportPhases = phases
-        host.libraryImportFailures = state.failures
+        host.workspaceModel.libraryImportPhases = phases
+        host.workspaceModel.libraryImportFailures = state.failures
         return true
     }
 
@@ -75,7 +74,7 @@ public extension LibraryCoordinator {
             } catch {
                 guard !Task.isCancelled, host.operationContext.account == account else { return }
                 let failure = syncV2FailureKind(error)
-                host.libraryImportFailures[workID] = failure
+                host.workspaceModel.libraryImportFailures[workID] = failure
                 host.announceLibraryImport(SyncV2LibraryPresentation.importFailure(failure))
             }
         }

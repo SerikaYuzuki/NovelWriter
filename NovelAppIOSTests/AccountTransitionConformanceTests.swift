@@ -54,23 +54,23 @@ private final class IOSAccountTransitionHost: AccountTransitionHost {
         #expect(await state.configureSnapshotSyncV2())
         await state.bootstrap()
         #expect(await state.makeNewDocument())
-        let workID = try #require(state.syncV2ActiveWorkID)
+        let workID = try #require(state.workspaceModel.activeWorkID)
         state.authSessionVault = fixture.vault
         state.authSessionCoordinator = fixture.coordinator
         state.appleAuthenticationOrchestrator = fixture.orchestrator()
         state.testServerInstanceIDOverride = "test-server"
-        state.authSession = fixture.initialSession
-        state.authUIState = fixture.initialSession.map { .signedIn(accountID: $0.accountID) } ?? .signedOut
+        state.workspaceModel.authSession = fixture.initialSession
+        state.workspaceModel.authUIState = fixture.initialSession.map { .signedIn(accountID: $0.accountID) } ?? .signedOut
         state.testBrowserAuthorization = { _ in }
         return IOSAccountTransitionHost(fixture: fixture, state: state, configuration: configuration, suite: suite, workID: workID)
     }
 
     var session: FuminiwaSession? {
-        state.authSession
+        state.workspaceModel.authSession
     }
 
     var uiState: WorkspaceAuthUIState {
-        state.authUIState
+        state.workspaceModel.authUIState
     }
 
     var scope: WorkspaceAccountScope {
@@ -82,7 +82,7 @@ private final class IOSAccountTransitionHost: AccountTransitionHost {
     }
 
     var hasScopedUI: Bool {
-        state.snapshotSyncConflict != nil || state.syncV2RemoteCatalogCursor != nil
+        state.workspaceModel.syncConflict != nil || state.workspaceModel.remoteCatalogCursor != nil
     }
 
     var failureNotice: String? {
@@ -90,15 +90,15 @@ private final class IOSAccountTransitionHost: AccountTransitionHost {
     }
 
     var localOperationsAllowed: Bool {
-        !state.isDocumentTransitionInProgress && !state.syncV2AccountTransitionInProgress
+        !state.workspaceModel.isDocumentTransitionInProgress && !state.syncV2AccountTransitionInProgress
     }
 
     func seedDirtyUIAndRequests() async {
         state.updateDocumentTitle(fixture.dirtyTitle)
-        state.snapshotSyncConflict = authCharacterizationConflict()
-        state.syncV2RemoteCatalogCursor = "P10-old-cursor"
+        state.workspaceModel.syncConflict = authCharacterizationConflict()
+        state.workspaceModel.remoteCatalogCursor = "P10-old-cursor"
         state.libraryPrefetchTask = workTask
-        let started = state.assistantRequestCenter.start(
+        let started = state.workspaceModel.assistantRequestCenter.start(
             key: aiKey, timing: AssistantRuntimeTiming(defaults: state.userDefaults, purpose: .advice),
             operation: { _, _ in try await Task.sleep(for: .seconds(60)) }
         )
@@ -147,13 +147,13 @@ private final class IOSAccountTransitionHost: AccountTransitionHost {
 
     func requestsCancelled() async -> Bool {
         if workTask.isCancelled {
-            try? await waitForAuthCharacterization { self.state.assistantRequestCenter.statuses[self.aiKey]?.inFlight == false }
+            try? await waitForAuthCharacterization { self.state.workspaceModel.assistantRequestCenter.statuses[self.aiKey]?.inFlight == false }
         }
-        return workTask.isCancelled && state.assistantRequestCenter.statuses[aiKey]?.inFlight == false
+        return workTask.isCancelled && state.workspaceModel.assistantRequestCenter.statuses[aiKey]?.inFlight == false
     }
 
     func cleanup() {
-        workTask.cancel(); state.assistantRequestCenter.cancelAll()
+        workTask.cancel(); state.workspaceModel.assistantRequestCenter.cancelAll()
         state.userDefaults.removePersistentDomain(forName: suite)
         IOSDocumentStore.testRuntimeConfigurations.removeValue(forKey: configuration.localRoot.url.standardizedFileURL)
         IOSDocumentStore.testRuntimeApplications.removeValue(forKey: configuration.localRoot.url.standardizedFileURL)

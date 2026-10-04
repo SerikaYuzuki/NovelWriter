@@ -26,6 +26,7 @@ struct IOSCharacterFeatureView: View {
 }
 
 struct IOSCharacterOutlineView: View {
+    @Environment(WorkspaceModel.self) private var workspace
     let store: IOSDocumentStore
     @Binding var selection: CharacterID?
     let expectedSession: WorkspaceSessionToken?
@@ -35,7 +36,7 @@ struct IOSCharacterOutlineView: View {
 
     var body: some View {
         List {
-            ForEach(store.document.characters) { character in
+            ForEach(workspace.document.characters) { character in
                 characterRow(character)
             }
             .onDelete(perform: requestDeletion)
@@ -49,7 +50,7 @@ struct IOSCharacterOutlineView: View {
             }
         }
         .overlay {
-            if store.document.characters.isEmpty {
+            if workspace.document.characters.isEmpty {
                 ContentUnavailableView {
                     Label("登場人物がありません", systemImage: "person.2")
                 } actions: {
@@ -144,7 +145,7 @@ struct IOSCharacterOutlineView: View {
 
     private func requestDeletion(at offsets: IndexSet) {
         let ids = offsets.compactMap { index in
-            store.document.characters.indices.contains(index) ? store.document.characters[index].id : nil
+            workspace.document.characters.indices.contains(index) ? workspace.document.characters[index].id : nil
         }
         guard !ids.isEmpty, let expectedSession else { return }
         deletionRequest = IOSCharacterDeletionRequest(expectedSession: expectedSession, characterIDs: ids)
@@ -173,6 +174,7 @@ struct IOSCharacterOutlineView: View {
 }
 
 struct IOSCharacterDetailView: View {
+    @Environment(WorkspaceModel.self) private var workspace
     let store: IOSDocumentStore
     let characterID: CharacterID?
     let expectedSession: WorkspaceSessionToken?
@@ -192,7 +194,7 @@ struct IOSCharacterDetailView: View {
                 ContentUnavailableView {
                     Label("登場人物が選択されていません", systemImage: "person")
                 } description: {
-                    if !store.document.characters.isEmpty {
+                    if !workspace.document.characters.isEmpty {
                         Text("一覧から登場人物を選択してください。")
                     }
                 }
@@ -222,7 +224,7 @@ struct IOSCharacterDetailView: View {
 
     private var selectedCharacter: NovelCore.Character? {
         guard let characterID else { return nil }
-        return store.document.characters.first(where: { $0.id == characterID })
+        return workspace.document.characters.first(where: { $0.id == characterID })
     }
 
     private func characterForm(_ character: NovelCore.Character) -> some View {
@@ -383,10 +385,10 @@ struct IOSCharacterDetailView: View {
     ) -> Binding<Value> {
         Binding(
             get: {
-                store.document.characters.first(where: { $0.id == id })?[keyPath: keyPath] ?? fallback
+                workspace.document.characters.first(where: { $0.id == id })?[keyPath: keyPath] ?? fallback
             },
             set: { newValue in
-                guard var character = store.document.characters.first(where: { $0.id == id }) else { return }
+                guard var character = workspace.document.characters.first(where: { $0.id == id }) else { return }
                 guard let expectedSession else { return }
                 character[keyPath: keyPath] = newValue
                 _ = store.updateCharacter(character, expectedSession: expectedSession)
@@ -400,10 +402,10 @@ struct IOSCharacterDetailView: View {
     ) -> Binding<String> {
         Binding(
             get: {
-                store.document.characters.first(where: { $0.id == id })?[keyPath: keyPath] ?? ""
+                workspace.document.characters.first(where: { $0.id == id })?[keyPath: keyPath] ?? ""
             },
             set: { newValue in
-                guard var character = store.document.characters.first(where: { $0.id == id }) else { return }
+                guard var character = workspace.document.characters.first(where: { $0.id == id }) else { return }
                 guard let expectedSession else { return }
                 character[keyPath: keyPath] = newValue.isEmpty ? nil : newValue
                 _ = store.updateCharacter(character, expectedSession: expectedSession)

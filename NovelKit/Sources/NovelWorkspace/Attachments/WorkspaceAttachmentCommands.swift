@@ -6,7 +6,7 @@ import NovelThumbnail
 /// Attachment capability of WorkspaceHost. Persistence and editor gates remain injected by the app.
 @MainActor
 public protocol WorkspaceAttachmentHost: WorkspaceHost {
-    var workspaceAttachments: WorkspaceAttachmentSet { get }
+    var workspaceModel: WorkspaceModel { get }
     func installWorkspaceAttachments(_ replacement: WorkspaceAttachmentSet)
 }
 
@@ -31,7 +31,7 @@ public struct WorkspaceAttachmentCommands {
         var item: SyncAttachment?
         let succeeded = await boundary {
             guard permits(context) else { return false }
-            let previous = host.workspaceAttachments
+            let previous = host.workspaceModel.attachmentSet
             let (candidate, added) = previous.adding(bytes, named: name, style: style)
             guard await persist(candidate, replacing: previous, context: context) else { return false }
             item = added
@@ -42,8 +42,8 @@ public struct WorkspaceAttachmentCommands {
 
     public func delete(named name: String, context: WorkspaceOperationContext) async -> Bool {
         await boundary {
-            guard permits(context), host.workspaceAttachments[name] != nil else { return false }
-            let previous = host.workspaceAttachments
+            guard permits(context), host.workspaceModel.attachmentSet[name] != nil else { return false }
+            let previous = host.workspaceModel.attachmentSet
             return await persist(previous.removing(named: name), replacing: previous, context: context)
         }
     }
@@ -52,7 +52,7 @@ public struct WorkspaceAttachmentCommands {
                        context: WorkspaceOperationContext) async -> Bool {
         await boundary {
             guard permits(context) else { return false }
-            let previous = host.workspaceAttachments
+            let previous = host.workspaceModel.attachmentSet
             guard let candidate = previous.renaming(name, to: newName, style: style), candidate != previous else { return false }
             return await persist(candidate, replacing: previous, context: context)
         }
@@ -61,12 +61,12 @@ public struct WorkspaceAttachmentCommands {
     public func setThumbnail(_ bytes: Data?, owner: ThumbnailOwner, context: WorkspaceOperationContext) async -> Bool {
         await boundary {
             guard permits(context), owner.exists(in: host.document) else { return false }
-            let previous = host.workspaceAttachments
+            let previous = host.workspaceModel.attachmentSet
             let candidate = previous.settingThumbnail(bytes, owner: owner)
             guard await checkpoint(host.document, candidate), permits(context), owner.exists(in: host.document),
-                  host.workspaceAttachments[owner.fileName] == previous[owner.fileName] else { return false }
+                  host.workspaceModel.attachmentSet[owner.fileName] == previous[owner.fileName] else { return false }
             // Apply only this resource so concurrent owner removals are never resurrected.
-            let live = host.workspaceAttachments.removing(named: owner.fileName)
+            let live = host.workspaceModel.attachmentSet.removing(named: owner.fileName)
             let records = live.records + candidate.records.filter { $0.fileName == owner.fileName }
             guard let replacement = WorkspaceAttachmentSet(records) else { return false }
             host.installWorkspaceAttachments(replacement)
@@ -76,13 +76,13 @@ public struct WorkspaceAttachmentCommands {
 
     /// Synchronous owner + resource edit, before the host's existing save notification.
     public static func applyOwnerRemoval(_ replacement: NovelDocument, host: any WorkspaceAttachmentHost) {
-        host.installWorkspaceAttachments(host.workspaceAttachments.removingOwners(from: host.document, to: replacement))
+        host.installWorkspaceAttachments(host.workspaceModel.attachmentSet.removingOwners(from: host.document, to: replacement))
         host.document = replacement
     }
 
     private func persist(_ candidate: WorkspaceAttachmentSet, replacing previous: WorkspaceAttachmentSet,
                          context: WorkspaceOperationContext) async -> Bool {
-        guard await checkpoint(host.document, candidate), permits(context), host.workspaceAttachments == previous else { return false }
+        guard await checkpoint(host.document, candidate), permits(context), host.workspaceModel.attachmentSet == previous else { return false }
         host.installWorkspaceAttachments(candidate)
         return true
     }

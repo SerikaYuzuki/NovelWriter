@@ -72,7 +72,7 @@ final class IOSWorkspaceNavigationCoordinator {
 
     @discardableResult
     func openLibraryWork(_ workID: WorkID, using store: IOSDocumentStore) async -> Bool {
-        if store.syncV2LibraryItems.first(where: { $0.workID == workID })?.availability == .remoteOnly {
+        if store.workspaceModel.libraryRows.first(where: { $0.workID == workID })?.availability == .remoteOnly {
             let generation = navigationGeneration
             return await store.startRemoteOnlySnapshotSyncV2Open(workID: workID, shouldOpen: { [weak self] in
                 self?.navigationGeneration == generation
@@ -83,7 +83,7 @@ final class IOSWorkspaceNavigationCoordinator {
         // The shelf contains both local and remote-only works. The store owns
         // that routing; local opens must never enter the remote-only guard.
         guard await store.openPrivateDocument(id: IOSPrivateDocumentID(workID: workID)),
-              store.syncV2ActiveWorkID == workID,
+              store.workspaceModel.activeWorkID == workID,
               let session = store.currentDocumentSessionToken else { return false }
         showProjectHome(for: session)
         return true
@@ -91,7 +91,7 @@ final class IOSWorkspaceNavigationCoordinator {
 
     @discardableResult
     func returnToLibrary(using store: IOSDocumentStore) async -> Bool {
-        guard !path.isEmpty || store.syncV2KeepBothPendingWorkID != nil,
+        guard !path.isEmpty || store.workspaceModel.keepBothPendingWorkID != nil,
               let session = store.currentDocumentSessionToken else { return false }
         let expectedPath = path
         let accountScope = store.snapshotSyncV2AccountScope
@@ -99,17 +99,17 @@ final class IOSWorkspaceNavigationCoordinator {
             guard store.currentDocumentSessionToken == session,
                   store.snapshotSyncV2AccountScope == accountScope,
                   self.path == expectedPath,
-                  !store.isDocumentTransitionInProgress else { return false }
-            store.isDocumentTransitionInProgress = true
+                  !store.workspaceModel.isDocumentTransitionInProgress else { return false }
+            store.workspaceModel.isDocumentTransitionInProgress = true
             store.isNavigationDepartureInProgress = true
             defer {
                 store.isNavigationDepartureInProgress = false
-                store.isDocumentTransitionInProgress = false
+                store.workspaceModel.isDocumentTransitionInProgress = false
             }
             let departure = IOSWorkspaceEditorDeparture(
                 session: session,
-                chapterID: store.selectedChapterID,
-                episodeID: store.selectedEpisodeID
+                chapterID: store.workspaceModel.selectedChapterID,
+                episodeID: store.workspaceModel.selectedEpisodeID
             )
             guard await store.flushDeviceSyncBeforeNavigationDeparture(departure),
                   store.currentDocumentSessionToken == session,
@@ -275,11 +275,11 @@ enum IOSWorkspaceEditorSynchronizer {
         guard store.currentDocumentSessionToken == departure.session else {
             return true
         }
-        if store.isDocumentTransitionInProgress {
+        if store.workspaceModel.isDocumentTransitionInProgress {
             return store.editorCommandSession.isDocumentTransitionPrepared
         }
-        let chapterID = departure.chapterID ?? store.selectedChapterID
-        let episodeID = departure.episodeID ?? store.selectedEpisodeID
+        let chapterID = departure.chapterID ?? store.workspaceModel.selectedChapterID
+        let episodeID = departure.episodeID ?? store.workspaceModel.selectedEpisodeID
         guard let chapterID, let episodeID else {
             return true
         }

@@ -35,6 +35,7 @@ enum WorkbenchColumnLayout: Hashable {
 }
 
 struct NovelWorkbenchView: View {
+    @Environment(WorkspaceModel.self) private var workspace
     @Environment(AppState.self) private var appState
     @Environment(EditorSettings.self) private var editorSettings
     @Environment(EditorSearchSession.self) private var editorSearchSession
@@ -111,19 +112,19 @@ struct NovelWorkbenchView: View {
             guard appState.supportsAttachments else { return }
             Task {
                 guard await appState.selectProjectSectionAfterTransition(.references) else { return }
-                attachmentImportSession = appState.documentSessionToken
+                attachmentImportSession = workspace.documentSessionToken
                 isImportingAttachment = true
             }
         }
     }
 
     private var assistantPanel: some View {
-        let session = appState.documentSessionToken
-        let episodeID = appState.selectedEpisodeID
+        let session = workspace.documentSessionToken
+        let episodeID = workspace.selectedEpisodeID
         let account = appState.snapshotSyncV2AccountScopeToken
         return AssistantPanelView(
             defaults: appState.userDefaults,
-            contextID: "\(appState.documentSessionToken)-\(String(describing: appState.selectedEpisodeID))-\(appState.snapshotSyncV2AccountScopeToken)",
+            contextID: "\(workspace.documentSessionToken)-\(String(describing: workspace.selectedEpisodeID))-\(appState.snapshotSyncV2AccountScopeToken)",
             episodeTitle: appState.selectedEpisode?.title ?? "未選択",
             currentEpisodeID: episodeID,
             capture: {
@@ -137,8 +138,8 @@ struct NovelWorkbenchView: View {
                 }
             }, close: { isAssistantPresented = false },
             applyProofreading: { manuscript, replacement in
-                guard appState.documentSessionToken == session,
-                      appState.selectedEpisodeID == episodeID,
+                guard workspace.documentSessionToken == session,
+                      workspace.selectedEpisodeID == episodeID,
                       appState.snapshotSyncV2AccountScopeToken == account,
                       appState.permitsDocumentInteraction else { return false }
                 return appState.writingProgress.withUncountedEditorChange {
@@ -149,13 +150,13 @@ struct NovelWorkbenchView: View {
                 await appState.saveAssistantFeedback(feedback, session: session, account: account)
             },
             writingHost: appState.writingAssistantHost,
-            chapters: appState.document.chapters,
-            document: appState.document,
+            chapters: workspace.document.chapters,
+            document: workspace.document,
             captureScope: { scope in
-                guard appState.documentSessionToken == session,
+                guard workspace.documentSessionToken == session,
                       appState.snapshotSyncV2AccountScopeToken == account,
                       appState.permitsDocumentInteraction else { throw AssistantError.emptyContent }
-                return try scope.capture(chapters: appState.document.chapters, currentID: appState.selectedEpisodeID) {
+                return try scope.capture(chapters: workspace.document.chapters, currentID: workspace.selectedEpisodeID) {
                     guard let episode = appState.selectedEpisode else { throw AssistantError.emptyContent }
                     switch appState.activeCommittedTextCapture() {
                     case let .captured(text): return AssistantManuscript(title: episode.title, content: text)
@@ -226,7 +227,7 @@ struct NovelWorkbenchView: View {
                 from: sourceURL,
                 expectedSession: expectedSession
             )
-            guard appState.documentSessionToken == expectedSession else {
+            guard workspace.documentSessionToken == expectedSession else {
                 attachmentImportMessage = OperationMessage(
                     title: attachment == nil ? "取り込みませんでした" : "元の作品に取り込みました",
                     body: "操作中に別の作品へ切り替わりました。現在の資料は変更していません。"
@@ -292,7 +293,7 @@ struct NovelWorkbenchView: View {
     }
 
     private func requestEpisodeRename() {
-        guard let episode = appState.selectedEpisode, let chapterID = appState.selectedChapterID else { return }
+        guard let episode = appState.selectedEpisode, let chapterID = workspace.selectedChapterID else { return }
         episodePendingRename = EpisodeRenameRequest(episode: episode, chapterID: chapterID, appState: appState)
     }
 
@@ -327,7 +328,7 @@ struct NovelWorkbenchView: View {
                         in: appearance.chapterID
                     ) else { return }
                     guard appState.workSearchScope == scope,
-                          let current = appState.document.episode(appearance.episodeID)?.episode.content,
+                          let current = workspace.document.episode(appearance.episodeID)?.episode.content,
                           WorkTextSearch.sameText(current, appearance.source) else { return }
                     editorSearchSession.requestSelection(range: appearance.range, episodeID: appearance.episodeID)
                 }
@@ -350,7 +351,7 @@ struct NovelWorkbenchView: View {
         case .settings:
             AppSettingsView()
                 .environment(editorSettings)
-                .environment(appState)
+                .environment(appState).environment(appState.workspaceModel)
         }
     }
 
@@ -367,7 +368,7 @@ struct NovelWorkbenchView: View {
     }
 
     private var documentDisplayTitle: String {
-        let trimmed = appState.document.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = workspace.document.title.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? "無題の作品" : trimmed
     }
 
@@ -389,6 +390,7 @@ struct NovelWorkbenchView: View {
 }
 
 struct ProjectSidebarView: View {
+    @Environment(WorkspaceModel.self) private var workspace
     @Environment(AppState.self) private var appState
 
     let isFocused: FocusState<Bool>.Binding
@@ -400,7 +402,7 @@ struct ProjectSidebarView: View {
                 ForEach(ProjectSection.allCases.filter { $0 != .settings }) { section in
                     if section == .plot {
                         section.style.label
-                            .badge(appState.document.flags.count(where: { !$0.isResolved }))
+                            .badge(workspace.document.flags.count(where: { !$0.isResolved }))
                             .tag(section)
                     } else {
                         section.style.label.tag(section)
@@ -433,6 +435,7 @@ struct ProjectSidebarView: View {
 
 /// 世界観ノートの一覧Outline。並び順はNovelDocument.worldNotesの配列順を正とする。
 private struct WorldbuildingOutlineView: View {
+    @Environment(WorkspaceModel.self) private var workspace
     @Environment(AppState.self) private var appState
 
     @State private var notePendingDeletion: SessionBoundValue<WorldNote>?
@@ -459,7 +462,7 @@ private struct WorldbuildingOutlineView: View {
                 }
             }
             .overlay {
-                if appState.document.worldNotes.isEmpty {
+                if workspace.document.worldNotes.isEmpty {
                     ContentUnavailableView {
                         Label("世界観ノートがありません", systemImage: "globe.asia.australia")
                     } actions: {
@@ -474,7 +477,7 @@ private struct WorldbuildingOutlineView: View {
             guard let note = appState.selectedWorldNote else { return }
             notePendingDeletion = SessionBoundValue(
                 value: note,
-                session: appState.documentSessionToken
+                session: workspace.documentSessionToken
             )
         }
         .confirmationDialog(
@@ -492,8 +495,8 @@ private struct WorldbuildingOutlineView: View {
     }
 
     private var sessionBoundWorldNotes: [SessionBoundValue<WorldNote>] {
-        let session = appState.documentSessionToken
-        return appState.document.worldNotes.map {
+        let session = workspace.documentSessionToken
+        return workspace.document.worldNotes.map {
             SessionBoundValue(value: $0, session: session)
         }
     }
@@ -545,6 +548,7 @@ private struct WorldNoteRow: View {
 }
 
 private struct WorldNoteDetailView: View {
+    @Environment(WorkspaceModel.self) private var workspace
     @Environment(AppState.self) private var appState
     @Environment(EditorSettings.self) private var editorSettings
     @Environment(EditorCommandSession.self) private var editorCommandSession
@@ -552,7 +556,7 @@ private struct WorldNoteDetailView: View {
     var body: some View {
         Group {
             if let note = appState.selectedWorldNote {
-                let session = appState.documentSessionToken
+                let session = workspace.documentSessionToken
                 VStack(alignment: .leading, spacing: 16) {
                     MacThumbnailEditor(owner: ThumbnailOwner(.worldNote, note.id.rawValue), title: note.title)
                     WorkbenchLabeledField("タイトル") {
@@ -565,7 +569,7 @@ private struct WorldNoteDetailView: View {
                         EditorView(
                             chapterKey: SessionBoundEditorKey(
                                 value: note.id,
-                                generation: appState.editorContentGeneration
+                                generation: workspace.editorContentGeneration
                             ),
                             initialText: note.content,
                             commandSession: editorCommandSession,
@@ -587,7 +591,7 @@ private struct WorldNoteDetailView: View {
                 ContentUnavailableView {
                     Label("世界観ノートが選択されていません", systemImage: "globe.asia.australia")
                 } description: {
-                    if !appState.document.worldNotes.isEmpty {
+                    if !workspace.document.worldNotes.isEmpty {
                         Text("左の一覧から世界観ノートを選択してください。")
                     }
                 }
@@ -604,7 +608,7 @@ private struct WorldNoteDetailView: View {
     }
 
     private func noteTitle(for id: WorldNoteID) -> String {
-        appState.document.worldNotes.first(where: { $0.id == id })?.title ?? ""
+        workspace.document.worldNotes.first(where: { $0.id == id })?.title ?? ""
     }
 
     private var editorMaximumWidth: CGFloat? {
@@ -613,6 +617,7 @@ private struct WorldNoteDetailView: View {
 }
 
 private struct WorkbenchStatusBarView: View {
+    @Environment(WorkspaceModel.self) private var workspace
     @Environment(AppState.self) private var appState
     @Environment(EditorSearchSession.self) private var editorSearchSession
 
@@ -644,11 +649,12 @@ private struct WorkbenchStatusBarView: View {
     }
 
     private var totalCountText: String {
-        "全体 \(ManuscriptCountCache.shared.count(appState.document))字"
+        "全体 \(ManuscriptCountCache.shared.count(workspace.document))字"
     }
 }
 
 private struct ProjectInfoView: View {
+    @Environment(WorkspaceModel.self) private var workspace
     @Environment(AppState.self) private var appState
 
     var body: some View {
@@ -656,8 +662,8 @@ private struct ProjectInfoView: View {
             Form {
                 Section {
                     HStack(alignment: .top, spacing: Spacing.outer) {
-                        MacThumbnailEditor(owner: ThumbnailOwner(.work, appState.document.id), title: appState.document.title)
-                        WorkInfoSummary(document: appState.document, showsCover: false)
+                        MacThumbnailEditor(owner: ThumbnailOwner(.work, workspace.document.id), title: workspace.document.title)
+                        WorkInfoSummary(document: workspace.document, showsCover: false)
                     }
                     WritingProgressCard(tracker: appState.writingProgress)
                 }
@@ -677,14 +683,14 @@ private struct ProjectInfoView: View {
 
     private var titleBinding: Binding<String> {
         Binding(
-            get: { appState.document.title },
+            get: { workspace.document.title },
             set: { appState.updateDocumentTitle($0) }
         )
     }
 
     private var synopsisBinding: Binding<String> {
         Binding(
-            get: { appState.document.synopsis },
+            get: { workspace.document.synopsis },
             set: { appState.updateDocumentSynopsis($0) }
         )
     }

@@ -23,7 +23,7 @@ struct AppStateWorldNoteTests {
         #expect(state.selectedWorldNoteID == firstID)
         #expect(state.selectedWorldNote?.title == "魔法体系")
         #expect(state.selectedWorldNote?.content == "月光を媒介にする。")
-        #expect(state.document.worldNotes.map { $0.id } == [firstID, secondID])
+        #expect(state.workspaceModel.document.worldNotes.map { $0.id } == [firstID, secondID])
     }
 
     @Test("世界観ノート削除後は隣接ノートへ選択を移す")
@@ -37,7 +37,7 @@ struct AppStateWorldNoteTests {
         state.deleteWorldNote(id: secondID)
 
         #expect(state.selectedWorldNoteID == firstID)
-        #expect(state.document.worldNotes.map { $0.id } == [firstID])
+        #expect(state.workspaceModel.document.worldNotes.map { $0.id } == [firstID])
     }
 
     @Test("Mac adapterは追加時flush・入力中debounceを維持する", .timeLimit(.minutes(1)))
@@ -50,7 +50,7 @@ struct AppStateWorldNoteTests {
                 events.continuation.yield("debounced")
                 throw CancellationError()
             },
-            currentDocument: { state.document },
+            currentDocument: { state.workspaceModel.document },
             saveOperation: { _ in },
             saveEventHandler: { event in
                 if event == .saved {

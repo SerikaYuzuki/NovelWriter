@@ -29,7 +29,7 @@ extension AppState {
         attachments: [SyncAttachment] = [],
         resources: [PortableResource]? = nil
     ) async throws -> SyncV2OperationResult {
-        guard syncV2KeepBothPendingWorkID == nil || workID != currentSnapshotSyncV2WorkID else {
+        guard workspaceModel.keepBothPendingWorkID == nil || workID != currentSnapshotSyncV2WorkID else {
             throw SyncV2ApplicationError.safeBoundaryRejected
         }
         #if FUMINIWA_TEST_COMPOSITION
@@ -65,7 +65,7 @@ extension AppState {
     /// The live editor identity is an explicitly allocated WorkID. A ready
     /// session must have this value; the document payload is never its key.
     var currentSnapshotSyncV2WorkID: WorkID? {
-        snapshotSyncV2ActiveWorkID ?? snapshotSyncV2Session?.workID
+        workspaceModel.activeWorkID ?? snapshotSyncV2Session?.workID
     }
 
     func configureSnapshotSyncV2(
@@ -107,9 +107,9 @@ extension AppState {
         acknowledgeLocalCommit: Bool = false
     ) async -> Bool {
         writingProgress.requestFlush()
-        guard syncV2KeepBothPendingWorkID == nil else { return false }
+        guard workspaceModel.keepBothPendingWorkID == nil else { return false }
         guard let application = snapshotSyncV2Application else {
-            saveState = .failed
+            workspaceModel.saveState = .failed
             return false
         }
         let workID: WorkID
@@ -121,10 +121,10 @@ extension AppState {
             // session identity even during this first assignment.
             workID = WorkID(UUID())
         } else {
-            saveState = .failed
+            workspaceModel.saveState = .failed
             return false
         }
-        snapshotSyncV2ActiveWorkID = workID
+        workspaceModel.activeWorkID = workID
         let documentCreatedAt = Self.normalizedSnapshotSyncV2Date(
             snapshotSyncV2DocumentCreatedAt ?? Date()
         )
@@ -140,7 +140,7 @@ extension AppState {
                 nil
             }
         } catch {
-            saveState = .failed
+            workspaceModel.saveState = .failed
             return false
         }
         let checkpointAttachments = attachments ?? snapshotSyncV2Attachments
@@ -159,7 +159,7 @@ extension AppState {
                 self.applySnapshotSyncV2State(result.state)
                 self.applyCheckpointSaveState(result.state)
             },
-            applyFailure: { self.saveState = .failed }
+            applyFailure: { self.workspaceModel.saveState = .failed }
         ) {
         case .committed:
             return true
@@ -173,16 +173,16 @@ extension AppState {
     }
 
     func markDocumentDirty() {
-        saveState = .unsaved
+        workspaceModel.saveState = .unsaved
         saveCoordinator.markDirty()
         saveCoordinator.scheduleDebouncedSave()
     }
 
     @discardableResult
     func saveNow() async -> Bool {
-        guard syncV2KeepBothPendingWorkID == nil else { return false }
+        guard workspaceModel.keepBothPendingWorkID == nil else { return false }
         writingProgress.requestFlush()
-        let workID = snapshotSyncV2ActiveWorkID
+        let workID = workspaceModel.activeWorkID
         let context = CheckpointCoordinator.context(of: self)
         guard await saveCoordinator.saveNow(), CheckpointCoordinator.matches(context, host: self) else { return false }
         do {
@@ -192,7 +192,7 @@ extension AppState {
             return CheckpointCoordinator.matches(context, host: self)
         } catch {
             guard CheckpointCoordinator.matches(context, host: self) else { return false }
-            saveState = .failed
+            workspaceModel.saveState = .failed
             return false
         }
     }
@@ -223,14 +223,14 @@ extension AppState {
     func handleSaveEvent(_ event: V2DocumentSaveCoordinator.SaveEvent) {
         switch event {
         case .dirty:
-            documentChangeRevision &+= 1
+            workspaceModel.editGeneration &+= 1
             if !editorProgressAlreadyTracked, let workID = currentSnapshotSyncV2WorkID {
-                writingProgress.synchronize(document, workID: workID.rawValue)
+                writingProgress.synchronize(workspaceModel.document, workID: workID.rawValue)
             }
-            saveState = .unsaved
-        case .saving: saveState = .saving
-        case .saved: saveState = .saved
-        case .failed: saveState = .failed
+            workspaceModel.saveState = .unsaved
+        case .saving: workspaceModel.saveState = .saving
+        case .saved: workspaceModel.saveState = .saved
+        case .failed: workspaceModel.saveState = .failed
         }
     }
 
@@ -267,9 +267,9 @@ extension AppState {
         if canExplicitlySyncCurrentWork {
             await synchronizeSnapshotSyncV2()
         } else {
-            let session = documentSessionToken
+            let session = workspaceModel.documentSessionToken
             let captured = editorCommandSession.captureActiveCommittedText()
-            if await saveNow(), documentSessionToken == session,
+            if await saveNow(), workspaceModel.documentSessionToken == session,
                case .captured = captured,
                editorCommandSession.captureActiveCommittedText() == captured {
                 editorCommandSession.clearProofreadingHighlights()
@@ -283,8 +283,8 @@ extension AppState {
         guard canExplicitlySyncCurrentWork,
               let application = snapshotSyncV2Application,
               currentSnapshotSyncV2WorkID != nil else { return }
-        isSnapshotSyncInFlight = true
-        defer { isSnapshotSyncInFlight = false }
+        workspaceModel.isSyncInFlight = true
+        defer { workspaceModel.isSyncInFlight = false }
         _ = await workspaceCheckpointCoordinator(application).explicitlySync(
             host: self,
             permitsRemoteCompletion: { self.snapshotSyncV2Application === application },
@@ -424,13 +424,13 @@ extension AppState {
                   permitsDocumentImport || isBootstrapImport,
                   editorCommandSession.prepareForDocumentTransition() else { return false }
             defer { editorCommandSession.resumeAfterDocumentTransition() }
-            isDocumentTransitionInProgress = true
-            defer { isDocumentTransitionInProgress = false }
+            workspaceModel.isDocumentTransitionInProgress = true
+            defer { workspaceModel.isDocumentTransitionInProgress = false }
             cancelSnapshotSyncV2BackgroundOperations()
-            let expectedDocumentSession = documentSessionToken
+            let expectedDocumentSession = workspaceModel.documentSessionToken
             let expectedWorkID = currentSnapshotSyncV2WorkID
             let expectedSnapshotSession = snapshotSyncV2Session
-            if expectedWorkID != nil, saveState != .saved {
+            if expectedWorkID != nil, workspaceModel.saveState != .saved {
                 guard await saveNow() else { return false }
             }
             do {
@@ -439,7 +439,7 @@ extension AppState {
                 // ordinary session identity.
                 let imported = try await portableBridge.importExplicitPackage(from: url)
                 let importedWorkID = WorkID(UUID())
-                guard documentSessionToken == expectedDocumentSession,
+                guard workspaceModel.documentSessionToken == expectedDocumentSession,
                       currentSnapshotSyncV2WorkID == expectedWorkID,
                       snapshotSyncV2Session == expectedSnapshotSession else { return false }
                 let importedCreatedAt = imported.documentCreatedAt
@@ -456,7 +456,7 @@ extension AppState {
                     attachments: imported.attachments,
                     resources: localResources
                 )
-                guard documentSessionToken == expectedDocumentSession,
+                guard workspaceModel.documentSessionToken == expectedDocumentSession,
                       currentSnapshotSyncV2WorkID == expectedWorkID,
                       snapshotSyncV2Session == expectedSnapshotSession else { return false }
                 guard installV2Document(
@@ -506,35 +506,35 @@ extension AppState {
         } catch {
             return false
         }
-        self.document = document
+        workspaceModel.document = document
         snapshotSyncV2Attachments = attachments
         snapshotSyncV2Resources = portableMirror.resources
         snapshotSyncV2PortableCreatedAt = portableCreatedAt ?? portableMirror.portableCreatedAt
         attachmentPreviewURLs.removeAll()
-        self.attachments = attachments.map {
+        workspaceModel.attachments = attachments.map {
             Attachment(fileName: $0.fileName, byteCount: Int64($0.byteCount))
         }
-        selectedChapterID = document.chapters.first?.id
-        selectedEpisodeID = document.chapters.first?.episodes.first?.id
+        workspaceModel.selectedChapterID = document.chapters.first?.id
+        workspaceModel.selectedEpisodeID = document.chapters.first?.episodes.first?.id
         selectedCharacterID = nil
         selectedPlotCardID = nil
         selectedFlagID = nil
         selectedWorldNoteID = nil
         plotOutlineSelection = document.chapters.first.map { .chapter($0.id) } ?? .unassigned
-        editorContentGeneration &+= 1
-        documentSessionToken = WorkspaceSessionToken(
-            generation: editorContentGeneration,
+        workspaceModel.editorContentGeneration &+= 1
+        workspaceModel.documentSessionToken = WorkspaceSessionToken(
+            generation: workspaceModel.editorContentGeneration,
             documentID: document.id,
             workID: workID
         )
-        snapshotSyncV2ActiveWorkID = workID
+        workspaceModel.activeWorkID = workID
         clearKeepBothHandoff()
         writingProgress.install(document, workID: workID.rawValue)
         snapshotSyncV2DocumentCreatedAt = Self.normalizedSnapshotSyncV2Date(createdAt)
         userDefaults.removeObject(forKey: "fuminiwa.v2.startInLibrary")
         userDefaults.set(workID.rawValue.uuidString, forKey: "fuminiwa.v2.activeWorkID")
         snapshotSyncV2Session = nil
-        saveState = .saved
+        workspaceModel.saveState = .saved
         return true
     }
 
@@ -547,19 +547,19 @@ extension AppState {
                   permitsNewDocument,
                   editorCommandSession.prepareForDocumentTransition() else { return false }
             defer { editorCommandSession.resumeAfterDocumentTransition() }
-            isDocumentTransitionInProgress = true
-            defer { isDocumentTransitionInProgress = false }
+            workspaceModel.isDocumentTransitionInProgress = true
+            defer { workspaceModel.isDocumentTransitionInProgress = false }
             cancelSnapshotSyncV2BackgroundOperations()
-            let expectedDocumentSession = documentSessionToken
+            let expectedDocumentSession = workspaceModel.documentSessionToken
             let expectedWorkID = currentSnapshotSyncV2WorkID
             let expectedSnapshotSession = snapshotSyncV2Session
-            if expectedWorkID != nil, saveState != .saved {
+            if expectedWorkID != nil, workspaceModel.saveState != .saved {
                 guard await saveNow() else { return false }
             }
             let fresh = NovelDocument.newDocument()
             let freshWorkID = WorkID(UUID())
             let freshCreatedAt = Self.normalizedSnapshotSyncV2Date(Date())
-            guard documentSessionToken == expectedDocumentSession,
+            guard workspaceModel.documentSessionToken == expectedDocumentSession,
                   currentSnapshotSyncV2WorkID == expectedWorkID,
                   snapshotSyncV2Session == expectedSnapshotSession else { return false }
             do {
@@ -573,7 +573,7 @@ extension AppState {
             } catch {
                 return false
             }
-            guard documentSessionToken == expectedDocumentSession,
+            guard workspaceModel.documentSessionToken == expectedDocumentSession,
                   currentSnapshotSyncV2WorkID == expectedWorkID,
                   snapshotSyncV2Session == expectedSnapshotSession else { return false }
             guard installV2Document(
@@ -607,8 +607,8 @@ extension AppState {
                   permitsDocumentTransitionOperation,
                   editorCommandSession.prepareForDocumentTransition() else { return false }
             defer { editorCommandSession.resumeAfterDocumentTransition() }
-            isDocumentTransitionInProgress = true
-            defer { isDocumentTransitionInProgress = false }
+            workspaceModel.isDocumentTransitionInProgress = true
+            defer { workspaceModel.isDocumentTransitionInProgress = false }
             cancelSnapshotSyncV2BackgroundOperations()
             guard await saveNow() else { return false }
             do {

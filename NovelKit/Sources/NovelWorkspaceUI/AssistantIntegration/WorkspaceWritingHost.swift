@@ -11,7 +11,7 @@ public protocol WorkspaceWritingHost: WorkspaceEditorHost {
     var writingInteractionAllowed: Bool { get }
     var writingApplication: SyncV2Application? { get }
     var userDefaults: UserDefaults { get }
-    var assistantRequestCenter: AssistantRequestCenter { get }
+    var workspaceModel: WorkspaceModel { get }
     var writingSyncScheduler: WritingSyncScheduler { get }
     var documentOperationGate: DocumentOperationGate { get }
     func writingAttachments() throws -> [WritingAttachment]

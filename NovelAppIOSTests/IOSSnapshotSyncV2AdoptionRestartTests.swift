@@ -20,13 +20,13 @@ struct IOSSnapshotSyncV2AdoptionRestartTests {
             let store = makeStore(environment: environment, fixture: fixture)
             let application = try await installPendingWork(fixture, into: store)
 
-            #expect(store.document.title == "端末版")
+            #expect(store.workspaceModel.document.title == "端末版")
             #expect(await store.synchronizeSnapshotSyncV2())
             try await eventually {
                 let pending = try await application.pendingAdoption(workID: fixture.workID)
-                return store.document.title == "サーバー版" && pending == nil
+                return store.workspaceModel.document.title == "サーバー版" && pending == nil
                     && store.selectedEpisode?.content == "Macで更新した本文"
-                    && (store.snapshotSyncState?.remoteProgress == .idle || store.snapshotSyncState?.remoteProgress == .noChanges)
+                    && (store.workspaceModel.syncUIState?.remoteProgress == .idle || store.workspaceModel.syncUIState?.remoteProgress == .noChanges)
             }
         }
     }
@@ -46,7 +46,7 @@ struct IOSSnapshotSyncV2AdoptionRestartTests {
                 store.updateDocumentTitle("同期中の追加入力")
             }
             try await eventually { store.snapshotSyncV2ReprojectionTask == nil }
-            #expect(store.document.title == (changeSession ? "端末版" : "同期中の追加入力"))
+            #expect(store.workspaceModel.document.title == (changeSession ? "端末版" : "同期中の追加入力"))
             #expect(try await application.pendingAdoption(workID: fixture.workID) != nil)
         }
     }
@@ -59,18 +59,18 @@ struct IOSSnapshotSyncV2AdoptionRestartTests {
             let store = makeStore(environment: environment, fixture: fixture)
             let application = try await installPendingWork(fixture, into: store)
 
-            #expect(store.document.title == "端末版")
+            #expect(store.workspaceModel.document.title == "端末版")
             await store.resumeSnapshotSyncV2()
 
             try await eventually {
                 let pending = try await application.pendingAdoption(workID: fixture.workID)
-                return store.document.title == "サーバー版"
+                return store.workspaceModel.document.title == "サーバー版"
                     && pending == nil
-                    && store.snapshotSyncConflict == nil
-                    && (store.snapshotSyncState?.remoteProgress == .idle || store.snapshotSyncState?.remoteProgress == .noChanges)
+                    && store.workspaceModel.syncConflict == nil
+                    && (store.workspaceModel.syncUIState?.remoteProgress == .idle || store.workspaceModel.syncUIState?.remoteProgress == .noChanges)
             }
-            #expect(store.snapshotSyncConflict == nil)
-            #expect((store.snapshotSyncState?.remoteProgress == .idle || store.snapshotSyncState?.remoteProgress == .noChanges))
+            #expect(store.workspaceModel.syncConflict == nil)
+            #expect((store.workspaceModel.syncUIState?.remoteProgress == .idle || store.workspaceModel.syncUIState?.remoteProgress == .noChanges))
         }
     }
 
@@ -83,16 +83,16 @@ struct IOSSnapshotSyncV2AdoptionRestartTests {
             #expect(await store.configureSnapshotSyncV2())
             let application = try #require(store.snapshotSyncV2Application)
             await store.refreshSnapshotSyncV2Projection()
-            #expect(store.syncV2ActiveWorkID == nil)
-            #expect(store.syncV2LibraryItems.contains { $0.workID == fixture.workID })
+            #expect(store.workspaceModel.activeWorkID == nil)
+            #expect(store.workspaceModel.libraryRows.contains { $0.workID == fixture.workID })
 
             #expect(await store.openSnapshotSyncV2(workID: fixture.workID.rawValue))
 
             try await eventually {
                 let pending = try await application.pendingAdoption(workID: fixture.workID)
-                return store.document.title == "サーバー版" && pending == nil
+                return store.workspaceModel.document.title == "サーバー版" && pending == nil
             }
-            #expect(store.snapshotSyncConflict == nil)
+            #expect(store.workspaceModel.syncConflict == nil)
         }
     }
 
@@ -104,15 +104,15 @@ struct IOSSnapshotSyncV2AdoptionRestartTests {
             let store = makeStore(environment: environment, fixture: fixture)
             let application = try await installPendingWork(fixture, into: store)
             store.updateDocumentTitle("再起動後の追加入力")
-            #expect(store.saveState == .dirty)
+            #expect(store.workspaceModel.saveState == .dirty)
 
             await store.resumeSnapshotSyncV2()
             try await Task.sleep(nanoseconds: 100_000_000)
 
-            #expect(store.document.title == "再起動後の追加入力")
+            #expect(store.workspaceModel.document.title == "再起動後の追加入力")
             #expect(try await application.pendingAdoption(workID: fixture.workID) != nil)
-            #expect(store.snapshotSyncState?.conflict == nil)
-            guard let progress = store.snapshotSyncState?.remoteProgress,
+            #expect(store.workspaceModel.syncUIState?.conflict == nil)
+            guard let progress = store.workspaceModel.syncUIState?.remoteProgress,
                   case .readyForSafeAdoption = progress else {
                 Issue.record("pending adoption did not remain available in the Inbox")
                 return
@@ -141,7 +141,7 @@ struct IOSSnapshotSyncV2AdoptionRestartTests {
             await store.resumeSnapshotSyncV2()
             try await Task.sleep(nanoseconds: 100_000_000)
 
-            #expect(store.document.title == "端末版")
+            #expect(store.workspaceModel.document.title == "端末版")
             #expect(try await application.pendingAdoption(workID: fixture.workID) != nil)
             #expect(editorSession.captureActiveCommittedText() == .compositionInProgress)
         }
@@ -161,7 +161,7 @@ struct IOSSnapshotSyncV2AdoptionRestartTests {
             try await Task.sleep(nanoseconds: 100_000_000)
 
             #expect(store.currentDocumentSessionToken != originalSession)
-            #expect(store.document.title == "端末版")
+            #expect(store.workspaceModel.document.title == "端末版")
             #expect(try await application.pendingAdoption(workID: fixture.workID) != nil)
         }
     }
@@ -172,10 +172,10 @@ struct IOSSnapshotSyncV2AdoptionRestartTests {
             let fixture = try await makePendingAdoptionFixture()
             environment.track(fixture.configuration)
             let store = makeStore(environment: environment, fixture: fixture)
-            store.authSession = makeAuthSession(accountID: "test-account", fence: "test-fence")
+            store.workspaceModel.authSession = makeAuthSession(accountID: "test-account", fence: "test-fence")
             let application = try await installPendingWork(fixture, into: store)
             let expectedSession = try #require(store.currentDocumentSessionToken)
-            let expectedGeneration = store.localEditGeneration
+            let expectedGeneration = store.workspaceModel.editGeneration
             let expectedScope = store.snapshotSyncV2AccountScope
             let gate = AdoptionOperationGate()
             let blocker = Task { @MainActor in
@@ -194,12 +194,12 @@ struct IOSSnapshotSyncV2AdoptionRestartTests {
             }
 
             store.invalidateSnapshotSyncV2AccountOperations()
-            store.authSession = makeAuthSession(accountID: "other-account", fence: "other-fence")
+            store.workspaceModel.authSession = makeAuthSession(accountID: "other-account", fence: "other-fence")
             await gate.release()
             await blocker.value
 
             #expect(await adoption.value == false)
-            #expect(store.document.title == "端末版")
+            #expect(store.workspaceModel.document.title == "端末版")
             #expect(try await application.pendingAdoption(workID: fixture.workID) != nil)
         }
     }
@@ -214,8 +214,8 @@ struct IOSSnapshotSyncV2AdoptionRestartTests {
             .appendingPathComponent("FUMINIWA-iOS-catalog-race-\(id)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let store = IOSDocumentStore(userDefaults: defaults, libraryRoot: root)
-        store.authSession = makeAuthSession(accountID: "account", fence: "fence")
-        store.authUIState = .signedIn(accountID: "account")
+        store.workspaceModel.authSession = makeAuthSession(accountID: "account", fence: "fence")
+        store.workspaceModel.authUIState = .signedIn(accountID: "account")
         let scope = store.snapshotSyncV2AccountScope
         store.remoteCatalogRefreshGeneration = 5
         // A local reprojection starts after the catalog request, as at launch.
@@ -243,12 +243,12 @@ struct IOSSnapshotSyncV2AdoptionRestartTests {
         if !localFinishesFirst {
             #expect(finishLocal())
         }
-        #expect(store.syncV2LibraryItems.count == 2)
-        let retainedLocal = try #require(store.syncV2LibraryItems.first { $0.workID == local.workID })
+        #expect(store.workspaceModel.libraryRows.count == 2)
+        let retainedLocal = try #require(store.workspaceModel.libraryRows.first { $0.workID == local.workID })
         #expect(retainedLocal.title == local.title)
         #expect(retainedLocal.localGeneration == 9)
         #expect(retainedLocal.availability == .localOnly)
-        #expect(store.syncV2LibraryItems.first { $0.workID == remote.workID }?.availability == .remoteOnly)
+        #expect(store.workspaceModel.libraryRows.first { $0.workID == remote.workID }?.availability == .remoteOnly)
     }
 
     @Test("an old account catalog page cannot repopulate the switched shelf")
@@ -261,8 +261,8 @@ struct IOSSnapshotSyncV2AdoptionRestartTests {
             .appendingPathComponent("FUMINIWA-iOS-catalog-\(id)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let store = IOSDocumentStore(userDefaults: defaults, libraryRoot: root)
-        store.authSession = makeAuthSession(accountID: "old-account", fence: "old-fence")
-        store.authUIState = .signedIn(accountID: "old-account")
+        store.workspaceModel.authSession = makeAuthSession(accountID: "old-account", fence: "old-fence")
+        store.workspaceModel.authUIState = .signedIn(accountID: "old-account")
         store.libraryRefreshGeneration = 7
         store.remoteCatalogRefreshGeneration = 7
         store.historyRefreshGeneration = 11
@@ -281,8 +281,8 @@ struct IOSSnapshotSyncV2AdoptionRestartTests {
         store.syncV2HistoryWorkID = staleItem.workID
 
         store.invalidateSnapshotSyncV2AccountOperations()
-        store.authSession = makeAuthSession(accountID: "new-account", fence: "new-fence")
-        store.authUIState = .signedIn(accountID: "new-account")
+        store.workspaceModel.authSession = makeAuthSession(accountID: "new-account", fence: "new-fence")
+        store.workspaceModel.authUIState = .signedIn(accountID: "new-account")
 
         #expect(store.applySnapshotSyncV2LibraryProjection(
             SyncV2LibraryProjection(items: [staleLocalItem]),
@@ -307,9 +307,9 @@ struct IOSSnapshotSyncV2AdoptionRestartTests {
             expectedAccountScope: expectedScope,
             refreshGeneration: 11
         ) == false)
-        #expect(store.syncV2RemoteCatalogItems.isEmpty)
-        #expect(store.syncV2LibraryItems.isEmpty)
-        #expect(store.syncV2HistoryItems.isEmpty)
+        #expect(store.workspaceModel.remoteCatalogItems.isEmpty)
+        #expect(store.workspaceModel.libraryRows.isEmpty)
+        #expect(store.workspaceModel.historyItems.isEmpty)
         #expect(store.syncV2HistoryCursor == nil)
     }
 
@@ -324,11 +324,11 @@ struct IOSSnapshotSyncV2AdoptionRestartTests {
             libraryRoot: environment.root,
             runtimeComposition: .test(fixture.configuration)
         )
-        store.authSession = makeAuthSession(
+        store.workspaceModel.authSession = makeAuthSession(
             accountID: "test-account",
             fence: "test-fence"
         )
-        store.authUIState = .signedIn(accountID: "test-account")
+        store.workspaceModel.authUIState = .signedIn(accountID: "test-account")
         return store
     }
 
@@ -342,7 +342,7 @@ struct IOSSnapshotSyncV2AdoptionRestartTests {
         let document = try #require(opened.document)
         #expect(store.installSnapshotSyncV2Opened(opened, value: document))
         await store.applySnapshotSyncV2State(application.uiState(workID: fixture.workID))
-        guard let progress = store.snapshotSyncState?.remoteProgress,
+        guard let progress = store.workspaceModel.syncUIState?.remoteProgress,
               case .readyForSafeAdoption = progress else {
             Issue.record("restart did not project the durable pending adoption")
             throw AdoptionTestError.pendingAdoptionMissing
@@ -372,26 +372,26 @@ extension IOSSnapshotSyncV2AdoptionRestartTests {
             environment.track(fixture.configuration)
             let store = makeStore(environment: environment, fixture: fixture)
             let application = try await installPendingWork(fixture, into: store)
-            let selected = try #require(store.document.chapters.first?.episodes.last?.id)
-            store.selectedEpisodeID = selected
+            let selected = try #require(store.workspaceModel.document.chapters.first?.episodes.last?.id)
+            store.workspaceModel.selectedEpisodeID = selected
             var observedProtectedAdoption = false
             store.editorCommandSession.registerDocumentLifecycleHandler(id: UUID(), prepare: { true }, resume: {
                 if store.isRemoteAdoptionInProgress {
                     observedProtectedAdoption = true
-                    #expect(store.isDocumentTransitionInProgress)
+                    #expect(store.workspaceModel.isDocumentTransitionInProgress)
                     #expect(!store.showsDocumentTransitionOverlay)
                 }
             })
             let task = Task { await store.runAutomaticSnapshotSyncV2() }
             defer { task.cancel() }
             try await eventually {
-                store.document.title == "サーバー版" && (store.snapshotSyncState?.remoteProgress == .idle || store.snapshotSyncState?.remoteProgress == .noChanges)
+                store.workspaceModel.document.title == "サーバー版" && (store.workspaceModel.syncUIState?.remoteProgress == .idle || store.workspaceModel.syncUIState?.remoteProgress == .noChanges)
             }
             #expect(try await application.pendingAdoption(workID: fixture.workID) == nil)
             #expect(observedProtectedAdoption)
-            #expect(store.selectedEpisodeID == selected)
+            #expect(store.workspaceModel.selectedEpisodeID == selected)
             #expect(store.selectedEpisode?.content == "二話の本文")
-            #expect(!store.isDocumentTransitionInProgress)
+            #expect(!store.workspaceModel.isDocumentTransitionInProgress)
             #expect(!store.isRemoteAdoptionInProgress)
         }
     }
@@ -726,15 +726,15 @@ extension IOSSnapshotSyncV2AdoptionRestartTests {
             let gate = try #require(await application.gate as? InMemorySyncV2DocumentGate)
             await gate.setUnsafe(true, workID: fixture.workID)
             #expect(await !store.adoptPendingSnapshotSyncV2(automatically: true))
-            #expect(store.automaticAdoptionAttempts[store.snapshotSyncV2AccountScope]?[fixture.workID]?.count == 1)
+            #expect(store.workspaceModel.automaticAdoptionAttempts[store.snapshotSyncV2AccountScope]?[fixture.workID]?.count == 1)
             store.operationErrorMessage = nil
             await gate.setUnsafe(false, workID: fixture.workID)
             #expect(await !store.adoptPendingSnapshotSyncV2(automatically: true))
-            #expect(store.document.title == "端末版")
+            #expect(store.workspaceModel.document.title == "端末版")
             #expect(store.operationErrorMessage == nil)
             #expect(try await application.pendingAdoption(workID: fixture.workID) != nil)
             #expect(await store.adoptPendingSnapshotSyncV2())
-            #expect(store.document.title == "サーバー版")
+            #expect(store.workspaceModel.document.title == "サーバー版")
         }
     }
 }

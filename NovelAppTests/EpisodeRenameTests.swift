@@ -8,24 +8,24 @@ struct EpisodeRenameTests {
     @Test("選択していない話を変更しても本文・選択・Editor世代を維持する")
     func renameKeepsEditorState() throws {
         let state = makeState()
-        let chapterID = try #require(state.selectedChapterID)
+        let chapterID = try #require(state.workspaceModel.selectedChapterID)
         let original = try #require(state.selectedEpisode)
         var request = EpisodeRenameRequest(episode: original, chapterID: chapterID, appState: state)
         state.addEpisode(to: chapterID)
-        let selection = state.selectedEpisodeID
-        let generation = state.editorContentGeneration
+        let selection = state.workspaceModel.selectedEpisodeID
+        let generation = state.workspaceModel.editorContentGeneration
         request.title = "  新しい話名  "
         request.apply(to: state)
-        #expect(state.document.episode(original.id)?.episode.title == "新しい話名")
-        #expect(state.document.episode(original.id)?.episode.content == original.content)
-        #expect(state.selectedEpisodeID == selection)
-        #expect(state.editorContentGeneration == generation)
+        #expect(state.workspaceModel.document.episode(original.id)?.episode.title == "新しい話名")
+        #expect(state.workspaceModel.document.episode(original.id)?.episode.content == original.content)
+        #expect(state.workspaceModel.selectedEpisodeID == selection)
+        #expect(state.workspaceModel.editorContentGeneration == generation)
     }
 
     @Test("古いアカウント・空白の名前・存在しない章を拒否する")
     func rejectsInvalidRequests() throws {
         let state = makeState()
-        let chapterID = try #require(state.selectedChapterID)
+        let chapterID = try #require(state.workspaceModel.selectedChapterID)
         let episode = try #require(state.selectedEpisode)
         var request = EpisodeRenameRequest(episode: episode, chapterID: chapterID, appState: state)
         request.title = " \n "
@@ -42,11 +42,11 @@ struct EpisodeRenameTests {
     @Test("作品を開き直した後に古いダイアログを適用しない")
     func rejectsStaleSession() throws {
         let state = makeState()
-        let chapterID = try #require(state.selectedChapterID)
+        let chapterID = try #require(state.workspaceModel.selectedChapterID)
         let episode = try #require(state.selectedEpisode)
         var request = EpisodeRenameRequest(episode: episode, chapterID: chapterID, appState: state)
         request.title = "古い作品の操作"
-        state.documentSessionToken.generation += 1
+        state.workspaceModel.documentSessionToken.generation += 1
         request.apply(to: state)
         #expect(state.selectedEpisode?.title == episode.title)
     }

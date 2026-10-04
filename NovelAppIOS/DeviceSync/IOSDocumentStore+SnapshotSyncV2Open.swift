@@ -64,11 +64,11 @@ extension IOSDocumentStore {
                                            onOpened: @escaping @MainActor (WorkspaceSessionToken) -> Void = { _ in }) async -> Bool {
         guard !isSyncV2RemoteAccountTransitionActive,
               let application = snapshotSyncV2Application,
-              syncV2LibraryItems.contains(where: {
+              workspaceModel.libraryRows.contains(where: {
                   $0.workID == workID && $0.availability == .remoteOnly
               }),
               snapshotSyncV2RemoteOnlyOpenTask == nil else { return false }
-        let title = syncV2LibraryItems.first(where: { $0.workID == workID })?.title ?? "作品"
+        let title = workspaceModel.libraryRows.first(where: { $0.workID == workID })?.title ?? "作品"
         let expectedSession = currentDocumentSessionToken
         let expectedAccountScope = snapshotSyncV2AccountScope
         let operation = WorkspaceOperationContext(workID: expectedSession?.workID, session: expectedSession,
@@ -88,7 +88,7 @@ extension IOSDocumentStore {
                         && self.snapshotSyncV2RemoteOnlyOpenToken == operationToken
                         && self.matchesSyncAccount(expectedAccountScope)
                     },
-                    opening: { self.libraryImportPhases[workID] = ImportPhase(stage: .opening) }
+                    opening: { self.workspaceModel.libraryImportPhases[workID] = ImportPhase(stage: .opening) }
                 ) else { return }
                 let installed = await documentOperationGate.perform { [weak self] in
                     guard let self,
@@ -97,7 +97,7 @@ extension IOSDocumentStore {
                           currentDocumentSessionToken == expectedSession,
                           shouldOpen(),
                           matchesSyncOperation(operation),
-                          syncV2LibraryItems.contains(where: { $0.workID == workID }) else {
+                          workspaceModel.libraryRows.contains(where: { $0.workID == workID }) else {
                         return false
                     }
                     var installed = false

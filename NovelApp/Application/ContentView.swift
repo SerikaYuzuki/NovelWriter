@@ -8,6 +8,7 @@ import NovelWorkspaceUI
 import SwiftUI
 
 struct ContentView: View {
+    @Environment(WorkspaceModel.self) private var workspace
     @Environment(AppState.self) private var appState
     @Environment(DocumentPanelPresenter.self) private var documentPanelPresenter
     @Environment(ExportPresenter.self) private var exportPresenter
@@ -17,16 +18,17 @@ struct ContentView: View {
 
     var body: some View {
         rootContent
+            .environment(workspace)
             .safeAreaInset(edge: .top) {
-                if appState.syncV2KeepBothPendingWorkID != nil, !appState.isDocumentTransitionInProgress {
+                if workspace.keepBothPendingWorkID != nil, !workspace.isDocumentTransitionInProgress {
                     KeepBothRecoveryView(
                         retry: { await appState.retryKeepBothHandoff() },
                         leave: { await appState.returnToSnapshotLibrary() }
                     )
                 }
             }
-            .onChange(of: appState.isDocumentTransitionInProgress) { _, transitioning in
-                if !transitioning, appState.syncV2KeepBothPendingWorkID != nil {
+            .onChange(of: workspace.isDocumentTransitionInProgress) { _, transitioning in
+                if !transitioning, workspace.keepBothPendingWorkID != nil {
                     showingConflict = false
                 }
             }
@@ -50,7 +52,7 @@ struct ContentView: View {
             .alert(
                 "作品の操作",
                 isPresented: Binding(
-                    get: { (appState.operationMessage != nil && appState.syncV2KeepBothPendingWorkID == nil)
+                    get: { (appState.operationMessage != nil && workspace.keepBothPendingWorkID == nil)
                         || documentPanelPresenter.alertMessage != nil
                     },
                     set: {
@@ -65,16 +67,16 @@ struct ContentView: View {
             } message: {
                 Text(documentPanelPresenter.alertMessage ?? appState.operationMessage ?? "")
             }
-            .onChange(of: appState.snapshotSyncConflict, initial: true) { _, conflict in
+            .onChange(of: workspace.syncConflict, initial: true) { _, conflict in
                 showingConflict = conflict != nil
             }
             .onReceive(NotificationCenter.default.publisher(for: .presentWorkHistory)) { notification in
                 guard let session = notification.object as? WorkspaceSessionToken,
-                      appState.documentSessionToken == session else { return }
+                      workspace.documentSessionToken == session else { return }
                 showingConflictHistory = true
             }
             .onReceive(NotificationCenter.default.publisher(for: .presentSnapshotSyncConflict)) { _ in
-                showingConflict = appState.snapshotSyncConflict != nil
+                showingConflict = workspace.syncConflict != nil
             }
             .alert(
                 "作品を開けませんでした",
@@ -176,6 +178,6 @@ private struct RecoveryPane: View {
         initialStartupState: .ready
     )
     return ContentView()
-        .environment(state)
+        .environment(state).environment(state.workspaceModel)
         .environment(session)
 }

@@ -1,10 +1,12 @@
 import NovelSyncV2
 import NovelSyncV2Application
 import NovelUI
+import NovelWorkspace
 import NovelWorkspaceUI
 import SwiftUI
 
 struct IOSLibraryImportRow: View {
+    @Environment(WorkspaceModel.self) private var workspace
     let store: IOSDocumentStore
     let item: SyncV2LibraryItem
     let isRenaming: Bool
@@ -21,7 +23,7 @@ struct IOSLibraryImportRow: View {
     }
 
     private var phase: ImportPhase {
-        store.libraryImportPhases[item.workID] ?? ImportPhase()
+        workspace.libraryImportPhases[item.workID] ?? ImportPhase()
     }
 
     var body: some View {
@@ -49,7 +51,7 @@ struct IOSLibraryImportRow: View {
         return layout {
             Button(action: open) {
                 cover
-            }.buttonStyle(.plain).disabled(isRenaming || store.pendingDeletionWorkIDs.contains(item.workID))
+            }.buttonStyle(.plain).disabled(isRenaming || workspace.pendingDeletionWorkIDs.contains(item.workID))
                 .accessibilityLabel("\(item.title)を開く")
             VStack(alignment: .leading, spacing: Spacing.extraSmall) {
                 Button(action: open) {
@@ -58,7 +60,7 @@ struct IOSLibraryImportRow: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .disabled(isRenaming || store.pendingDeletionWorkIDs.contains(item.workID))
+                .disabled(isRenaming || workspace.pendingDeletionWorkIDs.contains(item.workID))
                 .accessibilityHint(isRenaming ? "作品名を変更中です" : isImporting ? LibraryImportProgress.hint(SyncV2LibraryPresentation.longImportNotice) :
                     item.availability == .remoteOnly ? SyncV2LibraryPresentation.remoteOnlyHint : "")
                 if let note = item.historyBackfillNote, let application = store.snapshotSyncV2Application {
@@ -69,7 +71,7 @@ struct IOSLibraryImportRow: View {
                     Button(isGrid ? "中止" : "取り込みを中止") { Task { await store.cancelLibraryImport() } }
                         .buttonStyle(.borderless)
                         .frame(minHeight: 44)
-                } else if store.libraryImportFailures[item.workID] != nil {
+                } else if workspace.libraryImportFailures[item.workID] != nil {
                     Button("再試行") { store.takeOntoDevice(workID: item.workID, title: item.title) }
                         .tint(FuminiwaColor.accent.color)
                         .help(store.libraryPrefetchWorkID != nil || store.snapshotSyncV2RemoteOnlyOpeningWorkID != nil ? "ほかの作品を取り込み中です" : "この端末へ取り込み直します")
@@ -95,7 +97,7 @@ struct IOSLibraryImportRow: View {
             Text(LibraryImportProgress.hint(SyncV2LibraryPresentation.longImportNotice))
             Button("取り込みを中止") { Task { await store.cancelLibraryImport() } }
         }
-        if store.libraryImportFailures[item.workID] != nil {
+        if workspace.libraryImportFailures[item.workID] != nil {
             Button("再試行") { store.takeOntoDevice(workID: item.workID, title: item.title) }
                 .tint(FuminiwaColor.accent.color)
                 .help(store.libraryPrefetchWorkID != nil || store.snapshotSyncV2RemoteOnlyOpeningWorkID != nil ? "ほかの作品を取り込み中です" : "この端末へ取り込み直します")
@@ -103,7 +105,7 @@ struct IOSLibraryImportRow: View {
                 .disabled(store.libraryPrefetchWorkID != nil || store.snapshotSyncV2RemoteOnlyOpeningWorkID != nil)
         }
         Button(LibraryText.rename, systemImage: "pencil", action: rename)
-            .disabled(isRenaming || isImporting || store.pendingDeletionWorkIDs.contains(item.workID))
+            .disabled(isRenaming || isImporting || workspace.pendingDeletionWorkIDs.contains(item.workID))
         deletionButton
         if let reason = store.libraryDeletionDisabledReason(for: item.workID) {
             Text(reason)
@@ -138,14 +140,14 @@ struct IOSLibraryImportRow: View {
     }
 
     @ViewBuilder private var status: some View {
-        if store.pendingDeletionWorkIDs.contains(item.workID) {
+        if workspace.pendingDeletionWorkIDs.contains(item.workID) {
             StatusLabel(LibraryText.pendingDeletion, systemImage: "clock", tone: .secondary)
                 .font(FuminiwaType.rowSecondary)
         } else if isImporting, let startedAt = store.snapshotSyncV2RemoteOnlyOpenStartedAt {
             LibraryImportProgress(startedAt: startedAt, longImportNotice: SyncV2LibraryPresentation.longImportNotice,
                                   label: phase.japaneseLabel, fraction: phase.stage == .receiving ? phase.fraction : nil,
                                   accessibilityValue: phase.accessibilityValue, compact: isGrid)
-        } else if let failure = store.libraryImportFailures[item.workID] {
+        } else if let failure = workspace.libraryImportFailures[item.workID] {
             StatusLabel(SyncV2LibraryPresentation.importFailure(failure), systemImage: "exclamationmark.circle", tone: .danger)
                 .font(FuminiwaType.rowSecondary)
         } else if isRenaming {

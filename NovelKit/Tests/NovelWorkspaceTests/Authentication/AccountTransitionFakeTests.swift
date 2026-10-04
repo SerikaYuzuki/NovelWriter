@@ -1,5 +1,6 @@
 import Foundation
 import NovelAuth
+import NovelCore
 import NovelSyncV2Application
 import NovelWorkspace
 import Testing
@@ -67,8 +68,17 @@ struct AccountTransitionFakeTests {
 @MainActor
 private final class FakeAccountTransitionHost: AccountTransitionHost, AccountTransitionPort {
     let fixture: AccountTransitionFixture
-    var authSession: FuminiwaSession?
-    var authUIState: WorkspaceAuthUIState
+    let workspaceModel: WorkspaceModel
+    var authSession: FuminiwaSession? {
+        get { workspaceModel.authSession }
+        set { workspaceModel.authSession = newValue }
+    }
+
+    var authUIState: WorkspaceAuthUIState {
+        get { workspaceModel.authUIState }
+        set { workspaceModel.authUIState = newValue }
+    }
+
     var session: FuminiwaSession? {
         authSession
     }
@@ -109,6 +119,9 @@ private final class FakeAccountTransitionHost: AccountTransitionHost, AccountTra
 
     init(scenario: AuthCharacterizationScenario) throws {
         fixture = try AccountTransitionFixture(scenario: scenario, platform: .ios)
+        let document = NovelDocument.newDocument()
+        workspaceModel = WorkspaceModel(document: document,
+                                        session: .init(generation: 0, documentID: document.id, workID: .init(UUID())), saveState: .unsaved)
         authSession = fixture.initialSession
         authUIState = authSession.map { .signedIn(accountID: $0.accountID) } ?? .signedOut
     }

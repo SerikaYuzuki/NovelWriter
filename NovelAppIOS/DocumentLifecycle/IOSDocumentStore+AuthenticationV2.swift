@@ -75,25 +75,25 @@ extension IOSDocumentStore {
     }
 
     private func clearAccountScopedSnapshotUIForIOS() {
-        syncV2RemoteCatalogItems = []
-        syncV2RemoteCatalogCursor = nil
+        workspaceModel.remoteCatalogItems = []
+        workspaceModel.remoteCatalogCursor = nil
         syncV2RemoteCatalogError = nil
-        libraryFailure = nil
+        workspaceModel.libraryFailure = nil
         libraryNotice = nil
         snapshotSyncV2RemoteOnlyOpenFailure = nil
-        syncV2HistoryItems = []
+        workspaceModel.historyItems = []
         syncV2HistoryCursor = nil
         syncV2HistoryWorkID = nil
         syncV2HistoryLocalAvailability = .unavailable
         syncV2HistoryOnlineAvailability = .unavailable
         syncV2HistoryOnlineFailure = nil
-        snapshotSyncConflict = nil
-        snapshotSyncState = nil
+        workspaceModel.syncConflict = nil
+        workspaceModel.syncUIState = nil
         snapshotSyncOutcome = .failure(.offline)
     }
 
     private func retainLocalOnlyIOSLibraryProjection() {
-        syncV2LibraryItems = syncV2LibraryItems.filter {
+        workspaceModel.libraryRows = workspaceModel.libraryRows.filter {
             $0.accountState == .unbound || $0.accountState == .parkedDifferentAccount
         }
     }
@@ -101,7 +101,7 @@ extension IOSDocumentStore {
     func flushDeviceSyncForBackground(waitForRemote _: Bool) async -> Bool {
         _ = await saveNow()
         Task { await resumeSnapshotSyncV2() }
-        return saveState == .saved
+        return workspaceModel.saveState == .saved
     }
 
     func captureAutomaticSnapshotForBackground() async {}
@@ -126,7 +126,7 @@ extension IOSDocumentStore {
         case .notActive: break
         }
         return await ConflictCoordinator.saveBeforeDeparture(
-            currentWorkID: syncV2ActiveWorkID, pendingDuplicateID: syncV2KeepBothPendingWorkID,
+            currentWorkID: workspaceModel.activeWorkID, pendingDuplicateID: workspaceModel.keepBothPendingWorkID,
             save: { await self.saveNow() }
         )
     }
@@ -181,7 +181,7 @@ extension IOSDocumentStore: AccountTransitionPort {
 
     func accountCheckpoint(_ operation: @MainActor () async -> Bool) async -> Bool {
         await documentOperationGate.perform {
-            guard !self.isDocumentTransitionInProgress else { return false }
+            guard !self.workspaceModel.isDocumentTransitionInProgress else { return false }
             self.accountTransitionCoordinator.inProgress = true
             defer { self.accountTransitionCoordinator.inProgress = false }
             guard await self.performDocumentTransition({}) else { return false }
@@ -190,15 +190,15 @@ extension IOSDocumentStore: AccountTransitionPort {
     }
 
     func installAccountSession(_ session: FuminiwaSession?, state: WorkspaceAuthUIState) async {
-        let previous = authSession
+        let previous = workspaceModel.authSession
         dismissExport()
         clearAccountScopedSnapshotUIForIOS()
         syncV2ParkedAccountID = session == nil ? previous?.accountID : nil
         if session == nil {
             retainLocalOnlyIOSLibraryProjection()
         }
-        authSession = session
-        authUIState = state
+        workspaceModel.authSession = session
+        workspaceModel.authUIState = state
     }
 
     func reloadAccountLibrary() async {
@@ -206,7 +206,7 @@ extension IOSDocumentStore: AccountTransitionPort {
     }
 
     func resumeAccountWork() async {
-        guard !isSyncV2RemoteAccountTransitionActive, authSession != nil,
+        guard !isSyncV2RemoteAccountTransitionActive, workspaceModel.authSession != nil,
               let application = snapshotSyncV2Application else { return }
         let expected = snapshotSyncV2AccountScope
         try? await application.resumePending()

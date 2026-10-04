@@ -18,7 +18,7 @@ struct IOSSnapshotSyncV2P1TransitionTests {
         let store = IOSDocumentStore(userDefaults: defaults, libraryRoot: configuration.localRoot.url)
         for _ in 0 ..< 2 {
             let scope = store.snapshotSyncV2AccountScope
-            let completion = WorkspaceOperationContext(workID: store.syncV2ActiveWorkID,
+            let completion = WorkspaceOperationContext(workID: store.workspaceModel.activeWorkID,
                                                        session: store.currentDocumentSessionToken, account: scope, editGeneration: nil)
             #expect(store.matchesSyncAccount(scope))
             #expect(store.matchesSyncOperation(completion))
@@ -80,9 +80,9 @@ struct IOSSnapshotSyncV2P1TransitionTests {
         #expect(await store.configureSnapshotSyncV2())
         await store.bootstrap()
         #expect(await store.makeNewDocument())
-        let workID = try #require(store.syncV2ActiveWorkID)
-        store.authSession = nil
-        store.authUIState = .signedOut
+        let workID = try #require(store.workspaceModel.activeWorkID)
+        store.workspaceModel.authSession = nil
+        store.workspaceModel.authUIState = .signedOut
 
         let unsupported = makeIOSAuthSession(
             accountID: "old-account",
@@ -93,13 +93,13 @@ struct IOSSnapshotSyncV2P1TransitionTests {
             to: unsupported,
             authState: .signedIn(accountID: unsupported.accountID)
         ) == false)
-        #expect(store.authSession == nil)
-        if case .failed = store.authUIState {} else {
+        #expect(store.workspaceModel.authSession == nil)
+        if case .failed = store.workspaceModel.authUIState {} else {
             Issue.record("unsupported session was not surfaced as a typed auth failure")
         }
-        #expect(store.syncV2LibraryItems.map { $0.workID } == [workID])
-        #expect(store.syncV2LibraryItems.first?.accountState == .parkedDifferentAccount)
-        #expect(store.syncV2LibraryItems.first?.availability == .localOnly)
+        #expect(store.workspaceModel.libraryRows.map { $0.workID } == [workID])
+        #expect(store.workspaceModel.libraryRows.first?.accountState == .parkedDifferentAccount)
+        #expect(store.workspaceModel.libraryRows.first?.availability == .localOnly)
     }
 
     @Test("parked laneはsame accountで復帰し、別accountではlocal-onlyに留まる")
@@ -113,7 +113,7 @@ struct IOSSnapshotSyncV2P1TransitionTests {
         #expect(await store.configureSnapshotSyncV2())
         await store.bootstrap()
         #expect(await store.makeNewDocument())
-        let workID = try #require(store.syncV2ActiveWorkID)
+        let workID = try #require(store.workspaceModel.activeWorkID)
         store.updateDocumentTitle("端末で編集した作品")
         #expect(await store.saveNow())
         let application = try #require(store.snapshotSyncV2Application)
@@ -211,7 +211,7 @@ struct IOSSnapshotSyncV2P1TransitionTests {
         #expect(await store.configureSnapshotSyncV2())
         await store.bootstrap()
         #expect(await store.makeNewDocument())
-        let workID = try #require(store.syncV2ActiveWorkID)
+        let workID = try #require(store.workspaceModel.activeWorkID)
         let configuration = try #require(
             IOSDocumentStore.testRuntimeConfigurations[environment.root.standardizedFileURL]
         )
@@ -255,13 +255,13 @@ struct IOSSnapshotSyncV2P1TransitionTests {
         await sqlite.close()
 
         let oldServerUUID = try #require(UUID(uuidString: oldBinding.serverInstanceID))
-        store.authSession = makeIOSAuthSession(
+        store.workspaceModel.authSession = makeIOSAuthSession(
             accountID: oldBinding.accountID,
             fence: oldBinding.accountFence,
             protocolEpoch: 2,
             serverInstanceID: oldServerUUID
         )
-        store.authUIState = .signedIn(accountID: oldBinding.accountID)
+        store.workspaceModel.authUIState = .signedIn(accountID: oldBinding.accountID)
         let replacementServerUUID = try #require(UUID(uuidString: replacementBinding.serverInstanceID))
         let replacementSession = makeIOSAuthSession(
             accountID: replacementBinding.accountID,
@@ -291,15 +291,15 @@ struct IOSSnapshotSyncV2P1TransitionTests {
         #expect(await store.configureSnapshotSyncV2())
         await store.bootstrap()
         #expect(await store.makeNewDocument())
-        let workID = try #require(store.syncV2ActiveWorkID)
+        let workID = try #require(store.workspaceModel.activeWorkID)
         let oldServer = UUID()
-        store.authSession = makeIOSAuthSession(
+        store.workspaceModel.authSession = makeIOSAuthSession(
             accountID: "same-account",
             fence: "same-fence",
             protocolEpoch: 2,
             serverInstanceID: oldServer
         )
-        store.authUIState = .signedIn(accountID: "same-account")
+        store.workspaceModel.authUIState = .signedIn(accountID: "same-account")
         let application = try #require(store.snapshotSyncV2Application)
         let state = try #require(await application.uiState(workID: workID))
         let conflict = SyncV2ConflictProjection(
@@ -310,18 +310,18 @@ struct IOSSnapshotSyncV2P1TransitionTests {
             remoteSnapshotID: SnapshotID(data: Data("remote".utf8)),
             sourceGeneration: 1
         )
-        store.snapshotSyncState = SyncUIState(
+        store.workspaceModel.syncUIState = SyncUIState(
             workID: workID,
             localDurability: state.localDurability,
             remoteProgress: .needsChoice,
             conflict: conflict,
             lastTypedResult: .conflictPending
         )
-        store.snapshotSyncConflict = conflict
+        store.workspaceModel.syncConflict = conflict
         let displayed = try #require(store.snapshotSyncV2DisplayedConflictSelection)
 
         let newServer = UUID()
-        store.authSession = makeIOSAuthSession(
+        store.workspaceModel.authSession = makeIOSAuthSession(
             accountID: "same-account",
             fence: "same-fence",
             protocolEpoch: 2,
@@ -334,7 +334,7 @@ struct IOSSnapshotSyncV2P1TransitionTests {
             expectedSelection: displayed
         ) == false)
 
-        store.authSession = makeIOSAuthSession(
+        store.workspaceModel.authSession = makeIOSAuthSession(
             accountID: "same-account",
             fence: "same-fence",
             protocolEpoch: 2,
@@ -376,7 +376,7 @@ struct IOSSnapshotSyncV2AccountRequestP1Tests {
         #expect(await store.configureSnapshotSyncV2())
         await store.bootstrap()
         #expect(await store.makeNewDocument())
-        let workID = try #require(store.syncV2ActiveWorkID)
+        let workID = try #require(store.workspaceModel.activeWorkID)
         let application = try #require(store.snapshotSyncV2Application)
         let configuration = try #require(
             IOSDocumentStore.testRuntimeConfigurations[environment.root.standardizedFileURL]
@@ -403,12 +403,12 @@ struct IOSSnapshotSyncV2AccountRequestP1Tests {
             serverInstanceID: UUID()
         )
         store.testServerInstanceIDOverride = "test-server"
-        store.authSession = oldSession
-        store.authUIState = .signedIn(accountID: "test-account")
-        store.syncV2LibraryItems = [
+        store.workspaceModel.authSession = oldSession
+        store.workspaceModel.authUIState = .signedIn(accountID: "test-account")
+        store.workspaceModel.libraryRows = [
             SyncV2LibraryItem(
                 workID: workID,
-                title: store.document.title,
+                title: store.workspaceModel.document.title,
                 availability: .cached,
                 accountState: .active
             ),
@@ -450,10 +450,10 @@ struct IOSSnapshotSyncV2AccountRequestP1Tests {
         await sqliteBefore.close()
 
         let preflightTitle = "Apple開始前にSQLiteへ確定するdirty本文"
-        let localGenerationBeforeSignIn = store.localEditGeneration
+        let localGenerationBeforeSignIn = store.workspaceModel.editGeneration
         store.updateDocumentTitle(preflightTitle)
-        #expect(store.saveState == .dirty)
-        #expect(store.localEditGeneration == localGenerationBeforeSignIn + 1)
+        #expect(store.workspaceModel.saveState == .dirty)
+        #expect(store.workspaceModel.editGeneration == localGenerationBeforeSignIn + 1)
 
         let exchangeStarted = AsyncStream<Void>.makeStream()
         let exchangeRelease = AsyncStream<Void>.makeStream()
@@ -496,13 +496,13 @@ struct IOSSnapshotSyncV2AccountRequestP1Tests {
         #expect(oldWorker.isCancelled)
         #expect(store.snapshotSyncV2ReprojectionTask == nil)
         #expect(store.snapshotSyncV2ReprojectionToken == nil)
-        #expect(store.authSession == nil)
+        #expect(store.workspaceModel.authSession == nil)
         #expect(store.syncV2AccountTransitionRequestOwner != nil)
         #expect(store.syncV2RemoteSuspensionToken != nil)
         let parked = try await application.library().items.first { $0.workID == workID }
         #expect(parked?.accountState == .parkedDifferentAccount)
         #expect(parked?.availability == .localOnly)
-        #expect(store.localEditGeneration == localGenerationBeforeSignIn + 1)
+        #expect(store.workspaceModel.editGeneration == localGenerationBeforeSignIn + 1)
 
         // The request window fences remote work, but it must not freeze the
         // local shelf/editor while Apple UI or an exchange transport waits.
@@ -515,8 +515,8 @@ struct IOSSnapshotSyncV2AccountRequestP1Tests {
         await store.requestExport()
         let exportedDuringExchange = try #require(store.pendingExportURL)
         #expect(await store.importPackage(from: exportedDuringExchange))
-        let importedWorkID = try #require(store.syncV2ActiveWorkID)
-        let importedTitle = store.document.title
+        let importedWorkID = try #require(store.workspaceModel.activeWorkID)
+        let importedTitle = store.workspaceModel.document.title
         store.dismissExport()
 
         // Exercise local history/restore on the parked source, then return to
@@ -536,12 +536,12 @@ struct IOSSnapshotSyncV2AccountRequestP1Tests {
         #expect(parkedOpen.document?.title == preflightTitle)
 
         #expect(await store.refreshSnapshotHistory(for: workID))
-        if let localSnapshot = store.syncV2HistoryItems.first {
+        if let localSnapshot = store.workspaceModel.historyItems.first {
             #expect(await store.restoreSnapshotSyncV2(snapshotID: localSnapshot.snapshotID.rawValue))
         }
         #expect(await store.openSnapshotSyncV2(workID: importedWorkID.rawValue))
-        #expect(store.syncV2ActiveWorkID == importedWorkID)
-        #expect(store.document.title == importedTitle)
+        #expect(store.workspaceModel.activeWorkID == importedWorkID)
+        #expect(store.workspaceModel.document.title == importedTitle)
         let activeSessionBeforeExchange = try #require(store.currentDocumentSessionToken)
 
         await store.resumeSnapshotSyncV2()
@@ -551,12 +551,12 @@ struct IOSSnapshotSyncV2AccountRequestP1Tests {
         #expect(await store.startRemoteOnlySnapshotSyncV2Open(workID: remoteOnlyWorkID) == false)
         #expect(await configuration.remote.recordedOperations().count == remoteOperationCount)
 
-        let localGenerationBeforeEdit = store.localEditGeneration
+        let localGenerationBeforeEdit = store.workspaceModel.editGeneration
         store.updateDocumentTitle("Apple交換待ちでも保持するローカル編集")
-        #expect(store.document.title == "Apple交換待ちでも保持するローカル編集")
-        #expect(store.localEditGeneration > localGenerationBeforeEdit)
+        #expect(store.workspaceModel.document.title == "Apple交換待ちでも保持するローカル編集")
+        #expect(store.workspaceModel.editGeneration > localGenerationBeforeEdit)
         #expect(await store.saveNow())
-        let activeTitleBeforeExchangeRelease = store.document.title
+        let activeTitleBeforeExchangeRelease = store.workspaceModel.document.title
         let activeSessionAfterLocalEdit = try #require(store.currentDocumentSessionToken)
         #expect(await configuration.remote.recordedOperations().count == remoteOperationCount)
 
@@ -580,12 +580,12 @@ struct IOSSnapshotSyncV2AccountRequestP1Tests {
         exchangeRelease.continuation.yield(())
         exchangeRelease.continuation.finish()
         await signInTask.value
-        #expect(store.authSession?.accountID == replacementSession.accountID)
+        #expect(store.workspaceModel.authSession?.accountID == replacementSession.accountID)
         #expect(store.syncV2AccountTransitionRequested == false)
         #expect(store.syncV2AccountTransitionRequestOwner == nil)
         #expect(store.syncV2RemoteSuspensionToken == nil)
-        #expect(store.syncV2ActiveWorkID == importedWorkID)
-        #expect(store.document.title == activeTitleBeforeExchangeRelease)
+        #expect(store.workspaceModel.activeWorkID == importedWorkID)
+        #expect(store.workspaceModel.document.title == activeTitleBeforeExchangeRelease)
         #expect(store.currentDocumentSessionToken == activeSessionAfterLocalEdit)
         #expect(activeSessionAfterLocalEdit == activeSessionBeforeExchange)
         let rebound = try await application.library().items.first { $0.workID == workID }
@@ -613,11 +613,11 @@ struct IOSAccountRequestRecoveryTests {
         #expect(await store.configureSnapshotSyncV2())
         await store.bootstrap()
         #expect(await store.makeNewDocument())
-        let workID = try #require(store.syncV2ActiveWorkID)
+        let workID = try #require(store.workspaceModel.activeWorkID)
 
         let title = "Apple交換キャンセル後も保持される本文"
         store.updateDocumentTitle(title)
-        #expect(store.saveState == .dirty)
+        #expect(store.workspaceModel.saveState == .dirty)
         store.testAppleSignInHandler = {
             throw CancellationError()
         }
@@ -627,11 +627,11 @@ struct IOSAccountRequestRecoveryTests {
         #expect(store.syncV2AccountTransitionRequested == false)
         #expect(store.syncV2AccountTransitionRequestOwner == nil)
         #expect(store.syncV2RemoteSuspensionToken == nil)
-        #expect(store.authSession == nil)
-        #expect(store.document.title == title)
+        #expect(store.workspaceModel.authSession == nil)
+        #expect(store.workspaceModel.document.title == title)
         #expect(await store.saveNow())
         #expect(await store.openSnapshotSyncV2(workID: workID.rawValue))
-        #expect(store.document.title == title)
+        #expect(store.workspaceModel.document.title == title)
     }
 
     @Test("キャンセルされたApple開始のstale leaseは再試行を塞がない")
@@ -655,16 +655,16 @@ struct IOSAccountRequestRecoveryTests {
             protocolEpoch: 2
         )
         store.testAppleSignInHandler = { replacementSession }
-        store.authUIState = .failed("Appleでのサインインを完了できませんでした")
+        store.workspaceModel.authUIState = .failed("Appleでのサインインを完了できませんでした")
         store.syncV2AccountTransitionRequested = true
         store.syncV2AccountTransitionRequestOwner = UUID()
 
         await store.signInWithApple()
 
-        #expect(store.authSession?.accountID == replacementSession.accountID)
+        #expect(store.workspaceModel.authSession?.accountID == replacementSession.accountID)
         // The fixture catalog rejects authentication; retain the new session
         // but expose the reauthentication action instead of hiding that failure.
-        #expect(store.authUIState == .failed("認証の有効期限が切れました。Appleで再サインインしてください。原稿はこの端末に保存されています。"))
+        #expect(store.workspaceModel.authUIState == .failed("認証の有効期限が切れました。Appleで再サインインしてください。原稿はこの端末に保存されています。"))
         #expect(store.syncV2AccountTransitionRequested == false)
         #expect(store.syncV2AccountTransitionRequestOwner == nil)
         #expect(store.syncV2RemoteSuspensionToken == nil)
@@ -681,7 +681,7 @@ struct IOSAccountRequestRecoveryTests {
         #expect(await store.configureSnapshotSyncV2())
         await store.bootstrap()
         #expect(await store.makeNewDocument())
-        let workID = try #require(store.syncV2ActiveWorkID)
+        let workID = try #require(store.workspaceModel.activeWorkID)
         let application = try #require(store.snapshotSyncV2Application)
         let configuration = try #require(
             IOSDocumentStore.testRuntimeConfigurations[environment.root.standardizedFileURL]
@@ -694,7 +694,7 @@ struct IOSAccountRequestRecoveryTests {
 
         _ = try await application.checkpoint(
             workID: workID,
-            document: store.document,
+            document: store.workspaceModel.document,
             reason: .autosave,
             documentCreatedAt: store.documentCreatedAt
         )
@@ -728,7 +728,7 @@ struct IOSAccountRequestRecoveryTests {
             #expect(await store.configureSnapshotSyncV2())
             await store.bootstrap()
             #expect(await store.makeNewDocument())
-            workID = try #require(store.syncV2ActiveWorkID)
+            workID = try #require(store.workspaceModel.activeWorkID)
             store.updateDocumentTitle(title)
             #expect(await store.saveNow())
             let oldSession = makeIOSAuthSession(
@@ -739,13 +739,13 @@ struct IOSAccountRequestRecoveryTests {
             #if FUMINIWA_TEST_COMPOSITION
             store.testServerInstanceIDOverride = "test-server"
             #endif
-            store.authSession = oldSession
-            store.authUIState = .signedIn(accountID: oldSession.accountID)
+            store.workspaceModel.authSession = oldSession
+            store.workspaceModel.authUIState = .signedIn(accountID: oldSession.accountID)
             #expect(await store.transitionFuminiwaSession(
                 to: nil,
                 authState: .signedOut
             ))
-            #expect(store.syncV2LibraryItems.first(where: { $0.workID == workID })?.accountState
+            #expect(store.workspaceModel.libraryRows.first(where: { $0.workID == workID })?.accountState
                 == .parkedDifferentAccount)
         }
         await environment.releaseApplication()
@@ -755,11 +755,11 @@ struct IOSAccountRequestRecoveryTests {
             libraryRoot: environment.root
         )
         await reopened.bootstrap()
-        #expect(reopened.syncV2LibraryItems.contains {
+        #expect(reopened.workspaceModel.libraryRows.contains {
             $0.workID == workID && $0.accountState == .parkedDifferentAccount
         })
         #expect(await reopened.openSnapshotSyncV2(workID: workID.rawValue))
-        #expect(reopened.document.title == title)
+        #expect(reopened.workspaceModel.document.title == title)
         #expect(reopened.isCurrentWorkParked)
         #expect(reopened.canExplicitlySyncCurrentWork == false)
     }

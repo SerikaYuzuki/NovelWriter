@@ -10,7 +10,7 @@ extension AppState {
     func reloadAttachments(expectedSession: WorkspaceSessionToken? = nil) async {
         guard permitsEditorSynchronization(expectedSession: expectedSession) else { return }
         attachmentPreviewURLs.removeAll()
-        attachments = snapshotSyncV2Attachments.map {
+        workspaceModel.attachments = snapshotSyncV2Attachments.map {
             Attachment(fileName: $0.fileName, byteCount: Int64($0.byteCount))
         }
     }
@@ -34,7 +34,7 @@ extension AppState {
 
     func saveExplicitSnapshot() async -> Bool {
         await performSnapshotDataMutation {
-            await self.checkpointSnapshotSyncV2(self.document, reason: .explicit)
+            await self.checkpointSnapshotSyncV2(self.workspaceModel.document, reason: .explicit)
         }
     }
 
@@ -42,19 +42,19 @@ extension AppState {
         expectedSession: WorkspaceSessionToken? = nil,
         operation: @MainActor () async -> Bool
     ) async -> Bool {
-        let session = expectedSession ?? documentSessionToken
+        let session = expectedSession ?? workspaceModel.documentSessionToken
         let account = snapshotSyncV2AccountScopeToken
         return await documentOperationGate.perform {
-            guard self.documentSessionToken == session, self.snapshotSyncV2AccountScopeToken == account,
+            guard self.workspaceModel.documentSessionToken == session, self.snapshotSyncV2AccountScopeToken == account,
                   self.permitsDocumentInteraction,
                   self.editorCommandSession.prepareForDocumentTransition() else { return false }
             defer { self.editorCommandSession.resumeAfterDocumentTransition() }
             let result = await self.saveCoordinator.performExclusiveAfterFlushing(flushAfter: true) {
-                guard self.documentSessionToken == session, self.snapshotSyncV2AccountScopeToken == account,
+                guard self.workspaceModel.documentSessionToken == session, self.snapshotSyncV2AccountScopeToken == account,
                       self.permitsDocumentInteraction, !Task.isCancelled else { return false }
                 return await operation()
             }
-            guard self.documentSessionToken == session, self.snapshotSyncV2AccountScopeToken == account else { return false }
+            guard self.workspaceModel.documentSessionToken == session, self.snapshotSyncV2AccountScopeToken == account else { return false }
             if case let .completed(saved, savedAfterOperation) = result {
                 return saved && savedAfterOperation
             }
@@ -94,12 +94,12 @@ extension AppState {
     }
 
     func installWorkspaceAttachments(_ replacement: WorkspaceAttachmentSet) {
-        let changed = workspaceAttachments.records.filter { replacement[$0.fileName] != $0 }.map(\.fileName)
+        let changed = workspaceModel.attachmentSet.records.filter { replacement[$0.fileName] != $0 }.map(\.fileName)
         for name in changed {
             attachmentPreviewURLs.removeValue(forKey: name)
         }
-        workspaceAttachments = replacement
-        attachments = replacement.attachments
+        workspaceModel.attachmentSet = replacement
+        workspaceModel.attachments = replacement.attachments
     }
 
     func attachmentCommandsWithinSaveBoundary(reason: SyncV2CheckpointReason) -> WorkspaceAttachmentCommands {

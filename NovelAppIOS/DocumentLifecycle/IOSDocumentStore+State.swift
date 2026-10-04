@@ -24,34 +24,34 @@ extension IOSDocumentStore {
 
     func markDocumentChanged(progressAlreadyTracked: Bool = false) {
         guard startupState == .ready,
-              syncV2ActiveWorkID != nil,
-              !isDocumentTransitionInProgress,
+              workspaceModel.activeWorkID != nil,
+              !workspaceModel.isDocumentTransitionInProgress,
               !syncV2AccountTransitionInProgress,
-              syncV2KeepBothPendingWorkID == nil else { return }
-        if !progressAlreadyTracked, let workID = syncV2ActiveWorkID {
-            writingProgress.synchronize(document, workID: workID.rawValue)
+              workspaceModel.keepBothPendingWorkID == nil else { return }
+        if !progressAlreadyTracked, let workID = workspaceModel.activeWorkID {
+            writingProgress.synchronize(workspaceModel.document, workID: workID.rawValue)
         }
-        localEditGeneration &+= 1
+        workspaceModel.editGeneration &+= 1
         saveCoordinator.markDirty()
         saveCoordinator.scheduleDebouncedSave()
     }
 
     func replaceAttachments(_ value: [Attachment]) {
-        attachments = value
+        workspaceModel.attachments = value
     }
 
     func advanceDocumentSessionGeneration() {
-        documentSessionGeneration &+= 1
+        workspaceModel.documentSessionToken.generation &+= 1
     }
 
     func advanceEditorContentGeneration() {
-        editorContentGeneration &+= 1
+        workspaceModel.editorContentGeneration &+= 1
     }
 
     var currentPrivateDocumentID: IOSPrivateDocumentID? {
         guard startupState == .ready,
               snapshotSyncV2Application != nil,
-              let workID = syncV2ActiveWorkID else { return nil }
+              let workID = workspaceModel.activeWorkID else { return nil }
         return IOSPrivateDocumentID(workID: workID)
     }
 
@@ -62,13 +62,13 @@ extension IOSDocumentStore {
 
     var currentEpisodeEditingToken: IOSEpisodeEditingToken? {
         guard let session = currentDocumentSessionToken,
-              let chapterID = selectedChapterID,
-              let episodeID = selectedEpisodeID else { return nil }
+              let chapterID = workspaceModel.selectedChapterID,
+              let episodeID = workspaceModel.selectedEpisodeID else { return nil }
         return IOSEpisodeEditingToken(
             documentSession: session,
             chapterID: chapterID,
             episodeID: episodeID,
-            editorContentGeneration: editorContentGeneration
+            editorContentGeneration: workspaceModel.editorContentGeneration
         )
     }
 }

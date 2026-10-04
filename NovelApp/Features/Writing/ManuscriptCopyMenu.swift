@@ -25,13 +25,14 @@ enum ManuscriptCopyMenuTarget: Equatable {
 }
 
 struct ManuscriptCopyToolbarMenu: View {
+    @Environment(WorkspaceModel.self) private var workspace
     @Environment(AppState.self) private var appState
 
     var body: some View {
         // Targets retain the session and selection from this presentation.
-        let session = appState.documentSessionToken
-        let chapterID = appState.selectedChapterID
-        let episodeID = appState.selectedEpisodeID
+        let session = workspace.documentSessionToken
+        let chapterID = workspace.selectedChapterID
+        let episodeID = workspace.selectedEpisodeID
         Menu {
             if let chapterID, let episodeID {
                 ManuscriptCopyContextMenu(target: .episode(episodeID: episodeID, chapterID: chapterID, session: session))
@@ -59,6 +60,7 @@ struct ManuscriptCopyContextMenu: View {
 }
 
 private struct ManuscriptCopyMenuContent: View {
+    @Environment(WorkspaceModel.self) private var workspace
     @Environment(AppState.self) private var appState
     let target: ManuscriptCopyMenuTarget
 
@@ -72,7 +74,7 @@ private struct ManuscriptCopyMenuContent: View {
     private var isCurrentSession: Bool {
         switch target {
         case let .episode(_, _, session), let .chapter(_, session):
-            session == appState.documentSessionToken
+            session == workspace.documentSessionToken
         }
     }
 

@@ -27,7 +27,7 @@ struct SnapshotMutationBoundaryTests {
         var first = true
         state.saveCoordinator = V2DocumentSaveCoordinator(
             timing: FuminiwaTiming(autosaveDebounceSeconds: 60, autosavePostSaveWaitSeconds: 60),
-            currentDocument: { state.document },
+            currentDocument: { state.workspaceModel.document },
             saveOperation: { document in
                 if first {
                     first = false
@@ -41,7 +41,7 @@ struct SnapshotMutationBoundaryTests {
                 }
             }
         )
-        state.document.title = "first revision"
+        state.workspaceModel.document.title = "first revision"
         state.markDocumentDirty()
         let saving = Task { await state.saveNow() }
         var iterator = started.stream.makeAsyncIterator()
@@ -60,7 +60,7 @@ struct SnapshotMutationBoundaryTests {
         }
         await Task.yield()
         #expect(!snapshotFinished && !attachmentFinished)
-        state.document.title = "input during save"
+        state.workspaceModel.document.title = "input during save"
         state.markDocumentDirty()
         release.continuation.finish()
         #expect(await saving.value)

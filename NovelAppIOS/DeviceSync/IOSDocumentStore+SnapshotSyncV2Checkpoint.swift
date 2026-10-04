@@ -10,7 +10,7 @@ import NovelWorkspace
 extension IOSDocumentStore {
     func runAutomaticSnapshotSyncV2() async {
         guard startupState == .ready,
-              let workID = syncV2ActiveWorkID,
+              let workID = workspaceModel.activeWorkID,
               let application = snapshotSyncV2Application else { return }
         let session = currentDocumentSessionToken
         let account = snapshotSyncV2AccountScope
@@ -35,13 +35,13 @@ extension IOSDocumentStore {
         resources: [PortableResource]? = nil,
         acknowledgeLocalCommit: Bool = false
     ) async -> Bool {
-        guard syncV2KeepBothPendingWorkID == nil,
+        guard workspaceModel.keepBothPendingWorkID == nil,
               let application = snapshotSyncV2Application,
-              syncV2ActiveWorkID != nil else { return false }
+              workspaceModel.activeWorkID != nil else { return false }
         guard let syncAttachments = currentV2Attachments() else {
             operationErrorMessage = "資料の本文を読み込めないため、端末への保存を中止しました。"
             snapshotSyncOutcome = .failure(.fatal(.invalidLocalState))
-            saveState = .failed
+            workspaceModel.saveState = .failed
             return false
         }
         let localResources: [PortableResource]?
@@ -57,7 +57,7 @@ extension IOSDocumentStore {
         } catch {
             operationErrorMessage = "portable metadataを安全に保存できないため、端末への保存を中止しました。"
             snapshotSyncOutcome = .failure(.fatal(.invalidLocalState))
-            saveState = .failed
+            workspaceModel.saveState = .failed
             return false
         }
         switch await workspaceCheckpointCoordinator(application).save(
@@ -70,7 +70,7 @@ extension IOSDocumentStore {
             },
             applyFailure: {
                 self.snapshotSyncOutcome = .failure(.fatal(.invalidLocalState))
-                self.saveState = .failed
+                self.workspaceModel.saveState = .failed
             }
         ) {
         case .committed:
@@ -83,14 +83,14 @@ extension IOSDocumentStore {
     }
 
     func resumeSnapshotSyncV2(reason: SyncV2WakeReason? = .foreground) async {
-        guard !isSnapshotSyncInFlight, !isSyncV2RemoteAccountTransitionActive,
+        guard !workspaceModel.isSyncInFlight, !isSyncV2RemoteAccountTransitionActive,
               let application = snapshotSyncV2Application else { return }
-        let resumedWorkID = syncV2ActiveWorkID
+        let resumedWorkID = workspaceModel.activeWorkID
         // A parked lane is intentionally local-only.  Reprojection may still
         // refresh its local shelf, but must not wake a remote worker or offer
         // adoption while no matching account/fence is active.
         if let resumedWorkID,
-           syncV2LibraryItems.first(where: { $0.workID == resumedWorkID })?.accountState
+           workspaceModel.libraryRows.first(where: { $0.workID == resumedWorkID })?.accountState
            == .parkedDifferentAccount {
             await refreshSnapshotSyncV2Projection(
                 workID: resumedWorkID,
@@ -120,13 +120,13 @@ extension IOSDocumentStore {
 
     @discardableResult
     func synchronizeSnapshotSyncV2() async -> Bool {
-        guard !isSnapshotSyncInFlight, !isSyncV2RemoteAccountTransitionActive,
+        guard !workspaceModel.isSyncInFlight, !isSyncV2RemoteAccountTransitionActive,
               let application = snapshotSyncV2Application,
-              let workID = syncV2ActiveWorkID else { return false }
-        guard syncV2LibraryItems.first(where: { $0.workID == workID })?.accountState
+              let workID = workspaceModel.activeWorkID else { return false }
+        guard workspaceModel.libraryRows.first(where: { $0.workID == workID })?.accountState
             != .parkedDifferentAccount else { return false }
-        isSnapshotSyncInFlight = true
-        defer { isSnapshotSyncInFlight = false }
+        workspaceModel.isSyncInFlight = true
+        defer { workspaceModel.isSyncInFlight = false }
         return await workspaceCheckpointCoordinator(application).explicitlySync(
             host: self,
             permitsRemoteCompletion: {

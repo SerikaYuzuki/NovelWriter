@@ -15,9 +15,9 @@ struct IOSLibraryDeletionSafetyTests {
         let store = try await makeStore(config)
         #expect(await store.makeNewDocument())
         _ = await store.refreshLibrary()
-        let item = try #require(store.syncV2LibraryItems.first)
-        let chapter = try #require(store.selectedChapterID)
-        let episode = try #require(store.selectedEpisodeID)
+        let item = try #require(store.workspaceModel.libraryRows.first)
+        let chapter = try #require(store.workspaceModel.selectedChapterID)
+        let episode = try #require(store.workspaceModel.selectedEpisodeID)
         let originalSession = store.currentDocumentSessionToken
         store.editorCommandSession.registerDocumentLifecycleHandler(id: UUID(), prepare: {
             guard !rejectIME else { return false }
@@ -48,7 +48,7 @@ struct IOSLibraryDeletionSafetyTests {
         let store = try await makeStore(config)
         #expect(await store.makeNewDocument())
         _ = await store.refreshLibrary()
-        let item = try #require(store.syncV2LibraryItems.first)
+        let item = try #require(store.workspaceModel.libraryRows.first)
         let started = AsyncStream<Void>.makeStream()
         let release = AsyncStream<Void>.makeStream()
         await config.remote.setDeletionHandler { _ in
@@ -63,7 +63,7 @@ struct IOSLibraryDeletionSafetyTests {
         var start = started.stream.makeAsyncIterator()
         _ = await start.next()
         #expect(store.currentDocumentSessionToken == nil)
-        #expect(!store.isDocumentTransitionInProgress)
+        #expect(!store.workspaceModel.isDocumentTransitionInProgress)
         #expect(await store.makeNewDocument())
         let replacement = store.currentDocumentSessionToken
         release.continuation.finish()
@@ -78,7 +78,7 @@ struct IOSLibraryDeletionSafetyTests {
         let store = IOSDocumentStore(userDefaults: defaults, libraryRoot: config.localRoot.url,
                                      runtimeComposition: .test(config))
         await store.bootstrap()
-        store.authUIState = .signedIn(accountID: "test-account")
+        store.workspaceModel.authUIState = .signedIn(accountID: "test-account")
         return store
     }
 }

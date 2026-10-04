@@ -29,12 +29,12 @@ struct LibraryCatalogPaginationTests {
             authState: .signedIn(accountID: "account-a")
         )
         await state.refreshSnapshotRemoteCatalog()
-        #expect(state.snapshotSyncRemoteCatalogItems.map(\.workID) == [first])
-        #expect(state.snapshotSyncRemoteCatalogNextCursor == "page-2")
+        #expect(state.workspaceModel.remoteCatalogItems.map(\.workID) == [first])
+        #expect(state.workspaceModel.remoteCatalogCursor == "page-2")
         await state.refreshSnapshotRemoteCatalog(loadMore: true)
-        #expect(Set(state.snapshotSyncRemoteCatalogItems.map(\.workID)) == [first, second])
-        #expect(state.snapshotSyncRemoteCatalogNextCursor == nil)
+        #expect(Set(state.workspaceModel.remoteCatalogItems.map(\.workID)) == [first, second])
+        #expect(state.workspaceModel.remoteCatalogCursor == nil)
         await state.refreshSnapshotRemoteCatalog()
-        #expect(state.snapshotSyncRemoteCatalogItems.map(\.workID) == [first])
+        #expect(state.workspaceModel.remoteCatalogItems.map(\.workID) == [first])
     }
 }

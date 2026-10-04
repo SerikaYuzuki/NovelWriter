@@ -9,7 +9,7 @@ import NovelWritingSupport
 
 extension IOSDocumentStore: WorkspaceWritingHost {
     var writingInteractionAllowed: Bool {
-        startupState == .ready && !isDocumentTransitionInProgress && !syncV2AccountTransitionInProgress && syncV2KeepBothPendingWorkID == nil
+        startupState == .ready && !workspaceModel.isDocumentTransitionInProgress && !syncV2AccountTransitionInProgress && workspaceModel.keepBothPendingWorkID == nil
     }
 
     func applyAssistantProofreading(_ manuscript: AssistantManuscript, replacement: String,
@@ -36,7 +36,8 @@ extension IOSDocumentStore: WorkspaceWritingHost {
         guard adoptV2AttachmentRecords(attachments.map { SyncAttachment(attachmentId: $0.id, fileName: $0.fileName, bytes: $0.bytes) }) else {
             throw WritingError.changedTarget
         }
-        document = replacement
+        workspaceModel.document = replacement
+        workspaceModel.documentSessionToken.documentID = replacement.id
         repairWritingSelection()
     }
 
@@ -49,7 +50,7 @@ extension IOSDocumentStore: WorkspaceWritingHost {
     }
 
     var writingAssistantHost: WritingAssistantHost? {
-        guard let work = syncV2ActiveWorkID, let workUUID = UUID(uuidString: work.description) else { return nil }
+        guard let work = workspaceModel.activeWorkID, let workUUID = UUID(uuidString: work.description) else { return nil }
         let contextID = "\(workUUID)-\(String(describing: currentDocumentSessionToken))-\(snapshotSyncV2AccountScope)"
         guard var host = WritingAssistantHostFactory.make(host: self, contextID: contextID) else { return nil }
         host.transmit = AssistantTransport.sendSaved
@@ -67,16 +68,16 @@ extension IOSDocumentStore: WorkspaceWritingHost {
     }
 
     func invalidateEditorContent() {
-        editorContentGeneration &+= 1
+        workspaceModel.editorContentGeneration &+= 1
     }
 
     private func repairWritingSelection() {
-        if !document.chapters.contains(where: { $0.id == selectedChapterID }) {
-            selectedChapterID = document.chapters.first?.id
+        if !workspaceModel.document.chapters.contains(where: { $0.id == workspaceModel.selectedChapterID }) {
+            workspaceModel.selectedChapterID = workspaceModel.document.chapters.first?.id
         }
-        let chapter = document.chapters.first { $0.id == selectedChapterID }
-        if chapter?.episodes.contains(where: { $0.id == selectedEpisodeID }) != true {
-            selectedEpisodeID = chapter?.episodes.first?.id
+        let chapter = workspaceModel.document.chapters.first { $0.id == workspaceModel.selectedChapterID }
+        if chapter?.episodes.contains(where: { $0.id == workspaceModel.selectedEpisodeID }) != true {
+            workspaceModel.selectedEpisodeID = chapter?.episodes.first?.id
         }
     }
 }

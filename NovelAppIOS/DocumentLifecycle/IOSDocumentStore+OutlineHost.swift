@@ -2,6 +2,17 @@ import NovelCore
 import NovelWorkspace
 
 extension IOSDocumentStore: WorkspaceEpisodeTransitionHost {
+    /// Selection requirements shared by outline transitions and manuscript copying.
+    var selectedChapterID: ChapterID? {
+        get { workspaceModel.selectedChapterID }
+        set { workspaceModel.selectedChapterID = newValue }
+    }
+
+    var selectedEpisodeID: EpisodeID? {
+        get { workspaceModel.selectedEpisodeID }
+        set { workspaceModel.selectedEpisodeID = newValue }
+    }
+
     func outlineSelectionChanged() {}
     func outlineChapterRemoved(_: ChapterID) {}
     func markOutlineChanged() {

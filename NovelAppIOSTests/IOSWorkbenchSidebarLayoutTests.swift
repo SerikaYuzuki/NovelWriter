@@ -16,7 +16,7 @@ struct IOSWorkbenchSidebarLayoutTests {
                                      runtimeComposition: .test(configuration))
         await store.bootstrap()
         #expect(await store.makeNewDocument())
-        let host = UIHostingController(rootView: IOSAdaptiveWritingView(store: store, openEpisode: { _, _ in })
+        let host = UIHostingController(rootView: IOSAdaptiveWritingView(store: store, openEpisode: { _, _ in }).environment(store.workspaceModel)
             .environment(\.horizontalSizeClass, .regular))
         host.traitOverrides.horizontalSizeClass = .regular
         let scene = try #require(UIApplication.shared.connectedScenes.first as? UIWindowScene)

@@ -22,9 +22,9 @@ struct AppStateProjectInfoTests {
         state.updateDocumentTitle("")
         state.updateDocumentSynopsis("作品のあらすじ")
 
-        #expect(state.document.title.isEmpty)
-        #expect(state.document.synopsis == "作品のあらすじ")
-        #expect(state.saveState == .unsaved)
+        #expect(state.workspaceModel.document.title.isEmpty)
+        #expect(state.workspaceModel.document.synopsis == "作品のあらすじ")
+        #expect(state.workspaceModel.saveState == .unsaved)
     }
 }
 

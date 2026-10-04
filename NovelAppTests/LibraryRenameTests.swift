@@ -11,19 +11,19 @@ struct LibraryRenameTests {
     @Test("一覧からの名前変更は編集中本文を保存し、同じ作品と選択を維持する")
     func activeWorkRenamePreservesEditor() async throws {
         let state = try await makeState()
-        let chapterID = try #require(state.selectedChapterID)
-        let episodeID = try #require(state.selectedEpisodeID)
+        let chapterID = try #require(state.workspaceModel.selectedChapterID)
+        let episodeID = try #require(state.workspaceModel.selectedEpisodeID)
         state.updateEpisodeContent("変更前の入力", for: episodeID, in: chapterID)
-        let session = state.documentSessionToken
-        let generation = state.editorContentGeneration
+        let session = state.workspaceModel.documentSessionToken
+        let generation = state.workspaceModel.editorContentGeneration
         await state.refreshSnapshotLibrary()
         let work = try #require(state.snapshotSyncLibraryWorks.first { $0.workID == state.currentSnapshotSyncV2WorkID })
         #expect(await state.renameLibraryWork(work, title: "一覧で変更", expectedSession: session,
                                               accountScope: state.snapshotSyncV2AccountScopeToken))
-        #expect(state.document.title == "一覧で変更")
-        #expect(state.selectedEpisodeID == episodeID)
-        #expect(state.documentSessionToken == session)
-        #expect(state.editorContentGeneration == generation)
+        #expect(state.workspaceModel.document.title == "一覧で変更")
+        #expect(state.workspaceModel.selectedEpisodeID == episodeID)
+        #expect(state.workspaceModel.documentSessionToken == session)
+        #expect(state.workspaceModel.editorContentGeneration == generation)
         let application = try #require(state.snapshotSyncV2Application)
         let saved = try await application.openLocal(workID: work.workID)
         #expect(saved.document?.title == "一覧で変更")

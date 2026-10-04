@@ -57,18 +57,18 @@ private final class MacAccountTransitionHost: AccountTransitionHost {
         await state.bootstrap()
         let workID = try #require(state.currentSnapshotSyncV2WorkID)
         state.testServerInstanceIDOverride = "test-server"
-        state.authSession = fixture.initialSession
-        state.authUIState = fixture.initialSession.map { .signedIn(accountID: $0.accountID) } ?? .signedOut
+        state.workspaceModel.authSession = fixture.initialSession
+        state.workspaceModel.authUIState = fixture.initialSession.map { .signedIn(accountID: $0.accountID) } ?? .signedOut
         state.testBrowserAuthorization = { _ in }
         return MacAccountTransitionHost(fixture: fixture, state: state, configuration: configuration, suite: suite, workID: workID)
     }
 
     var session: FuminiwaSession? {
-        state.authSession
+        state.workspaceModel.authSession
     }
 
     var uiState: WorkspaceAuthUIState {
-        state.authUIState
+        state.workspaceModel.authUIState
     }
 
     var scope: WorkspaceAccountScope {
@@ -80,7 +80,7 @@ private final class MacAccountTransitionHost: AccountTransitionHost {
     }
 
     var hasScopedUI: Bool {
-        state.snapshotSyncConflict != nil || state.snapshotSyncRemoteCatalogNextCursor != nil
+        state.workspaceModel.syncConflict != nil || state.workspaceModel.remoteCatalogCursor != nil
     }
 
     var failureNotice: String? {
@@ -92,12 +92,12 @@ private final class MacAccountTransitionHost: AccountTransitionHost {
     }
 
     func seedDirtyUIAndRequests() async {
-        state.document.title = fixture.dirtyTitle
+        state.workspaceModel.document.title = fixture.dirtyTitle
         state.markDocumentDirty()
-        state.snapshotSyncConflict = authCharacterizationConflict()
-        state.snapshotSyncRemoteCatalogNextCursor = "P10-old-cursor"
+        state.workspaceModel.syncConflict = authCharacterizationConflict()
+        state.workspaceModel.remoteCatalogCursor = "P10-old-cursor"
         state.libraryPrefetchTask = workTask
-        let started = state.assistantRequestCenter.start(
+        let started = state.workspaceModel.assistantRequestCenter.start(
             key: aiKey, timing: AssistantRuntimeTiming(defaults: state.userDefaults, purpose: .advice),
             operation: { _, _ in try await Task.sleep(for: .seconds(60)) }
         )
@@ -147,13 +147,13 @@ private final class MacAccountTransitionHost: AccountTransitionHost {
 
     func requestsCancelled() async -> Bool {
         if workTask.isCancelled {
-            try? await waitForAuthCharacterization { self.state.assistantRequestCenter.statuses[self.aiKey]?.inFlight == false }
+            try? await waitForAuthCharacterization { self.state.workspaceModel.assistantRequestCenter.statuses[self.aiKey]?.inFlight == false }
         }
-        return workTask.isCancelled && state.assistantRequestCenter.statuses[aiKey]?.inFlight == false
+        return workTask.isCancelled && state.workspaceModel.assistantRequestCenter.statuses[aiKey]?.inFlight == false
     }
 
     func cleanup() {
-        workTask.cancel(); state.assistantRequestCenter.cancelAll()
+        workTask.cancel(); state.workspaceModel.assistantRequestCenter.cancelAll()
         state.userDefaults.removePersistentDomain(forName: suite)
     }
 }

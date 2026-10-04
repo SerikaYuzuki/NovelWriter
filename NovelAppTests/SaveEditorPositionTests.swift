@@ -37,7 +37,7 @@ struct SaveEditorPositionTests {
         scroll.reflectScrolledClipView(scroll.contentView)
         try await Task.sleep(for: .milliseconds(100))
         let originalOrigin = scroll.contentView.bounds.origin
-        let originalGeneration = fixture.state.editorContentGeneration
+        let originalGeneration = fixture.state.workspaceModel.editorContentGeneration
         #expect(originalOrigin.y > 100)
         for iteration in 0 ..< 3 {
             let previousReadCount = await fixture.configuration.remote.recordedHeadReads().count
@@ -61,8 +61,8 @@ struct SaveEditorPositionTests {
             #expect(abs(scroll.contentView.bounds.origin.y - originalOrigin.y) < 0.5)
             #expect(fixture.window.firstResponder === editor)
             #expect(editor.window === fixture.window)
-            #expect(fixture.state.saveState == .saved)
-            #expect(fixture.state.editorContentGeneration == originalGeneration)
+            #expect(fixture.state.workspaceModel.saveState == .saved)
+            #expect(fixture.state.workspaceModel.editorContentGeneration == originalGeneration)
             #expect(undo.canRedo)
         }
         #expect(await fixture.configuration.remote.recordedOperations().isEmpty)
@@ -169,8 +169,8 @@ private extension SaveEditorPositionTests {
             try await seedSynchronizedWork(configuration, document: document, workID: workID, createdAt: createdAt)
             let opened = try await application.openLocal(workID: workID)
             try state.installV2Document(#require(opened.document), workID: workID, createdAt: createdAt)
-            state.authSession = makeMacV2Session(accountID: "test-account", fence: "test-fence")
-            state.authUIState = .signedIn(accountID: "test-account")
+            state.workspaceModel.authSession = makeMacV2Session(accountID: "test-account", fence: "test-fence")
+            state.workspaceModel.authUIState = .signedIn(accountID: "test-account")
             state.snapshotSyncCurrentWorkAccountState = .active
             state.snapshotSyncV2Session = await application.beginSession(workID: workID)
         } else {
@@ -195,7 +195,7 @@ private extension SaveEditorPositionTests {
 
     private func makeEditorWindow(state: AppState, body: String) async throws -> (NSWindow, NSTextView) {
         let host = NSHostingView(rootView: EditorPaneView()
-            .environment(state)
+            .environment(state).environment(state.workspaceModel)
             .environment(EditorSettings(userDefaults: makeIsolatedTestUserDefaults(), appearanceApplier: { _ in }))
             .environment(EditorSearchSession())
             .environment(state.editorCommandSession))

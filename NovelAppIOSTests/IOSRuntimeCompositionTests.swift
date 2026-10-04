@@ -41,7 +41,7 @@ struct IOSRuntimeCompositionTests {
         #expect(store.authSessionCoordinator == nil)
         #expect(store.appleSignInCoordinator == nil)
         #expect(store.appleAuthenticationOrchestrator == nil)
-        #expect(store.authUIState == .unavailable)
+        #expect(store.workspaceModel.authUIState == .unavailable)
         #expect(await configuration.vault.currentAccount()?.accountID == "test-account")
         #expect(await configuration.vault.currentAccount()?.accountFence == "test-fence")
         #expect(await store.configureSnapshotSyncV2())
@@ -50,7 +50,7 @@ struct IOSRuntimeCompositionTests {
         #expect(await store.makeNewDocument())
 
         let application = try #require(store.snapshotSyncV2Application)
-        let workID = try #require(store.syncV2ActiveWorkID)
+        let workID = try #require(store.workspaceModel.activeWorkID)
         var observedRemoteProgress: SyncV2RemoteProgress?
         for _ in 0 ..< 100 {
             observedRemoteProgress = await application.uiState(workID: workID)?.remoteProgress

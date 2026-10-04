@@ -28,7 +28,7 @@ struct SnapshotSyncV2LeafLifecycleTests {
         #expect(await state.saveBeforeTermination())
         #expect(try await !local.hasUnpromotedLeaf(workID: workID, scope: .unbound))
         #expect(try await local.pendingIntents(scope: .unbound).count == 1)
-        #expect(state.document == document)
+        #expect(state.workspaceModel.document == document)
         #expect(await configuration.remote.recordedOperations().isEmpty)
         await local.close()
     }

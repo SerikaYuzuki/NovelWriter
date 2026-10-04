@@ -8,7 +8,7 @@ extension IOSDocumentStore: WorkspaceManuscriptCopyHost {
 
     func captureManuscriptText(synchronizeModel: Bool) -> EditorCommittedTextCaptureResult {
         let capture = editorCommandSession.captureActiveCommittedText()
-        if synchronizeModel, case let .captured(text) = capture, let selectedChapterID, let selectedEpisodeID {
+        if synchronizeModel, case let .captured(text) = capture, let selectedChapterID = workspaceModel.selectedChapterID, let selectedEpisodeID = workspaceModel.selectedEpisodeID {
             updateEpisodeContent(text, chapterID: selectedChapterID, episodeID: selectedEpisodeID)
         }
         return capture

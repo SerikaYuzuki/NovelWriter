@@ -4,6 +4,7 @@ import NovelWorkspace
 import SwiftUI
 
 struct IOSExplicitSyncButton: View {
+    @Environment(WorkspaceModel.self) private var workspace
     let store: IOSDocumentStore
     var status: SyncV2LibraryStatus?
     @State private var delayClock = SyncV2DelayClock()
@@ -12,7 +13,7 @@ struct IOSExplicitSyncButton: View {
     @State private var account: WorkspaceAccountScope?
 
     private var isSignedIn: Bool {
-        if case .signedIn = store.authUIState {
+        if case .signedIn = workspace.authUIState {
             return true
         }
         return false
@@ -20,14 +21,14 @@ struct IOSExplicitSyncButton: View {
 
     private var canAdd: Bool {
         isSignedIn && !store.isCurrentWorkParked &&
-            store.syncV2LibraryItems.first(where: { $0.workID == store.syncV2ActiveWorkID })?.accountState == .unbound
+            workspace.libraryRows.first(where: { $0.workID == workspace.activeWorkID })?.accountState == .unbound
     }
 
     var body: some View {
         Button {
-            if store.snapshotSyncConflict != nil {
+            if workspace.syncConflict != nil {
                 store.showsConflictSheet = true
-            } else if case .readyForSafeAdoption = store.snapshotSyncState?.remoteProgress {
+            } else if case .readyForSafeAdoption = workspace.syncUIState?.remoteProgress {
                 Task { _ = await store.adoptPendingSnapshotSyncV2() }
             } else if store.canExplicitlySyncCurrentWork {
                 Task { _ = await store.synchronizeSnapshotSyncV2() }
@@ -37,21 +38,21 @@ struct IOSExplicitSyncButton: View {
                 showingSetup = true
             }
         } label: {
-            if case .readyForSafeAdoption = store.snapshotSyncState?.remoteProgress {
+            if case .readyForSafeAdoption = workspace.syncUIState?.remoteProgress {
                 Label("サーバーに新しい版があります", systemImage: "arrow.down.circle")
-            } else if store.snapshotSyncConflict != nil {
+            } else if workspace.syncConflict != nil {
                 Label("競合の版を確認", systemImage: "exclamationmark.triangle")
             } else if let status {
                 StatusLabel(status.text, systemImage: status.symbol, tone: StatusTone(rawValue: status.tone.rawValue) ?? .secondary)
             } else {
-                Label(store.isSnapshotSyncInFlight ? "同期中…" : "今すぐ同期", systemImage: "arrow.triangle.2.circlepath")
+                Label(workspace.isSyncInFlight ? "同期中…" : "今すぐ同期", systemImage: "arrow.triangle.2.circlepath")
             }
         }
         .accessibilityHint(status == nil ? "" : "タップして同期します")
-        .disabled(store.isSnapshotSyncInFlight || store.isDocumentTransitionInProgress || store.isSyncV2RemoteAccountTransitionActive || store.syncV2AccountCloneInFlight)
+        .disabled(workspace.isSyncInFlight || workspace.isDocumentTransitionInProgress || store.isSyncV2RemoteAccountTransitionActive || store.syncV2AccountCloneInFlight)
         .accessibilityIdentifier("ios.editor.sync")
         .contextMenu {
-            if store.snapshotSyncState?.remoteProgress == .failed(.remoteWorkDeleted) {
+            if workspace.syncUIState?.remoteProgress == .failed(.remoteWorkDeleted) {
                 Button("新しい作品としてこの端末に残す") {
                     Task { _ = await store.cloneActiveWorkIntoSignedInAccount(rescueLocally: true) }
                 }
@@ -59,7 +60,7 @@ struct IOSExplicitSyncButton: View {
         }
         .overlay(alignment: .bottomTrailing) {
             TimelineView(.periodic(from: .now, by: 15)) { _ in
-                if SyncV2DelayNotice.isDelayed(since: store.snapshotSyncState?.oldestUnreceivedAt, now: delayClock.now) {
+                if SyncV2DelayNotice.isDelayed(since: workspace.syncUIState?.oldestUnreceivedAt, now: delayClock.now) {
                     Circle().fill(FuminiwaColor.warning.color).frame(width: 6, height: 6)
                         .accessibilityLabel("未同期の変更があります")
                 }

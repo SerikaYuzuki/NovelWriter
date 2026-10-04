@@ -30,10 +30,10 @@ extension IOSDocumentStore {
 
     func invalidateSnapshotSyncV2AccountOperations() {
         workspaceModel.accountGeneration &+= 1
-        assistantRequestCenter.cancelAll()
+        workspaceModel.assistantRequestCenter.cancelAll()
         libraryPrefetchTask?.cancel()
-        libraryImportPhases.removeAll()
-        libraryImportFailures.removeAll()
+        workspaceModel.libraryImportPhases.removeAll()
+        workspaceModel.libraryImportFailures.removeAll()
         cancelSnapshotSyncV2BackgroundOperations()
         clearKeepBothHandoff()
         libraryRefreshGeneration &+= 1

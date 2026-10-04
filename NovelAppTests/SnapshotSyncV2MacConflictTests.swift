@@ -16,17 +16,17 @@ struct SnapshotSyncV2MacConflictTests {
         let beforeOperations = await fixture.remote.recordedOperations().count
 
         #expect(await fixture.state.resolveSnapshotConflict(using: .keepBoth))
-        let activeWorkID = try #require(fixture.state.snapshotSyncV2ActiveWorkID)
+        let activeWorkID = try #require(fixture.state.workspaceModel.activeWorkID)
         #expect(activeWorkID != fixture.workID)
-        #expect(activeWorkID == fixture.state.documentSessionToken.workID)
-        #expect(fixture.state.document.id != fixture.document.id)
+        #expect(activeWorkID == fixture.state.workspaceModel.documentSessionToken.workID)
+        #expect(fixture.state.workspaceModel.document.id != fixture.document.id)
 
         // The helper wakes the shared worker only after the opened clone has
         // been installed. The suspended fake makes the ordering observable.
         try await eventuallyMac {
             await fixture.remote.recordedOperations().count > beforeOperations
         }
-        #expect(fixture.state.snapshotSyncV2ActiveWorkID == activeWorkID)
+        #expect(fixture.state.workspaceModel.activeWorkID == activeWorkID)
         await fixture.remote.resumeSuspended()
         await fixture.remote.setBehaviors([.failure(.offline)])
         let restarted = try await SnapshotSyncV2Runtime.makeApplication(
@@ -50,7 +50,7 @@ struct SnapshotSyncV2MacConflictTests {
         let openedAfter = try await fixture.application.open(workID: fixture.workID)
         #expect(openedAfter.generation == openedBefore.generation)
         #expect(openedAfter.document?.title == fixture.document.title)
-        #expect(fixture.state.saveState == .saved)
+        #expect(fixture.state.workspaceModel.saveState == .saved)
         #expect(await fixture.remote.recordedOperations().count >= operationsBefore)
     }
 
@@ -66,7 +66,7 @@ struct SnapshotSyncV2MacConflictTests {
         let openedAfter = try await fixture.application.open(workID: fixture.workID)
         #expect(openedAfter.generation == openedBefore.generation)
         #expect(openedAfter.document?.title == fixture.document.title)
-        #expect(fixture.state.saveState == .unsaved)
+        #expect(fixture.state.workspaceModel.saveState == .unsaved)
         #expect(fixture.state.operationMessage != nil)
         #expect(await fixture.remote.recordedOperations().count == operationsBefore)
         #expect(await fixture.application.uiState(workID: fixture.workID)?.conflict != nil)
@@ -86,7 +86,7 @@ struct SnapshotSyncV2MacConflictTests {
         let openedAfter = try await fixture.application.open(workID: fixture.workID)
         #expect(openedAfter.generation == openedBefore.generation)
         #expect(openedAfter.document?.title == fixture.document.title)
-        #expect(fixture.state.saveState == .saved)
+        #expect(fixture.state.workspaceModel.saveState == .saved)
         #expect(fixture.state.operationMessage != nil)
         #expect(await fixture.remote.recordedOperations().count == operationsBefore)
         #expect(await fixture.application.uiState(workID: fixture.workID)?.conflict != nil)
@@ -111,8 +111,8 @@ struct SnapshotSyncV2MacConflictTests {
                 selection: selection
             ) == false
         )
-        #expect(fixture.state.snapshotSyncV2ActiveWorkID == replacementWorkID)
-        #expect(fixture.state.document.title == "切替後の作品")
+        #expect(fixture.state.workspaceModel.activeWorkID == replacementWorkID)
+        #expect(fixture.state.workspaceModel.document.title == "切替後の作品")
     }
 
     @Test("editorなしの別セクションではuseServer選択を保留しない")
@@ -129,7 +129,7 @@ struct SnapshotSyncV2MacConflictTests {
         let openedAfter = try await fixture.application.open(workID: fixture.workID)
         #expect(openedAfter.generation == openedBefore.generation)
         #expect(openedAfter.document?.title == fixture.document.title)
-        #expect(fixture.state.saveState == .saved)
+        #expect(fixture.state.workspaceModel.saveState == .saved)
     }
 
     @Test("keep-bothはclone installが完了するまで元作品への編集・checkpointを止める")
@@ -140,17 +140,17 @@ struct SnapshotSyncV2MacConflictTests {
         var observed = false
         fixture.state.snapshotSyncV2BeforeKeepBothInstallOverride = {
             observed = true
-            #expect(fixture.state.syncV2KeepBothPendingWorkID != nil)
+            #expect(fixture.state.workspaceModel.keepBothPendingWorkID != nil)
             #expect(!fixture.state.permitsDocumentInteraction)
             #expect(fixture.state.currentSnapshotSyncV2WorkID == fixture.workID)
-            #expect(await fixture.state.checkpointSnapshotSyncV2(fixture.state.document) == false)
+            #expect(await fixture.state.checkpointSnapshotSyncV2(fixture.state.workspaceModel.document) == false)
             let reopened = try? await fixture.application.openLocal(workID: fixture.workID)
             #expect(reopened?.generation == before.generation)
         }
         #expect(await fixture.state.resolveSnapshotConflict(using: .keepBoth))
         #expect(observed)
         #expect(fixture.state.currentSnapshotSyncV2WorkID != fixture.workID)
-        #expect(fixture.state.syncV2KeepBothPendingWorkID == nil)
+        #expect(fixture.state.workspaceModel.keepBothPendingWorkID == nil)
         #expect(fixture.state.permitsDocumentInteraction)
         fixture.state.snapshotSyncV2BeforeKeepBothInstallOverride = nil
         await fixture.remote.resumeSuspended()
@@ -173,14 +173,14 @@ struct SnapshotSyncV2MacConflictTests {
                 baseSnapshotID: conflict.baseSnapshotID, localSnapshotID: conflict.localSnapshotID,
                 remoteSnapshotID: conflict.remoteSnapshotID, sourceGeneration: conflict.sourceGeneration
             )
-            fixture.state.snapshotSyncConflict = newer
-            fixture.state.snapshotSyncV2UIState = SyncUIState(
+            fixture.state.workspaceModel.syncConflict = newer
+            fixture.state.workspaceModel.syncUIState = SyncUIState(
                 workID: fixture.workID, localDurability: before.snapshotID.map { .saved(generation: before.generation, snapshotID: $0) } ?? .unsaved,
                 remoteProgress: .needsChoice, conflict: newer, lastTypedResult: .conflictPending
             )
         }
         #expect(await fixture.state.resolveSnapshotConflict(using: .useServer, selection: selection) == false)
-        #expect(fixture.state.document == fixture.document)
+        #expect(fixture.state.workspaceModel.document == fixture.document)
         #expect(try await fixture.application.openLocal(workID: fixture.workID).generation == before.generation)
         #expect(await fixture.application.uiState(workID: fixture.workID)?.conflict == selection.conflict)
     }
@@ -192,10 +192,10 @@ struct SnapshotSyncV2MacConflictTests {
         let fixture = try await makeMacConflictFixture(remoteBehavior: .failure(.offline))
         fixture.state.snapshotSyncV2KeepBothInstallOverride = { false }
         #expect(await fixture.state.resolveSnapshotConflict(using: .keepBoth) == false)
-        let duplicateID = try #require(fixture.state.syncV2KeepBothPendingWorkID)
+        let duplicateID = try #require(fixture.state.workspaceModel.keepBothPendingWorkID)
         #expect(!fixture.state.permitsDocumentInteraction)
         #expect(fixture.state.permitsDocumentDeparture)
-        let original = fixture.state.document
+        let original = fixture.state.workspaceModel.document
         let sourceBeforeDeparture = try await fixture.application.openLocal(workID: fixture.workID)
         let historyBefore = try await fixture.application.historyPage(workID: fixture.workID).items
         if action == "retry" {
@@ -209,18 +209,18 @@ struct SnapshotSyncV2MacConflictTests {
                                                          reason: .explicit, documentCreatedAt: Date())
             await fixture.state.refreshSnapshotLibrary()
             let another = try #require(fixture.state.snapshotSyncLibraryWorks.first { $0.workID == anotherID })
-            fixture.state.saveState = .failed
+            fixture.state.workspaceModel.saveState = .failed
             #expect(await fixture.state.openLibraryWork(another))
             #expect(fixture.state.currentSnapshotSyncV2WorkID == anotherID)
         } else {
-            fixture.state.saveState = .failed
+            fixture.state.workspaceModel.saveState = .failed
             #expect(await fixture.state.returnToSnapshotLibrary())
             guard case .documentSelection = fixture.state.startupState else { Issue.record("did not return to library"); return }
             #expect(fixture.state.currentSnapshotSyncV2WorkID == nil)
             #expect(!fixture.state.permitsDocumentInteraction)
         }
-        #expect(fixture.state.syncV2KeepBothPendingWorkID == nil)
-        #expect(fixture.state.syncV2KeepBothHandoff == nil)
+        #expect(fixture.state.workspaceModel.keepBothPendingWorkID == nil)
+        #expect(fixture.state.workspaceModel.keepBothHandoff == nil)
         #expect(fixture.state.syncV2KeepBothSourceSelection == nil)
         let after = try await fixture.application.openLocal(workID: fixture.workID)
         #expect(after.generation == sourceBeforeDeparture.generation && after.document == original)

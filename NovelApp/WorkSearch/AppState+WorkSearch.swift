@@ -6,12 +6,12 @@ import NovelWorkspace
 
 extension AppState: WorkspaceReplacementHost {
     var workSearchScope: String {
-        "\(documentSessionToken)-\(snapshotSyncV2AccountScopeToken)-\(String(describing: snapshotSyncV2ActiveWorkID))"
+        "\(workspaceModel.documentSessionToken)-\(snapshotSyncV2AccountScopeToken)-\(String(describing: workspaceModel.activeWorkID))"
     }
 
     func presentWorkSearch(query: String? = nil, replacement: String? = nil) async {
-        let session = documentSessionToken, account = snapshotSyncV2AccountScopeToken
-        guard await selectProjectSectionAfterTransition(.structure), documentSessionToken == session,
+        let session = workspaceModel.documentSessionToken, account = snapshotSyncV2AccountScopeToken
+        guard await selectProjectSectionAfterTransition(.structure), workspaceModel.documentSessionToken == session,
               snapshotSyncV2AccountScopeToken == account else { return }
         if let query {
             workSearch.query = query
@@ -28,7 +28,7 @@ extension AppState: WorkspaceReplacementHost {
         guard workSearchScope == expectedScope,
               await selectEpisodeAfterTransition(result.id, in: result.chapterID),
               workSearchScope == expectedScope,
-              let current = document.episode(result.id)?.episode.content,
+              let current = workspaceModel.document.episode(result.id)?.episode.content,
               WorkTextSearch.sameText(current, result.source) else { return false }
         editorSearch.requestSelection(range: match.range, episodeID: result.id)
         return true
@@ -46,8 +46,8 @@ extension AppState: WorkspaceReplacementHost {
     func episodeRestoreHost(episodeID: EpisodeID) -> WorkReplacementHost {
         let host = workReplacementHost
         let allowed = { [self] in
-            guard selectedEpisodeID == episodeID, document.episode(episodeID) != nil else { return false }
-            return host.validate() && snapshotSyncConflict == nil
+            guard workspaceModel.selectedEpisodeID == episodeID, workspaceModel.document.episode(episodeID) != nil else { return false }
+            return host.validate() && workspaceModel.syncConflict == nil
                 && captureCommittedText() != .compositionInProgress
         }
         return WorkReplacementHost(scope: host.scope, validate: allowed, document: host.document,
@@ -59,11 +59,11 @@ extension AppState: WorkspaceReplacementHost {
     }
 
     func checkpointBeforeReplacement() async -> Bool {
-        await checkpointSnapshotSyncV2(document, reason: .explicit)
+        await checkpointSnapshotSyncV2(workspaceModel.document, reason: .explicit)
     }
 
     var replacementInteractionAllowed: Bool {
-        permitsDocumentInteraction && snapshotSyncV2ActiveWorkID != nil
+        permitsDocumentInteraction && workspaceModel.activeWorkID != nil
     }
 
     var selectedEpisodeEditorActive: Bool {

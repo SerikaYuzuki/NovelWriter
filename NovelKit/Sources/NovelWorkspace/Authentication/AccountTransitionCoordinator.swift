@@ -6,8 +6,7 @@ import Observation
 /// Platform ports own editor/SQLite preparation and projection, never auth flow.
 @MainActor
 public protocol AccountTransitionPort: AnyObject {
-    var authSession: FuminiwaSession? { get set }
-    var authUIState: WorkspaceAuthUIState { get set }
+    var workspaceModel: WorkspaceModel { get }
     var authSessionCoordinator: AuthSessionCoordinator? { get }
     var snapshotSyncV2Application: SyncV2Application? { get }
     func accountBinding(_ session: FuminiwaSession) -> SyncV2AccountScopeBinding
@@ -90,7 +89,7 @@ public final class AccountTransitionCoordinator {
     }
 
     private func recoverAbandonedRequest() async {
-        guard let host, host.authUIState != .signingIn, !inProgress, !signInRequested else { return }
+        guard let host, host.workspaceModel.authUIState != .signingIn, !inProgress, !signInRequested else { return }
         if let owner = requestOwner {
             await releaseRequest(owner: owner, resume: true)
         } else if requested {
@@ -112,15 +111,15 @@ public final class AccountTransitionCoordinator {
         let unsupported = session != nil && session?.syncProtocolEpoch != 2
         let destination = unsupported ? nil : session
         let destinationState: WorkspaceAuthUIState = unsupported ? .failed(Self.unsupportedMessage) : state
-        let previous = host.authSession
+        let previous = host.workspaceModel.authSession
         let oldBinding = previous.map(host.accountBinding)
         let newBinding = destination.map(host.accountBinding)
         let needsBoundary = unsupported || oldBinding != newBinding ||
             previous == nil || destination == nil
         if !needsBoundary {
             guard !requested || (owner != nil && requestOwner == owner) else { return .rejected }
-            host.authSession = destination
-            host.authUIState = destinationState
+            host.workspaceModel.authSession = destination
+            host.workspaceModel.authUIState = destinationState
             return .committed
         }
         let ownsRequest = !requested
@@ -163,11 +162,11 @@ public final class AccountTransitionCoordinator {
     /// Refreshes a live scope without opening a request window or retiring work.
     @discardableResult
     public func refresh() async -> Bool {
-        guard let host, !requested, let previous = host.authSession,
+        guard let host, !requested, let previous = host.workspaceModel.authSession,
               let coordinator = host.authSessionCoordinator else { return false }
         do {
             let refreshed = try await coordinator.refresh()
-            guard !requested, host.authSession?.binding == previous.binding,
+            guard !requested, host.workspaceModel.authSession?.binding == previous.binding,
                   host.accountBinding(refreshed) == host.accountBinding(previous) else { return false }
             return await transition(to: refreshed, state: .signedIn(accountID: refreshed.accountID))
         } catch { return false }
@@ -222,10 +221,10 @@ public final class AccountTransitionCoordinator {
     @discardableResult
     public func signIn(_ provider: AuthProvider) async -> Bool {
         guard let host, host.canExchangeAccountSession(provider) else {
-            host?.authUIState = .unavailable
+            host?.workspaceModel.authUIState = .unavailable
             return false
         }
-        guard !signInRequested, host.authUIState != .signingIn else { return false }
+        guard !signInRequested, host.workspaceModel.authUIState != .signingIn else { return false }
         await recoverAbandonedRequest()
         signInRequested = true
         defer { signInRequested = false }
@@ -234,12 +233,12 @@ public final class AccountTransitionCoordinator {
 
     private func signInOwned(_ provider: AuthProvider) async -> Bool {
         guard let host, let owner = await beginRequest() else { return false }
-        let previous = host.authSession
-        let previousState = host.authUIState
-        host.authUIState = .signingIn
+        let previous = host.workspaceModel.authSession
+        let previousState = host.workspaceModel.authUIState
+        host.workspaceModel.authUIState = .signingIn
         guard await host.accountCheckpoint({ true }),
               await transition(to: nil, state: .signingIn, owner: owner) else {
-            host.authUIState = previousState
+            host.workspaceModel.authUIState = previousState
             await releaseRequest(owner: owner, resume: true)
             return false
         }
@@ -270,13 +269,13 @@ public final class AccountTransitionCoordinator {
             recovered = await transition(to: destination, state: .signedIn(accountID: destination.accountID), owner: owner)
         } else {
             recovered = false
-            host.authUIState = message.map { .failed($0) } ?? .signedOut
+            host.workspaceModel.authUIState = message.map { .failed($0) } ?? .signedOut
         }
         if let message, destination != nil {
             if recovered {
                 host.showRecoveredAccountFailure(message)
             } else {
-                host.authUIState = .failed(message)
+                host.workspaceModel.authUIState = .failed(message)
             }
         }
         await releaseRequest(owner: owner, resume: false)
@@ -300,7 +299,7 @@ public final class AccountTransitionCoordinator {
                 // Only the network replay is detached; it can never sign out newer B.
                 try await host.authSessionCoordinator?.prepareSignOut()
             } catch {
-                host.authUIState = .failed("サインアウトの同期は保留中です")
+                host.workspaceModel.authUIState = .failed("サインアウトの同期は保留中です")
                 await self.releaseRequest(owner: owner, resume: false)
                 return
             }
@@ -324,12 +323,12 @@ public final class AccountTransitionCoordinator {
             do {
                 guard try await coordinator.hasPendingRevoke() else { return }
                 try await coordinator.resumePendingRevoke()
-                if reportingFailure, self?.operationGeneration == generation, self?.requested == false, let host = self?.host, host.authSession == nil {
-                    host.authUIState = .signedOut
+                if reportingFailure, self?.operationGeneration == generation, self?.requested == false, let host = self?.host, host.workspaceModel.authSession == nil {
+                    host.workspaceModel.authUIState = .signedOut
                 }
             } catch {
-                if reportingFailure, self?.operationGeneration == generation, self?.requested == false, let host = self?.host, host.authSession == nil {
-                    host.authUIState = .failed("サインアウトの同期は保留中です")
+                if reportingFailure, self?.operationGeneration == generation, self?.requested == false, let host = self?.host, host.workspaceModel.authSession == nil {
+                    host.workspaceModel.authUIState = .failed("サインアウトの同期は保留中です")
                 }
             }
         }

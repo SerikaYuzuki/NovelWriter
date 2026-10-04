@@ -85,7 +85,7 @@ extension IOSDocumentStore {
         expected.isCurrent(WorkspaceOperationContext(
             workID: currentDocumentSessionToken?.workID, session: currentDocumentSessionToken,
             account: snapshotSyncV2AccountScope,
-            editGeneration: expected.editGeneration == nil ? nil : localEditGeneration
+            editGeneration: expected.editGeneration == nil ? nil : workspaceModel.editGeneration
         ))
     }
 }

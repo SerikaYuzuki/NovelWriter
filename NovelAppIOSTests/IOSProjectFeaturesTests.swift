@@ -21,17 +21,17 @@ struct IOSProjectMetadataFeatureTests {
         _ = try #require(store.addPlotCard(title: "導入", expectedSession: session))
         _ = try #require(store.addFlag(title: "鍵", expectedSession: session))
         _ = try #require(store.addWorldNote(title: "  王都  ", expectedSession: session))
-        #expect(store.document.worldNotes.first?.title == "王都")
-        #expect(store.saveState == .dirty)
+        #expect(store.workspaceModel.document.worldNotes.first?.title == "王都")
+        #expect(store.workspaceModel.saveState == .dirty)
         #expect(store.saveCoordinator.lastSavedRevision == revision)
-        let expected = store.document
+        let expected = store.workspaceModel.document
         #expect(await store.saveNow())
         let reopened = IOSDocumentStore(userDefaults: environment.defaults, libraryRoot: environment.root)
         await reopened.bootstrap()
-        #expect(reopened.document.characters == expected.characters)
-        #expect(reopened.document.plotCards == expected.plotCards)
-        #expect(reopened.document.flags == expected.flags)
-        #expect(reopened.document.worldNotes == expected.worldNotes)
+        #expect(reopened.workspaceModel.document.characters == expected.characters)
+        #expect(reopened.workspaceModel.document.plotCards == expected.plotCards)
+        #expect(reopened.workspaceModel.document.flags == expected.flags)
+        #expect(reopened.workspaceModel.document.worldNotes == expected.worldNotes)
     }
 
     @Test("adapterは未選択・古いsessionを拒否し切替エラーを提示する")
@@ -47,7 +47,7 @@ struct IOSProjectMetadataFeatureTests {
         let id = try #require(store.addCharacter(expectedSession: original))
         store.advanceDocumentSessionGeneration()
         #expect(!store.deleteCharacter(id: id, expectedSession: original))
-        #expect(store.document.characters.first?.id == id)
+        #expect(store.workspaceModel.document.characters.first?.id == id)
         #expect(store.operationErrorMessage == "作品が切り替わったため、この操作を中止しました。")
     }
 }
@@ -78,7 +78,7 @@ struct IOSAttachmentFeatureTests {
         let attachment = try #require(
             await store.importAttachment(from: sourceURL, expectedSession: firstSession)
         )
-        #expect(store.attachments == [attachment])
+        #expect(store.workspaceModel.attachments == [attachment])
         let previewURL = try #require(
             store.attachmentPreviewURL(for: attachment, expectedSession: firstSession)
         )
@@ -87,7 +87,7 @@ struct IOSAttachmentFeatureTests {
         #expect(await store.makeNewDocument())
         let secondSession = try #require(store.currentDocumentSessionToken)
         #expect(IOSPrivateDocumentID(workID: secondSession.workID) != firstDocumentID)
-        #expect(store.attachments.isEmpty)
+        #expect(store.workspaceModel.attachments.isEmpty)
         store.operationErrorMessage = nil
         #expect(store.attachmentPreviewURL(for: attachment, expectedSession: firstSession) == nil)
         #expect(store.operationErrorMessage == nil)
@@ -95,19 +95,19 @@ struct IOSAttachmentFeatureTests {
         #expect(
             await store.importAttachment(from: sourceURL, expectedSession: firstSession) == nil
         )
-        #expect(store.attachments.isEmpty)
+        #expect(store.workspaceModel.attachments.isEmpty)
 
         #expect(await store.openPrivateDocument(id: firstDocumentID))
         let returnedFirstSession = try #require(store.currentDocumentSessionToken)
         #expect(IOSPrivateDocumentID(workID: returnedFirstSession.workID) == firstDocumentID)
         #expect(returnedFirstSession != firstSession)
-        #expect(store.attachments == [attachment])
+        #expect(store.workspaceModel.attachments == [attachment])
         #expect(store.attachmentPreviewURL(for: attachment, expectedSession: firstSession) == nil)
         #expect(await store.importAttachment(from: sourceURL, expectedSession: firstSession) == nil)
-        #expect(store.attachments == [attachment])
+        #expect(store.workspaceModel.attachments == [attachment])
         #expect(await !(store.deleteAttachment(attachment, expectedSession: firstSession)))
         #expect(await store.deleteAttachment(attachment, expectedSession: returnedFirstSession))
-        #expect(store.attachments.isEmpty)
+        #expect(store.workspaceModel.attachments.isEmpty)
         #expect(store.attachmentPreviewURL(for: attachment, expectedSession: returnedFirstSession) == nil)
     }
 

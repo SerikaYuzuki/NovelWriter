@@ -1,9 +1,11 @@
 import NovelTextAnalysis
 import NovelUI
+import NovelWorkspace
 import NovelWorkspaceUI
 import SwiftUI
 
 struct IOSWorkSearchView: View {
+    @Environment(WorkspaceModel.self) private var workspace
     let store: IOSDocumentStore
     var initialQuery: String?
     var onOpenEditor: (() -> Void)?
@@ -55,11 +57,11 @@ struct IOSWorkSearchView: View {
                 }
             }
             guard scope == store.workSearchScope else { search.invalidate(); return }
-            search.setVisible(true, document: store.document, scope: store.workSearchScope)
+            search.setVisible(true, document: workspace.document, scope: store.workSearchScope)
         }
-        .onDisappear { search.setVisible(false, document: store.document, scope: store.workSearchScope) }
+        .onDisappear { search.setVisible(false, document: workspace.document, scope: store.workSearchScope) }
         .onChange(of: search.query) { _, _ in refresh() }
-        .onChange(of: store.localEditGeneration) { _, _ in confirmingReplacement = false; search.markStale() }
+        .onChange(of: workspace.editGeneration) { _, _ in confirmingReplacement = false; search.markStale() }
         .onChange(of: store.workSearchScope) { _, _ in confirmingReplacement = false; refresh() }
         .navigationDestination(isPresented: $showingEditor) {
             IOSEditorPane(store: store, userDefaults: store.userDefaults)
@@ -108,7 +110,7 @@ struct IOSWorkSearchView: View {
 
     private func refresh() {
         guard scope == store.workSearchScope else { store.workSearch.invalidate(); return }
-        store.workSearch.refresh(document: store.document, scope: store.workSearchScope)
+        store.workSearch.refresh(document: workspace.document, scope: store.workSearchScope)
     }
 
     private func jump(_ result: EpisodeTextMatches, _ match: WorkTextMatch) {

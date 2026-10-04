@@ -27,12 +27,23 @@ final class FakeLibraryHost: WorkspaceLibraryImportHost {
     var prepare: () async -> Void = {}
     var onRefresh: () async -> Void = {}
     var libraryOpeningWorkID: WorkID?
-    var libraryImportPhases: [WorkID: ImportPhase] = [:]
-    var libraryImportFailures: [WorkID: SyncV2Failure] = [:]
+    let workspaceModel: WorkspaceModel
+    var libraryImportPhases: [WorkID: ImportPhase] {
+        get { workspaceModel.libraryImportPhases }
+        set { workspaceModel.libraryImportPhases = newValue }
+    }
+
+    var libraryImportFailures: [WorkID: SyncV2Failure] {
+        get { workspaceModel.libraryImportFailures }
+        set { workspaceModel.libraryImportFailures = newValue }
+    }
+
     var announcements: [String] = []
 
     init() {
-        session = .init(generation: 1, documentID: document.id, workID: workID!)
+        let token = WorkspaceSessionToken(generation: 1, documentID: document.id, workID: workID!)
+        session = token
+        workspaceModel = WorkspaceModel(document: document, session: token, saveState: .unsaved)
     }
 
     func markChanged(policy _: WorkspaceSavePolicy) {}

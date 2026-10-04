@@ -30,6 +30,7 @@ struct IOSPlotFeatureView: View {
 }
 
 struct IOSPlotOutlineView: View {
+    @Environment(WorkspaceModel.self) private var workspace
     let store: IOSDocumentStore
     @Binding var selection: IOSPlotSelection?
     let expectedSession: WorkspaceSessionToken?
@@ -50,7 +51,7 @@ struct IOSPlotOutlineView: View {
                 if usesGrid {
                     cardGrid
                 } else {
-                    ForEach(store.document.plotCards) { card in
+                    ForEach(workspace.document.plotCards) { card in
                         plotCardRow(card)
                     }
                     .onDelete(perform: requestPlotCardDeletion)
@@ -68,7 +69,7 @@ struct IOSPlotOutlineView: View {
             Section("伏線") {
                 if usesGrid {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), alignment: .top)], spacing: Spacing.medium) {
-                        ForEach(store.document.flags) { flag in
+                        ForEach(workspace.document.flags) { flag in
                             flagRow(flag).surfaceCard(selected: selection == .flag(flag.id))
                                 .contextMenu {
                                     Button("削除…", role: .destructive) { requestDeletion(flag) }
@@ -76,7 +77,7 @@ struct IOSPlotOutlineView: View {
                         }
                     }
                 } else {
-                    ForEach(store.document.flags) { flag in
+                    ForEach(workspace.document.flags) { flag in
                         flagRow(flag)
                     }
                     .onDelete(perform: requestFlagDeletion)
@@ -94,7 +95,7 @@ struct IOSPlotOutlineView: View {
         .scrollContentBackground(.hidden)
         .background(FuminiwaColor.paper.color)
         .overlay {
-            if store.document.plotCards.isEmpty, store.document.flags.isEmpty {
+            if workspace.document.plotCards.isEmpty, workspace.document.flags.isEmpty {
                 ContentUnavailableView {
                     Label("プロットがありません", systemImage: "rectangle.stack")
                 } actions: {
@@ -166,18 +167,18 @@ struct IOSPlotOutlineView: View {
     }
 
     private func requestDeletion(_ flag: Flag) {
-        guard let index = store.document.flags.firstIndex(where: { $0.id == flag.id }) else { return }
+        guard let index = workspace.document.flags.firstIndex(where: { $0.id == flag.id }) else { return }
         requestFlagDeletion(at: IndexSet(integer: index))
     }
 
     private func requestDeletion(_ card: PlotCard) {
-        guard let index = store.document.plotCards.firstIndex(where: { $0.id == card.id }) else { return }
+        guard let index = workspace.document.plotCards.firstIndex(where: { $0.id == card.id }) else { return }
         requestPlotCardDeletion(at: IndexSet(integer: index))
     }
 
     private var cardGrid: some View {
         LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), alignment: .top)], spacing: Spacing.medium) {
-            ForEach(store.document.plotCards) { card in
+            ForEach(workspace.document.plotCards) { card in
                 plotCardRow(card)
                     .surfaceCard(selected: selection == .card(card.id))
                     .contextMenu {
@@ -239,7 +240,7 @@ struct IOSPlotOutlineView: View {
 
     private func requestPlotCardDeletion(at offsets: IndexSet) {
         let ids = offsets.compactMap { index in
-            store.document.plotCards.indices.contains(index) ? store.document.plotCards[index].id : nil
+            workspace.document.plotCards.indices.contains(index) ? workspace.document.plotCards[index].id : nil
         }
         guard !ids.isEmpty, let expectedSession else { return }
         deletionRequest = IOSPlotDeletionRequest(
@@ -250,7 +251,7 @@ struct IOSPlotOutlineView: View {
 
     private func requestFlagDeletion(at offsets: IndexSet) {
         let ids = offsets.compactMap { index in
-            store.document.flags.indices.contains(index) ? store.document.flags[index].id : nil
+            workspace.document.flags.indices.contains(index) ? workspace.document.flags[index].id : nil
         }
         guard !ids.isEmpty, let expectedSession else { return }
         deletionRequest = IOSPlotDeletionRequest(
@@ -282,7 +283,7 @@ struct IOSPlotOutlineView: View {
 
     private func chapterTitle(for id: ChapterID?) -> String {
         guard let id else { return "章未設定" }
-        guard let chapter = store.document.chapters.first(where: { $0.id == id }) else {
+        guard let chapter = workspace.document.chapters.first(where: { $0.id == id }) else {
             return "章未設定"
         }
         let title = chapter.title.trimmingCharacters(in: .whitespacesAndNewlines)

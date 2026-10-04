@@ -29,7 +29,7 @@ extension AppState {
     }
 
     func permitsEditorSynchronization(expectedSession: WorkspaceSessionToken?) -> Bool {
-        permitsDocumentInteraction && (expectedSession == nil || expectedSession == documentSessionToken)
+        permitsDocumentInteraction && (expectedSession == nil || expectedSession == workspaceModel.documentSessionToken)
     }
 
     func permitsMutation(expectedSession: WorkspaceSessionToken?) -> Bool {
@@ -41,7 +41,7 @@ extension AppState {
     }
 
     func preferredEpisodeID(in chapterID: ChapterID) -> EpisodeID? {
-        document.chapters.first(where: { $0.id == chapterID })?.episodes.first?.id
+        workspaceModel.document.chapters.first(where: { $0.id == chapterID })?.episodes.first?.id
     }
 
     func normalizedChapterTitle(_ title: String) -> String {
@@ -78,7 +78,7 @@ extension AppState {
 
     func selectChapterAfterTransition(_ chapterID: ChapterID) async -> Bool {
         await EpisodeTransition(host: self).perform(saveAfter: true) {
-            self.document.chapters.contains(where: { $0.id == chapterID }) && self.outlineCommands(prepared: true).selectChapter(chapterID)
+            self.workspaceModel.document.chapters.contains(where: { $0.id == chapterID }) && self.outlineCommands(prepared: true).selectChapter(chapterID)
         }
     }
 
@@ -91,7 +91,7 @@ extension AppState {
 
     func addEpisodeAfterTransition(to chapterID: ChapterID? = nil) async -> Bool {
         guard permitsDocumentChoice else { return false }
-        let targetChapterID = chapterID ?? selectedChapterID
+        let targetChapterID = chapterID ?? workspaceModel.selectedChapterID
         return await EpisodeTransition(host: self).perform(saveAfter: true) {
             self.outlineCommands(prepared: true).addEpisode(to: targetChapterID)
         }
@@ -117,9 +117,9 @@ extension AppState {
     }
 
     func moveChaptersAfterTransition(fromOffsets: IndexSet, toOffset: Int) async {
-        let order = document.chapters.map(\.id)
+        let order = workspaceModel.document.chapters.map(\.id)
         _ = await EpisodeTransition(host: self).perform(saveAfter: true) {
-            guard self.document.chapters.map(\.id) == order else { return false }
+            guard self.workspaceModel.document.chapters.map(\.id) == order else { return false }
             self.outlineCommands(prepared: true).moveChapters(fromOffsets: fromOffsets, toOffset: toOffset)
             return true
         }
@@ -130,9 +130,9 @@ extension AppState {
         fromOffsets: IndexSet,
         toOffset: Int
     ) async {
-        let order = document.chapters.first(where: { $0.id == chapterID })?.episodes.map(\.id)
+        let order = workspaceModel.document.chapters.first(where: { $0.id == chapterID })?.episodes.map(\.id)
         _ = await EpisodeTransition(host: self).perform(saveAfter: true) {
-            guard self.document.chapters.first(where: { $0.id == chapterID })?.episodes.map(\.id) == order else { return false }
+            guard self.workspaceModel.document.chapters.first(where: { $0.id == chapterID })?.episodes.map(\.id) == order else { return false }
             self.outlineCommands(prepared: true).moveEpisodes(in: chapterID, fromOffsets: fromOffsets, toOffset: toOffset)
             return true
         }
@@ -168,7 +168,7 @@ extension AppState {
     /// Editing/exporting the current document still requires a ready workbench.
     var permitsNewDocument: Bool {
         guard snapshotSyncV2Application != nil,
-              !isDocumentTransitionInProgress, !isTerminationPending,
+              !workspaceModel.isDocumentTransitionInProgress, !isTerminationPending,
               interactiveAuthOperationCount == 0 else { return false }
         switch startupState {
         case .ready, .documentSelection: return true
@@ -178,7 +178,7 @@ extension AppState {
 
     func createNewDocument(expectedSession: WorkspaceSessionToken? = nil) async -> Bool {
         guard permitsNewDocument,
-              expectedSession == nil || expectedSession == documentSessionToken else { return false }
+              expectedSession == nil || expectedSession == workspaceModel.documentSessionToken else { return false }
         return await createNewV2Document()
     }
 
@@ -190,7 +190,7 @@ extension AppState {
 
     func openDocument(at url: URL, expectedSession: WorkspaceSessionToken? = nil) async -> Bool {
         guard permitsDocumentImport,
-              expectedSession == nil || expectedSession == documentSessionToken else { return false }
+              expectedSession == nil || expectedSession == workspaceModel.documentSessionToken else { return false }
         return await openExternalDocument(at: url)
     }
 
@@ -206,28 +206,28 @@ extension AppState {
         let result: Result<Void, Error> = await documentOperationGate.perform { [weak self] in
             guard let self,
                   permitsDocumentTransitionOperation,
-                  expectedSession == nil || expectedSession == documentSessionToken,
+                  expectedSession == nil || expectedSession == workspaceModel.documentSessionToken,
                   editorCommandSession.prepareForDocumentTransition() else {
                 return .failure(CancellationError())
             }
             defer { editorCommandSession.resumeAfterDocumentTransition() }
-            isDocumentTransitionInProgress = true
-            defer { isDocumentTransitionInProgress = false }
-            let gateSession = documentSessionToken
+            workspaceModel.isDocumentTransitionInProgress = true
+            defer { workspaceModel.isDocumentTransitionInProgress = false }
+            let gateSession = workspaceModel.documentSessionToken
             let gateWorkID = currentSnapshotSyncV2WorkID
             guard await saveNow() else { return .failure(CancellationError()) }
-            guard documentSessionToken == gateSession,
+            guard workspaceModel.documentSessionToken == gateSession,
                   currentSnapshotSyncV2WorkID == gateWorkID,
-                  expectedSession == nil || expectedSession == documentSessionToken else {
+                  expectedSession == nil || expectedSession == workspaceModel.documentSessionToken else {
                 return .failure(CancellationError())
             }
             do {
                 if readable {
-                    try await ReadableExport.write(document, attachments: snapshotSyncV2Attachments,
+                    try await ReadableExport.write(workspaceModel.document, attachments: snapshotSyncV2Attachments,
                                                    resources: snapshotSyncV2Resources, to: destination)
                 } else {
                     try await portableBridge.exportExplicitPackage(
-                        document: document,
+                        document: workspaceModel.document,
                         attachments: snapshotSyncV2Attachments,
                         documentCreatedAt: snapshotSyncV2PortableCreatedAt
                             ?? snapshotSyncV2DocumentCreatedAt.map(Self.normalizedSnapshotSyncV2Date),

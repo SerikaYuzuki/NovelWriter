@@ -154,7 +154,7 @@ macOSの[AppDependencies](../NovelApp/Application/AppDependencies.swift)と各Ap
 
 ### 5.2 WorkspaceModelとApp adapter
 
-`NovelWorkspace.WorkspaceModel`は`@MainActor @Observable`の共通状態を持つ。document、章／話選択、WorkspaceSessionToken、account scope／generation、添付setと表示一覧、保存状態、SyncUIState／競合、棚の同期行・catalog・loading／取り込み状態、keep-bothのwrite freeze、AssistantRequestCenterを両OSで共有する。AppState／IOSDocumentStoreはそれぞれ一つのmodelを所有し、既存名のcomputed forwarderはmodelのObservationを読む。モデル自体は保存・通信を開始しない。
+`NovelWorkspace.WorkspaceModel`は`@MainActor @Observable`の共通状態を持つ。document、章／話選択、WorkspaceSessionToken、account scope／generation、添付setと表示一覧、保存状態、SyncUIState／競合、棚の同期行・catalog・loading／取り込み状態、keep-bothのwrite freeze、AssistantRequestCenterを両OSで共有する。AppState／IOSDocumentStoreはそれぞれ一つのmodelを所有し、ViewはSwiftUI environmentのmodelを読み、App内の処理はworkspaceModelへ直接アクセスする。モデル自体は保存・通信を開始しない。
 
 `AppState`／`IOSDocumentStore`はmodelと共通coordinator／commandへの薄いadapterである。`ProjectFeatureCommands`、`WorkspaceAttachmentCommands`、`WritingAssistantHostFactory`／`WorkReplacementHostFactory`、`LibraryCoordinator`、`CheckpointCoordinator`／`V2DocumentSaveCoordinator`、`WorkOpenCoordinator`、`AdoptionCoordinator`、`ConflictCoordinator`、`OutlineCommands`／`EpisodeTransition`、`ManuscriptCopyCommand`、`AccountTransitionCoordinator`へ機能処理を委譲し、`SyncSessionController`が非同期taskの所有権を持つ。共有SwiftUIはNovelWorkspaceUIに置く。[D-111](DECISIONS.md#d-111-共通app層の段階移設2026-10-04)。
 

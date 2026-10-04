@@ -21,8 +21,8 @@ struct AppStateDocumentLifecycleTests {
         await state.bootstrap()
 
         #expect(await state.openExternalDocument(at: sourceURL))
-        #expect(state.document == document)
-        let activeWorkID = try #require(state.snapshotSyncV2ActiveWorkID)
+        #expect(state.workspaceModel.document == document)
+        let activeWorkID = try #require(state.workspaceModel.activeWorkID)
         #expect(state.snapshotSyncV2Session?.workID == activeWorkID)
         #expect(activeWorkID.rawValue != document.id)
         #expect(state.userDefaults.string(forKey: "fuminiwa.v2.activeWorkID") == activeWorkID.rawValue.uuidString)
@@ -33,11 +33,11 @@ struct AppStateDocumentLifecycleTests {
         let state = try makeState()
         #expect(await state.configureSnapshotSyncV2(using: state.snapshotSyncV2Factory))
         await state.bootstrap()
-        let before = state.document
+        let before = state.workspaceModel.document
         let missingURL = temporaryPackageURL("missing")
 
         #expect(await state.openExternalDocument(at: missingURL) == false)
-        #expect(state.document == before)
+        #expect(state.workspaceModel.document == before)
         #expect(state.startupState == .ready)
     }
 
@@ -69,14 +69,14 @@ struct AppStateDocumentLifecycleTests {
         #expect(await state.configureSnapshotSyncV2(using: state.snapshotSyncV2Factory))
         await state.bootstrap()
         let application = try #require(state.snapshotSyncV2Application)
-        let oldWorkID = try #require(state.snapshotSyncV2ActiveWorkID)
-        let oldSession = state.documentSessionToken
+        let oldWorkID = try #require(state.workspaceModel.activeWorkID)
+        let oldSession = state.workspaceModel.documentSessionToken
         state.updateSelectedEpisodeContent("Aのdirty本文")
 
         #expect(await state.openExternalDocument(at: sourceURL) == false)
-        #expect(state.snapshotSyncV2ActiveWorkID == oldWorkID)
-        #expect(state.documentSessionToken == oldSession)
-        #expect(state.document.selectedEpisodeContentForTest == "Aのdirty本文")
+        #expect(state.workspaceModel.activeWorkID == oldWorkID)
+        #expect(state.workspaceModel.documentSessionToken == oldSession)
+        #expect(state.workspaceModel.document.selectedEpisodeContentForTest == "Aのdirty本文")
         #expect(state.startupState == .ready)
         let reopened = try await application.open(workID: oldWorkID)
         #expect(reopened.document?.selectedEpisodeContentForTest == "Aのdirty本文")
@@ -103,15 +103,15 @@ struct AppStateDocumentLifecycleTests {
         #expect(await state.configureSnapshotSyncV2(using: state.snapshotSyncV2Factory))
         await state.bootstrap()
         let application = try #require(state.snapshotSyncV2Application)
-        let oldWorkID = try #require(state.snapshotSyncV2ActiveWorkID)
-        let oldSession = state.documentSessionToken
+        let oldWorkID = try #require(state.workspaceModel.activeWorkID)
+        let oldSession = state.workspaceModel.documentSessionToken
         state.updateSelectedEpisodeContent("Aのdirty本文")
-        #expect(state.saveState == .unsaved)
+        #expect(state.workspaceModel.saveState == .unsaved)
 
         #expect(await state.createNewV2Document() == false)
-        #expect(state.snapshotSyncV2ActiveWorkID == oldWorkID)
-        #expect(state.documentSessionToken == oldSession)
-        #expect(state.document.selectedEpisodeContentForTest == "Aのdirty本文")
+        #expect(state.workspaceModel.activeWorkID == oldWorkID)
+        #expect(state.workspaceModel.documentSessionToken == oldSession)
+        #expect(state.workspaceModel.document.selectedEpisodeContentForTest == "Aのdirty本文")
         #expect(state.startupState == .ready)
 
         let reopened = try await application.open(workID: oldWorkID)
@@ -139,7 +139,7 @@ struct AppStateDocumentLifecycleTests {
         let workID = try #require(state.currentSnapshotSyncV2WorkID)
         let application = try #require(state.snapshotSyncV2Application)
         let opened = try await application.openLocal(workID: workID)
-        #expect(opened.document == state.document)
+        #expect(opened.document == state.workspaceModel.document)
         #expect(state.snapshotSyncV2Session?.workID == workID)
         #expect(!state.userDefaults.bool(forKey: "fuminiwa.v2.startInLibrary"))
     }
@@ -149,16 +149,16 @@ struct AppStateDocumentLifecycleTests {
         let state = try makeState()
         #expect(await state.configureSnapshotSyncV2(using: state.snapshotSyncV2Factory))
         await state.bootstrap()
-        let oldDocumentID = state.document.id
-        let oldWorkID = state.snapshotSyncV2ActiveWorkID
+        let oldDocumentID = state.workspaceModel.document.id
+        let oldWorkID = state.workspaceModel.activeWorkID
 
         await state.createNewV2Document()
 
-        #expect(state.document.id != oldDocumentID)
-        let activeWorkID = try #require(state.snapshotSyncV2ActiveWorkID)
+        #expect(state.workspaceModel.document.id != oldDocumentID)
+        let activeWorkID = try #require(state.workspaceModel.activeWorkID)
         #expect(activeWorkID != oldWorkID)
         #expect(state.snapshotSyncV2Session?.workID == activeWorkID)
-        #expect(activeWorkID.rawValue != state.document.id)
+        #expect(activeWorkID.rawValue != state.workspaceModel.document.id)
         #expect(state.userDefaults.string(forKey: "fuminiwa.v2.activeWorkID") == activeWorkID.rawValue.uuidString)
     }
 
@@ -170,7 +170,7 @@ struct AppStateDocumentLifecycleTests {
         #expect(await state.configureSnapshotSyncV2(using: state.snapshotSyncV2Factory))
         await state.bootstrap()
         let application = try #require(state.snapshotSyncV2Application)
-        let firstWorkID = try #require(state.snapshotSyncV2ActiveWorkID)
+        let firstWorkID = try #require(state.workspaceModel.activeWorkID)
 
         let secondWorkID = WorkID(UUID())
         let secondDocument = NovelDocument.newDocument(title: "別作品")
@@ -183,7 +183,7 @@ struct AppStateDocumentLifecycleTests {
         #expect(secondWorkID != firstWorkID)
         let firstWork = StartupLibraryWork(
             id: firstWorkID.rawValue,
-            title: state.document.title,
+            title: state.workspaceModel.document.title,
             availability: .local,
             workID: firstWorkID,
             remoteProgress: .idle
@@ -206,7 +206,7 @@ struct AppStateDocumentLifecycleTests {
 
         #expect(await state.openLibraryWork(firstWork))
         state.updateSelectedEpisodeContent("一覧へ戻る前に確定する本文")
-        #expect(state.saveState == .unsaved)
+        #expect(state.workspaceModel.saveState == .unsaved)
         let generationBeforeDirtySwitch = try await application.open(workID: firstWorkID).generation
 
         #expect(await state.returnToSnapshotLibrary())
@@ -214,14 +214,14 @@ struct AppStateDocumentLifecycleTests {
             Issue.record("作品一覧へ戻る境界がdocumentSelectionを表示しませんでした")
             return
         }
-        #expect(state.saveState == .saved)
+        #expect(state.workspaceModel.saveState == .saved)
         #expect(await state.openLibraryWork(secondWork))
-        #expect(state.snapshotSyncV2ActiveWorkID == secondWorkID)
+        #expect(state.workspaceModel.activeWorkID == secondWorkID)
         #expect(await state.openLibraryWork(firstWork))
 
         let reopened = try await application.open(workID: firstWorkID)
         #expect(reopened.generation > generationBeforeDirtySwitch)
-        #expect(state.document.chapters.first?.episodes.first?.content == "一覧へ戻る前に確定する本文")
+        #expect(state.workspaceModel.document.chapters.first?.episodes.first?.content == "一覧へ戻る前に確定する本文")
     }
 
     @Test("Exportは明示時だけnovelpkgを作り通常identityを変えない")
@@ -229,15 +229,15 @@ struct AppStateDocumentLifecycleTests {
         let state = try makeState()
         #expect(await state.configureSnapshotSyncV2(using: state.snapshotSyncV2Factory))
         await state.bootstrap()
-        let session = state.documentSessionToken
+        let session = state.workspaceModel.documentSessionToken
         let destination = temporaryPackageURL("export")
         defer { try? FileManager.default.removeItem(at: destination) }
 
         try await state.exportDocumentPackage(to: destination, expectedSession: session)
 
         #expect(FileManager.default.fileExists(atPath: destination.path))
-        #expect(state.documentSessionToken == session)
-        #expect(state.userDefaults.string(forKey: "fuminiwa.v2.activeWorkID") == state.snapshotSyncV2ActiveWorkID?.rawValue.uuidString)
+        #expect(state.workspaceModel.documentSessionToken == session)
+        #expect(state.userDefaults.string(forKey: "fuminiwa.v2.activeWorkID") == state.workspaceModel.activeWorkID?.rawValue.uuidString)
     }
 
     @Test("ImportのcreatedAtとopaque resourceはSQLite open後もcanonicalにExportされる")
@@ -283,11 +283,11 @@ struct AppStateDocumentLifecycleTests {
             $0.pathComponents == ["orphan.dat"] && $0.bytes == resourceBytes
         })
         let application = try #require(state.snapshotSyncV2Application)
-        let workID = try #require(state.snapshotSyncV2ActiveWorkID)
+        let workID = try #require(state.workspaceModel.activeWorkID)
 
         _ = try await application.checkpoint(
             workID: workID,
-            document: state.document,
+            document: state.workspaceModel.document,
             reason: .close,
             documentCreatedAt: expectedCreatedAt,
             resources: nil
@@ -331,8 +331,8 @@ struct AppStateDocumentLifecycleTests {
         state.updateSelectedEpisodeContent("終了前の編集")
 
         #expect(await state.saveBeforeTermination())
-        #expect(state.saveState == .saved)
-        #expect(state.document.selectedEpisodeContentForTest == "終了前の編集")
+        #expect(state.workspaceModel.saveState == .saved)
+        #expect(state.workspaceModel.document.selectedEpisodeContentForTest == "終了前の編集")
     }
 
     private func makeState(

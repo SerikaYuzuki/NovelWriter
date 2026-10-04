@@ -14,14 +14,14 @@ extension AppState {
     }
 
     var isSignedInToFuminiwa: Bool {
-        if case .signedIn = authUIState {
+        if case .signedIn = workspaceModel.authUIState {
             return true
         }
         return false
     }
 
     var snapshotSyncV2AccountScopeToken: WorkspaceAccountScope {
-        workspaceModel.accountScope(serverInstanceID: authSession.map { authServerInstanceID(for: $0) })
+        workspaceModel.accountScope(serverInstanceID: workspaceModel.authSession.map { authServerInstanceID(for: $0) })
     }
 
     func matchesSnapshotSyncV2AccountScope(
@@ -34,10 +34,10 @@ extension AppState {
     /// project or install bytes from the previous authenticated tenant.
     func invalidateSnapshotSyncV2AccountOperations() {
         clearKeepBothHandoff()
-        assistantRequestCenter.cancelAll()
+        workspaceModel.assistantRequestCenter.cancelAll()
         libraryPrefetchTask?.cancel()
-        libraryImportPhases.removeAll()
-        libraryImportFailures.removeAll()
+        workspaceModel.libraryImportPhases.removeAll()
+        workspaceModel.libraryImportFailures.removeAll()
         snapshotSyncV2AccountScopeGeneration &+= 1
         snapshotSyncV2CatalogRefreshToken = nil
         cancelSnapshotSyncV2BackgroundOperations()
@@ -82,14 +82,14 @@ extension AppState {
     /// AccountID. Signing out must not leave the previous scope visible or
     /// make a later account switch look like an implicit adoption.
     private func clearAccountScopedSnapshotUI() {
-        snapshotSyncRemoteCatalogItems = []
-        snapshotSyncRemoteCatalogNextCursor = nil
-        snapshotSyncLibraryFailure = nil
+        workspaceModel.remoteCatalogItems = []
+        workspaceModel.remoteCatalogCursor = nil
+        workspaceModel.libraryFailure = nil
         snapshotSyncLibraryLocalFailure = nil
-        snapshotSyncLibraryIsLoading = false
-        snapshotSyncHistory = []
-        snapshotSyncConflict = nil
-        snapshotSyncV2UIState = nil
+        workspaceModel.libraryIsLoading = false
+        workspaceModel.historyItems = []
+        workspaceModel.syncConflict = nil
+        workspaceModel.syncUIState = nil
         snapshotSyncLibraryWorks = []
         snapshotSyncCurrentWorkAccountState = nil
         lastStartupLibraryConnection = .offline
@@ -129,18 +129,18 @@ extension AppState: AccountTransitionPort {
 
     func accountCheckpoint(_ operation: @MainActor () async -> Bool) async -> Bool {
         await documentOperationGate.perform {
-            guard !self.isDocumentTransitionInProgress, self.editorCommandSession.prepareForDocumentTransition() else { return false }
+            guard !self.workspaceModel.isDocumentTransitionInProgress, self.editorCommandSession.prepareForDocumentTransition() else { return false }
             self.accountTransitionCoordinator.inProgress = true
-            self.isDocumentTransitionInProgress = true
+            self.workspaceModel.isDocumentTransitionInProgress = true
             defer {
                 self.accountTransitionCoordinator.inProgress = false
-                self.isDocumentTransitionInProgress = false
+                self.workspaceModel.isDocumentTransitionInProgress = false
                 self.editorCommandSession.resumeAfterDocumentTransition()
             }
             // Cold restore must reconcile persisted lanes before writing through
             // a destination vault. Dirty live work still checkpoints locally.
-            let committedWithRetiredUI = self.saveState == .saving && !self.saveCoordinator.hasUnsavedChanges
-            let shouldSave = self.currentSnapshotSyncV2WorkID != nil && self.saveState != .saved && !committedWithRetiredUI
+            let committedWithRetiredUI = self.workspaceModel.saveState == .saving && !self.saveCoordinator.hasUnsavedChanges
+            let shouldSave = self.currentSnapshotSyncV2WorkID != nil && self.workspaceModel.saveState != .saved && !committedWithRetiredUI
             if shouldSave, await !self.saveNow() {
                 return false
             }
@@ -150,15 +150,15 @@ extension AppState: AccountTransitionPort {
 
     func installAccountSession(_ session: FuminiwaSession?, state: WorkspaceAuthUIState) async {
         clearAccountScopedSnapshotUI()
-        documentSessionToken = WorkspaceSessionToken(
-            generation: documentSessionToken.generation &+ 1, documentID: document.id,
-            workID: currentSnapshotSyncV2WorkID ?? documentSessionToken.workID
+        workspaceModel.documentSessionToken = WorkspaceSessionToken(
+            generation: workspaceModel.documentSessionToken.generation &+ 1, documentID: workspaceModel.document.id,
+            workID: currentSnapshotSyncV2WorkID ?? workspaceModel.documentSessionToken.workID
         )
         if let application = snapshotSyncV2Application, let workID = currentSnapshotSyncV2WorkID {
             snapshotSyncV2Session = await application.beginSession(workID: workID)
         }
-        authSession = session
-        authUIState = state
+        workspaceModel.authSession = session
+        workspaceModel.authUIState = state
     }
 
     func reloadAccountLibrary() async {
@@ -166,7 +166,7 @@ extension AppState: AccountTransitionPort {
     }
 
     func resumeAccountWork() async {
-        guard !accountTransitionCoordinator.requested, authSession != nil else { return }
+        guard !accountTransitionCoordinator.requested, workspaceModel.authSession != nil else { return }
         try? await snapshotSyncV2Application?.resumePending()
         await resumeSnapshotSyncV2()
         await refreshSnapshotLibrary()

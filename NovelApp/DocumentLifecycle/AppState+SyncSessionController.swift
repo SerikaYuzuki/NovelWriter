@@ -53,9 +53,9 @@ extension AppState {
 extension AppState {
     func matchesSyncOperation(_ expected: WorkspaceOperationContext) -> Bool {
         expected.isCurrent(WorkspaceOperationContext(
-            workID: currentSnapshotSyncV2WorkID, session: documentSessionToken,
+            workID: currentSnapshotSyncV2WorkID, session: workspaceModel.documentSessionToken,
             account: snapshotSyncV2AccountScopeToken,
-            editGeneration: expected.editGeneration == nil ? nil : documentChangeRevision
+            editGeneration: expected.editGeneration == nil ? nil : workspaceModel.editGeneration
         ))
     }
 }

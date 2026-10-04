@@ -90,15 +90,15 @@ struct WritingAssistantIntegrationTests {
             return try #require(decoded["result"] as? [String: Any])
         }
         #expect(try await call()["isError"] as? Bool == false)
-        #expect(state.document.title == "新題")
-        state.document.title = "後から手で修正"
+        #expect(state.workspaceModel.document.title == "新題")
+        state.workspaceModel.document.title = "後から手で修正"
         let replay = try await call()
         #expect(replay["isError"] as? Bool == false)
         #expect((replay["content"] as? [[String: String]])?.first?["text"]?.contains("\"replayed\":true") == true)
-        #expect(state.document.title == "後から手で修正")
+        #expect(state.workspaceModel.document.title == "後から手で修正")
         args["changes"] = [["path": ["title"], "before": "後から手で修正", "after": "IDを使い回した別操作"]]
         #expect(try await call()["isError"] as? Bool == true)
-        #expect(state.document.title == "後から手で修正")
+        #expect(state.workspaceModel.document.title == "後から手で修正")
     }
 
     @Test func scopedEditsSaveAndUndoWithoutLosingOtherChanges() async throws {
@@ -113,14 +113,14 @@ struct WritingAssistantIntegrationTests {
         let capture = try host.capture()
         let edit = WritingEdit(workId: capture.workId, documentId: document.id,
                                changes: [WritingChange(path: ["title"], before: .string("原題"), after: .string("新題"))])
-        state.document.synopsis = "依頼中に変更"
+        state.workspaceModel.document.synopsis = "依頼中に変更"
         try await host.apply(edit, WritingGrant(paths: [["title"]]))
-        #expect(state.document.title == "新題")
-        #expect(state.document.synopsis == "依頼中に変更")
+        #expect(state.workspaceModel.document.title == "新題")
+        #expect(state.workspaceModel.document.synopsis == "依頼中に変更")
         #expect(try await application.openLocal(workID: work).document?.title == "新題")
         try await host.undo(edit.id)
-        #expect(state.document.title == "原題")
-        #expect(state.document.synopsis == "依頼中に変更")
+        #expect(state.workspaceModel.document.title == "原題")
+        #expect(state.workspaceModel.document.synopsis == "依頼中に変更")
         await #expect(throws: WritingError.self) { try await host.apply(edit, .wholeWork) }
         state.snapshotSyncV2AccountScopeGeneration &+= 1
         #expect(throws: WritingError.changedScope) { try host.capture() }

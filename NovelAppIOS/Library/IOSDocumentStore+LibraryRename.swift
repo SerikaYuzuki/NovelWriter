@@ -8,7 +8,7 @@ extension IOSDocumentStore {
         accountScope: WorkspaceAccountScope
     ) async -> Bool {
         guard let application = snapshotSyncV2Application else { return false }
-        let context = WorkspaceOperationContext(workID: syncV2ActiveWorkID, session: expectedSession,
+        let context = WorkspaceOperationContext(workID: workspaceModel.activeWorkID, session: expectedSession,
                                                 account: accountScope, editGeneration: nil)
         var operations = LibraryOperations(application: application)
         operations.downloadForRename = { [self] in _ = try await openRemoteOnlyWithBackgroundTime(application, workID: $0) }

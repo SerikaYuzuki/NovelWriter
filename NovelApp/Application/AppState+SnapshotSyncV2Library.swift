@@ -7,8 +7,34 @@ import SwiftUI
 
 /// macOSのv2作品棚とremote catalogの投影。
 extension AppState {
+    /// Only Mac display identity/availability stays here; all row payload is
+    /// owned by the model. Preserve custom IDs and pending/excluded spellings
+    /// rather than silently normalizing the old startup presentation.
+    var snapshotSyncLibraryWorks: [StartupLibraryWork] {
+        get {
+            workspaceModel.libraryRows.enumerated().compactMap { index, row in
+                guard startupShelfIdentities.indices.contains(index),
+                      startupShelfIdentities[index].workID == row.workID else {
+                    return Self.startupLibraryWork(row)?.1
+                }
+                let identity = startupShelfIdentities[index]
+                return StartupLibraryWork(
+                    id: identity.id, title: row.title, availability: identity.availability,
+                    workID: row.workID, remoteProgress: row.remoteProgress,
+                    historyBackfillNote: row.historyBackfillNote, oldestUnreceivedAt: row.oldestUnreceivedAt,
+                    accountState: row.accountState, remoteHeadConfirmed: row.remoteHeadConfirmed,
+                    localGeneration: row.localGeneration
+                )
+            }
+        }
+        set {
+            startupShelfIdentities = newValue.map { ($0.workID, $0.id, $0.availability) }
+            workspaceModel.libraryRows = newValue.map(Self.snapshotLibraryItem)
+        }
+    }
+
     private var permitsLibraryWorkOpening: Bool {
-        guard !isDocumentTransitionInProgress,
+        guard !workspaceModel.isDocumentTransitionInProgress,
               !isTerminationPending,
               interactiveAuthOperationCount == 0 else { return false }
         switch startupState {
@@ -39,7 +65,7 @@ extension AppState {
     func refreshSnapshotLibrary() async {
         guard let application = snapshotSyncV2Application else { return }
         let accountScope = snapshotSyncV2AccountScopeToken
-        let connection: StartupLibraryConnection = switch authUIState {
+        let connection: StartupLibraryConnection = switch workspaceModel.authUIState {
         case .signedIn: .available
         case .signedOut, .unavailable, .signingIn, .failed: .offline
         }
@@ -71,13 +97,13 @@ extension AppState {
         }
         guard !Task.isCancelled, matchesSnapshotSyncV2AccountScope(accountScope) else { return }
         snapshotSyncLibraryLocalFailure = nil
-        snapshotSyncPendingDeletionWorkIDs = refresh.pendingDeletionIDs
+        workspaceModel.pendingDeletionWorkIDs = refresh.pendingDeletionIDs
         lastStartupLibraryConnection = connection
         snapshotSyncCurrentWorkAccountState = currentSnapshotSyncV2WorkID.flatMap { workID in
             refresh.projection.items.first(where: { $0.workID == workID })?.accountState
         }
         let rows = refresh.merged(
-            catalog: snapshotSyncRemoteCatalogItems,
+            catalog: workspaceModel.remoteCatalogItems,
             previousItems: snapshotSyncLibraryWorks.map(Self.snapshotLibraryItem), includesQuarantinedItems: false
         )
         let works = rows.compactMap(Self.startupLibraryWork).map { $0.1 }
@@ -139,21 +165,21 @@ extension AppState {
     /// provider performs account/fence filtering; this layer only deduplicates
     /// by WorkID and merges the result into the local shelf.
     func refreshSnapshotRemoteCatalog(loadMore: Bool = false) async {
-        if loadMore, snapshotSyncLibraryIsLoading || snapshotSyncRemoteCatalogNextCursor == nil {
+        if loadMore, workspaceModel.libraryIsLoading || workspaceModel.remoteCatalogCursor == nil {
             return
         }
         guard let application = snapshotSyncV2Application,
-              let session = authSession,
-              authUIState == .signedIn(accountID: session.accountID) else { return }
+              let session = workspaceModel.authSession,
+              workspaceModel.authUIState == .signedIn(accountID: session.accountID) else { return }
         let accountScope = snapshotSyncV2AccountScopeToken
         let operationToken = UUID()
         snapshotSyncV2CatalogRefreshToken = operationToken
-        snapshotSyncLibraryIsLoading = true
-        snapshotSyncLibraryFailure = nil
+        workspaceModel.libraryIsLoading = true
+        workspaceModel.libraryFailure = nil
         defer {
             if snapshotSyncV2CatalogRefreshToken == operationToken {
                 snapshotSyncV2CatalogRefreshToken = nil
-                snapshotSyncLibraryIsLoading = false
+                workspaceModel.libraryIsLoading = false
             }
         }
         do {
@@ -164,21 +190,21 @@ extension AppState {
             }
             #endif
             guard let page = try await LibraryCoordinator(operations: operations).catalogPage(
-                cursor: loadMore ? snapshotSyncRemoteCatalogNextCursor : nil,
-                existingItems: loadMore ? snapshotSyncRemoteCatalogItems : [], order: .workID,
+                cursor: loadMore ? workspaceModel.remoteCatalogCursor : nil,
+                existingItems: loadMore ? workspaceModel.remoteCatalogItems : [], order: .workID,
                 account: accountScope, currentAccount: { snapshotSyncV2AccountScopeToken },
                 isCurrent: { snapshotSyncV2CatalogRefreshToken == operationToken }
             ) else { return }
-            snapshotSyncRemoteCatalogNextCursor = page.nextCursor
-            snapshotSyncRemoteCatalogItems = page.items
+            workspaceModel.remoteCatalogCursor = page.nextCursor
+            workspaceModel.remoteCatalogItems = page.items
             await refreshSnapshotLibrary()
         } catch {
             guard matchesSnapshotSyncV2AccountScope(accountScope),
                   snapshotSyncV2CatalogRefreshToken == operationToken else { return }
-            if error as? SyncV2Failure == .authenticationRequired, case .signedIn = authUIState {
-                authUIState = .failed("認証の有効期限が切れました。Appleで再サインインしてください。原稿はこの端末に保存されています。")
+            if error as? SyncV2Failure == .authenticationRequired, case .signedIn = workspaceModel.authUIState {
+                workspaceModel.authUIState = .failed("認証の有効期限が切れました。Appleで再サインインしてください。原稿はこの端末に保存されています。")
             }
-            snapshotSyncLibraryFailure = syncV2FailureKind(error)
+            workspaceModel.libraryFailure = syncV2FailureKind(error)
             logSyncV2PresentationFailure(error)
             // Offline catalog reads leave the verified local shelf intact.
         }
@@ -198,13 +224,13 @@ extension AppState {
                   CheckpointCoordinator.matches(expected, host: self),
                   editorCommandSession.prepareForDocumentTransition() else { return false }
             defer { editorCommandSession.resumeAfterDocumentTransition() }
-            isDocumentTransitionInProgress = true
-            defer { isDocumentTransitionInProgress = false }
+            workspaceModel.isDocumentTransitionInProgress = true
+            defer { workspaceModel.isDocumentTransitionInProgress = false }
 
             guard await ConflictCoordinator.saveBeforeDeparture(
-                currentWorkID: currentSnapshotSyncV2WorkID, pendingDuplicateID: syncV2KeepBothPendingWorkID,
+                currentWorkID: currentSnapshotSyncV2WorkID, pendingDuplicateID: workspaceModel.keepBothPendingWorkID,
                 save: {
-                    if self.saveState == .saved {
+                    if self.workspaceModel.saveState == .saved {
                         return true
                     }
                     return await self.saveNow()
@@ -269,12 +295,12 @@ extension AppState {
                   matchesSnapshotSyncV2AccountScope(accountScope),
                   editorCommandSession.prepareForDocumentTransition() else { return false }
             defer { editorCommandSession.resumeAfterDocumentTransition() }
-            isDocumentTransitionInProgress = true
-            defer { isDocumentTransitionInProgress = false }
+            workspaceModel.isDocumentTransitionInProgress = true
+            defer { workspaceModel.isDocumentTransitionInProgress = false }
             guard await ConflictCoordinator.saveBeforeDeparture(
-                currentWorkID: currentSnapshotSyncV2WorkID, pendingDuplicateID: syncV2KeepBothPendingWorkID,
+                currentWorkID: currentSnapshotSyncV2WorkID, pendingDuplicateID: workspaceModel.keepBothPendingWorkID,
                 save: {
-                    if self.saveState == .saved {
+                    if self.workspaceModel.saveState == .saved {
                         return true
                     }
                     return await self.saveNow()
@@ -326,7 +352,7 @@ extension AppState {
     ) async -> Bool {
         guard snapshotSyncV2RemoteOnlyOpenTask == nil,
               containsSnapshotSyncV2LibraryWork(work) else { return false }
-        let expectedSession = documentSessionToken
+        let expectedSession = workspaceModel.documentSessionToken
         let expectedWorkID = currentSnapshotSyncV2WorkID
         let expectedSnapshotSession = snapshotSyncV2Session
         let accountScope = snapshotSyncV2AccountScopeToken
@@ -346,7 +372,7 @@ extension AppState {
                     isCurrent: { self.snapshotSyncV2RemoteOnlyOpenToken == operationToken
                         && self.matchesSnapshotSyncV2AccountScope(accountScope)
                     },
-                    opening: { self.libraryImportPhases[work.workID] = ImportPhase(stage: .opening) }
+                    opening: { self.workspaceModel.libraryImportPhases[work.workID] = ImportPhase(stage: .opening) }
                 ) else { return false }
                 var validationRejected = false
                 let installed = await documentOperationGate.perform { [weak self] in
@@ -359,11 +385,11 @@ extension AppState {
                           let openedDocument = opened.document,
                           editorCommandSession.prepareForDocumentTransition() else { return false }
                     defer { editorCommandSession.resumeAfterDocumentTransition() }
-                    isDocumentTransitionInProgress = true
-                    defer { isDocumentTransitionInProgress = false }
+                    workspaceModel.isDocumentTransitionInProgress = true
+                    defer { workspaceModel.isDocumentTransitionInProgress = false }
                     if expectedWorkID != nil {
                         guard await ConflictCoordinator.saveBeforeDeparture(
-                            currentWorkID: currentSnapshotSyncV2WorkID, pendingDuplicateID: syncV2KeepBothPendingWorkID,
+                            currentWorkID: currentSnapshotSyncV2WorkID, pendingDuplicateID: workspaceModel.keepBothPendingWorkID,
                             save: { await self.saveNow() }
                         ) else { return false }
                     }
@@ -399,7 +425,7 @@ extension AppState {
                 guard let self,
                       snapshotSyncV2RemoteOnlyOpenToken == operationToken,
                       matchesSnapshotSyncV2AccountScope(accountScope),
-                      documentSessionToken == expectedSession,
+                      workspaceModel.documentSessionToken == expectedSession,
                       containsSnapshotSyncV2LibraryWork(work) else { return false }
                 reportRemoteOnlyOpenFailure(error)
                 return false
@@ -430,7 +456,7 @@ extension AppState {
            !Task.isCancelled,
            snapshotSyncV2RemoteOnlyOpenToken == operationToken,
            matchesSnapshotSyncV2AccountScope(accountScope),
-           documentSessionToken == expectedSession,
+           workspaceModel.documentSessionToken == expectedSession,
            containsSnapshotSyncV2LibraryWork(work),
            !validationRejected {
             operationMessage = "作品の取得が完了しました。作品一覧を更新してから開いてください。"

@@ -4,21 +4,21 @@ import NovelWorkspace
 
 extension IOSDocumentStore {
     func clearKeepBothHandoff() {
-        syncV2KeepBothPendingWorkID = nil
-        syncV2KeepBothHandoff = nil
+        workspaceModel.keepBothPendingWorkID = nil
+        workspaceModel.keepBothHandoff = nil
     }
 
     func retireFrozenKeepBothWorkForLibrary() {
-        guard syncV2KeepBothPendingWorkID != nil else { return }
+        guard workspaceModel.keepBothPendingWorkID != nil else { return }
         cancelSnapshotSyncV2BackgroundOperations()
         startupState = .library
-        syncV2ActiveWorkID = nil
+        workspaceModel.activeWorkID = nil
         clearKeepBothHandoff()
         advanceDocumentSessionGeneration()
         advanceEditorContentGeneration()
         applySnapshotSyncV2State(nil)
         operationErrorMessage = nil
-        saveState = .saved
+        workspaceModel.saveState = .saved
         userDefaults.removeObject(forKey: Self.lastWorkIDKey)
     }
 
@@ -28,37 +28,37 @@ extension IOSDocumentStore {
             guard await snapshotSyncV2KeepBothInstallOverride() else { return false }
         }
         #endif
-        guard context.isCurrent(operationContext), syncV2KeepBothPendingWorkID == opened.workID,
+        guard context.isCurrent(operationContext), workspaceModel.keepBothPendingWorkID == opened.workID,
               let value = opened.document else { return false }
         return installSnapshotSyncV2Opened(opened, value: value)
     }
 
     @discardableResult
     func retryKeepBothHandoff() async -> Bool {
-        guard !isSyncV2RemoteAccountTransitionActive, !isDocumentTransitionInProgress,
+        guard !isSyncV2RemoteAccountTransitionActive, !workspaceModel.isDocumentTransitionInProgress,
               startupState == .ready, let application = snapshotSyncV2Application,
-              let handoff = syncV2KeepBothHandoff,
-              syncV2KeepBothPendingWorkID == handoff.action.newWorkID else { return false }
+              let handoff = workspaceModel.keepBothHandoff,
+              workspaceModel.keepBothPendingWorkID == handoff.action.newWorkID else { return false }
         return await documentOperationGate.perform { [weak self] in
-            guard let self, !isSyncV2RemoteAccountTransitionActive, !isDocumentTransitionInProgress,
+            guard let self, !isSyncV2RemoteAccountTransitionActive, !workspaceModel.isDocumentTransitionInProgress,
                   handoff.context.isCurrent(operationContext),
                   editorCommandSession.prepareForDocumentTransition() else { return false }
-            isDocumentTransitionInProgress = true
+            workspaceModel.isDocumentTransitionInProgress = true
             defer {
                 editorCommandSession.resumeAfterDocumentTransition()
-                isDocumentTransitionInProgress = false
+                workspaceModel.isDocumentTransitionInProgress = false
             }
             do {
                 let installed = try await ConflictCoordinator(application: application).retryKeepBothAtPreparedBoundary(
                     host: self, handoff: handoff,
                     isCurrent: { !self.isSyncV2RemoteAccountTransitionActive
                         && self.snapshotSyncV2Application === application
-                        && self.syncV2KeepBothPendingWorkID == handoff.action.newWorkID
+                        && self.workspaceModel.keepBothPendingWorkID == handoff.action.newWorkID
                     }, install: { opened, _ in await self.installKeepBothOpenedWork(opened, context: handoff.context) },
                     project: { self.applySnapshotSyncV2State($0) },
                     resume: {
                         self.startSnapshotSyncV2Reprojection(
-                            application, workID: self.syncV2ActiveWorkID, automaticAdoption: nil,
+                            application, workID: self.workspaceModel.activeWorkID, automaticAdoption: nil,
                             expectedAccountScope: handoff.context.account, resumesWorker: true
                         )
                     }

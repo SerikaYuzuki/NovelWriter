@@ -15,10 +15,10 @@ extension AppState {
             snapshotSyncV2RemoteOnlyOpeningWorkID = importing
             snapshotSyncV2RemoteOnlyOpenStartedAt = Date().addingTimeInterval(-16)
         }
-        libraryImportFailures.merge(preview.importFailures) { _, new in new }
-        libraryImportPhases.merge(preview.importPhases) { _, new in new }
-        snapshotSyncLibraryFailure = preview.failure
-        snapshotSyncLibraryIsLoading = preview.isLoading
+        workspaceModel.libraryImportFailures.merge(preview.importFailures) { _, new in new }
+        workspaceModel.libraryImportPhases.merge(preview.importPhases) { _, new in new }
+        workspaceModel.libraryFailure = preview.failure
+        workspaceModel.libraryIsLoading = preview.isLoading
         lastStartupLibraryConnection = mode == "offline" ? .offline : .accountRequired
         startupState = .documentSelection(.init(works: snapshotSyncLibraryWorks,
                                                 presentation: .localAndRemote, connection: mode == "offline" ? .offline : .accountRequired))

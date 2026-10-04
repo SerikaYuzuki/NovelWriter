@@ -168,6 +168,7 @@ struct OutlineEpisodeRow: View {
 }
 
 struct EpisodeOutlineContextMenu: View {
+    @Environment(WorkspaceModel.self) private var workspace
     @Environment(AppState.self) private var appState
 
     let request: EpisodeDeletionRequest
@@ -226,15 +227,16 @@ struct EpisodeOutlineContextMenu: View {
 
     private var otherChapters: [Chapter] {
         guard isCurrentSession else { return [] }
-        return appState.document.chapters.filter { $0.id != request.chapterID }
+        return workspace.document.chapters.filter { $0.id != request.chapterID }
     }
 
     private var isCurrentSession: Bool {
-        request.session == appState.documentSessionToken
+        request.session == workspace.documentSessionToken
     }
 }
 
 struct ChapterOutlineContextMenu: View {
+    @Environment(WorkspaceModel.self) private var workspace
     @Environment(AppState.self) private var appState
 
     let chapterItem: SessionBoundValue<Chapter>
@@ -296,7 +298,7 @@ struct ChapterOutlineContextMenu: View {
         .disabled(!isCurrentSession)
 
         Button("章を削除", systemImage: "trash", role: .destructive, action: onDelete)
-            .disabled(!isCurrentSession || appState.document.chapters.count <= 1)
+            .disabled(!isCurrentSession || workspace.document.chapters.count <= 1)
     }
 
     private var chapter: Chapter {
@@ -304,7 +306,7 @@ struct ChapterOutlineContextMenu: View {
     }
 
     private var isCurrentSession: Bool {
-        chapterItem.session == appState.documentSessionToken
+        chapterItem.session == workspace.documentSessionToken
     }
 }
 

@@ -211,12 +211,13 @@ struct ChapterMemoPopover: View {
 }
 
 struct SnapshotPopover: View {
+    @Environment(WorkspaceModel.self) private var workspace
     @Environment(AppState.self) private var appState
     let overlayState: WorkbenchOverlayState
 
     var body: some View {
         if appState.workspaceSelection.section == .structure,
-           let context = EpisodeHistoryContext(document: appState.document, episodeID: appState.selectedEpisodeID),
+           let context = EpisodeHistoryContext(document: workspace.document, episodeID: workspace.selectedEpisodeID),
            let application = appState.snapshotSyncV2Application,
            let workID = appState.currentSnapshotSyncV2WorkID {
             EpisodeHistoryList(application: application, workID: workID, chapterID: context.chapterID,
@@ -330,6 +331,7 @@ struct WholeWorkSnapshotPopover: View {
 }
 
 struct ChapterContextMenuContent: View {
+    @Environment(WorkspaceModel.self) private var workspace
     @State private var characterSession = ChapterCharacterSession()
     @Bindable var appState: AppState
 
@@ -366,31 +368,31 @@ struct ChapterContextMenuContent: View {
         }
         .onAppear { refreshCharacters() }
         .onChange(of: targetChapter) { _, _ in refreshCharacters() }
-        .onChange(of: appState.document.characters) { _, _ in refreshCharacters() }
+        .onChange(of: workspace.document.characters) { _, _ in refreshCharacters() }
         .onChange(of: appState.workSearchScope) { _, _ in refreshCharacters() }
         .onDisappear { characterSession.cancel() }
     }
 
     private var targetChapterID: ChapterID? {
-        chapterID ?? appState.selectedChapterID
+        chapterID ?? workspace.selectedChapterID
     }
 
     private var targetChapter: Chapter? {
         guard let targetChapterID else { return nil }
-        return appState.document.chapters.first { $0.id == targetChapterID }
+        return workspace.document.chapters.first { $0.id == targetChapterID }
     }
 
     private var chapterPlotCards: [PlotCard] {
         guard let targetChapterID else { return [] }
-        return appState.document.plotCards.filter { $0.chapterID == targetChapterID }
+        return workspace.document.plotCards.filter { $0.chapterID == targetChapterID }
     }
 
     private var appearingCharacters: [NovelCore.Character] {
-        appState.document.characters.filter { characterSession.characterIDs.contains($0.id) }
+        workspace.document.characters.filter { characterSession.characterIDs.contains($0.id) }
     }
 
     private func refreshCharacters() {
-        characterSession.refresh(chapter: targetChapter, characters: appState.document.characters)
+        characterSession.refresh(chapter: targetChapter, characters: workspace.document.characters)
     }
 }
 
@@ -418,10 +420,10 @@ final class SnapshotMenuPresenter {
     }
 
     func refresh() async {
-        let session = appState.documentSessionToken
+        let session = appState.workspaceModel.documentSessionToken
         await appState.refreshSnapshotHistory {
-            guard !Task.isCancelled, self.appState.documentSessionToken == session else { return }
-            self.snapshots = self.appState.snapshotSyncHistory.map {
+            guard !Task.isCancelled, self.appState.workspaceModel.documentSessionToken == session else { return }
+            self.snapshots = self.appState.workspaceModel.historyItems.map {
                 SnapshotRestoreRequest(entry: $0, session: session)
             }
             if self.snapshotPendingRestore?.session != session {
@@ -431,7 +433,7 @@ final class SnapshotMenuPresenter {
     }
 
     func requestRestore(_ request: SnapshotRestoreRequest) {
-        guard request.session == appState.documentSessionToken,
+        guard request.session == appState.workspaceModel.documentSessionToken,
               snapshots.contains(where: { $0.id == request.id && $0.session == request.session }) else {
             restoreErrorMessage = "作品が切り替わったため、スナップショット一覧を更新してください。"
             return
@@ -440,7 +442,7 @@ final class SnapshotMenuPresenter {
     }
 
     func restore(_ request: SnapshotRestoreRequest) async {
-        guard request.session == appState.documentSessionToken,
+        guard request.session == appState.workspaceModel.documentSessionToken,
               snapshots.contains(where: { $0.id == request.id && $0.session == request.session }) else {
             snapshotPendingRestore = nil
             restoreErrorMessage = "作品が切り替わったため、スナップショット一覧を更新してください。"

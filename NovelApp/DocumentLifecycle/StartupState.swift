@@ -97,7 +97,7 @@ extension AppState {
         let old = oldValue.diagnosticName
         let new = startupState.diagnosticName
         guard old != new else { return }
-        let transition = isDocumentTransitionInProgress
+        let transition = workspaceModel.isDocumentTransitionInProgress
         let windows = NSApp?.windows.filter(\.isVisible).count ?? -1
         Self.startupLog.notice(
             "\(old, privacy: .public) -> \(new, privacy: .public) transition=\(transition, privacy: .public) windows=\(windows, privacy: .public)"

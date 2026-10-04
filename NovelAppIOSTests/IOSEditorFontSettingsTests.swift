@@ -82,7 +82,7 @@ struct IOSEditorFontSettingsTests {
         userDefaults: UserDefaults
     ) async throws -> FontEditorHarness {
         let host = UIHostingController(
-            rootView: IOSEditorPane(store: store, userDefaults: userDefaults)
+            rootView: IOSEditorPane(store: store, userDefaults: userDefaults).environment(store.workspaceModel)
         )
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 430, height: 932))
         window.rootViewController = host

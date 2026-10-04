@@ -18,7 +18,7 @@ struct IOSSnapshotSyncV2PortableBoundaryTests {
             )
             await store.bootstrap()
             #expect(await store.makeNewDocument())
-            let original = store.document
+            let original = store.workspaceModel.document
             let opened = SyncV2OpenedWork(
                 workID: WorkID(UUID()),
                 document: NovelDocument.newDocument(title: "別の本文"),
@@ -28,8 +28,8 @@ struct IOSSnapshotSyncV2PortableBoundaryTests {
             )
 
             #expect(store.installSnapshotSyncV2Opened(opened, value: original) == false)
-            #expect(store.document == original)
-            #expect(store.syncV2ActiveWorkID != opened.workID)
+            #expect(store.workspaceModel.document == original)
+            #expect(store.workspaceModel.activeWorkID != opened.workID)
         }
     }
 
@@ -42,9 +42,9 @@ struct IOSSnapshotSyncV2PortableBoundaryTests {
             )
             await store.bootstrap()
             #expect(await store.makeNewDocument())
-            let original = store.document
+            let original = store.workspaceModel.document
             let duplicateName = "same.pdf"
-            let activeWorkID = try #require(store.syncV2ActiveWorkID)
+            let activeWorkID = try #require(store.workspaceModel.activeWorkID)
             let opened = SyncV2OpenedWork(
                 workID: activeWorkID,
                 document: original,
@@ -62,11 +62,11 @@ struct IOSSnapshotSyncV2PortableBoundaryTests {
             )
 
             #expect(store.installSnapshotSyncV2Opened(opened, value: original) == false)
-            #expect(store.document == original)
-            #expect(store.attachments.isEmpty)
+            #expect(store.workspaceModel.document == original)
+            #expect(store.workspaceModel.attachments.isEmpty)
             #expect(store.snapshotSyncOutcome == .failure(.fatal(.invalidLocalState)))
             #expect(store.adoptV2AttachmentRecords(opened.attachments) == false)
-            #expect(store.attachments.isEmpty)
+            #expect(store.workspaceModel.attachments.isEmpty)
         }
     }
 
@@ -79,8 +79,8 @@ struct IOSSnapshotSyncV2PortableBoundaryTests {
             )
             await store.bootstrap()
             #expect(await store.makeNewDocument())
-            let original = store.document
-            let editGeneration = store.localEditGeneration
+            let original = store.workspaceModel.document
+            let editGeneration = store.workspaceModel.editGeneration
             let gate = DocumentTransitionTestGate()
             let task = Task { @MainActor in
                 await store.performDocumentTransition {
@@ -90,16 +90,16 @@ struct IOSSnapshotSyncV2PortableBoundaryTests {
             }
 
             await gate.waitForStart()
-            #expect(store.isDocumentTransitionInProgress)
+            #expect(store.workspaceModel.isDocumentTransitionInProgress)
             store.updateDocumentTitle("遅れて届いた作品名")
             store.updateDocumentSynopsis("遅れて届いたあらすじ")
             store.addChapter()
-            #expect(store.document == original)
-            #expect(store.localEditGeneration == editGeneration)
-            #expect(store.saveState == .saved)
+            #expect(store.workspaceModel.document == original)
+            #expect(store.workspaceModel.editGeneration == editGeneration)
+            #expect(store.workspaceModel.saveState == .saved)
             await gate.release()
             #expect(await task.value)
-            #expect(store.isDocumentTransitionInProgress == false)
+            #expect(store.workspaceModel.isDocumentTransitionInProgress == false)
         }
     }
 
@@ -112,8 +112,8 @@ struct IOSSnapshotSyncV2PortableBoundaryTests {
             )
             await store.bootstrap()
             #expect(await store.makeNewDocument())
-            let original = store.document
-            let editGeneration = store.localEditGeneration
+            let original = store.workspaceModel.document
+            let editGeneration = store.workspaceModel.editGeneration
 
             store.syncV2AccountTransitionInProgress = true
             store.updateDocumentTitle("別アカウントへ遅れて届いた作品名")
@@ -121,9 +121,9 @@ struct IOSSnapshotSyncV2PortableBoundaryTests {
             store.addChapter()
             store.syncV2AccountTransitionInProgress = false
 
-            #expect(store.document == original)
-            #expect(store.localEditGeneration == editGeneration)
-            #expect(store.saveState == .saved)
+            #expect(store.workspaceModel.document == original)
+            #expect(store.workspaceModel.editGeneration == editGeneration)
+            #expect(store.workspaceModel.saveState == .saved)
         }
     }
 
@@ -136,8 +136,8 @@ struct IOSSnapshotSyncV2PortableBoundaryTests {
             )
             await store.bootstrap()
             #expect(await store.makeNewDocument())
-            let original = store.document
-            let editGeneration = store.localEditGeneration
+            let original = store.workspaceModel.document
+            let editGeneration = store.workspaceModel.editGeneration
 
             // signInWithApple holds this request flag while the exchange is
             // suspended. Local forms remain editable and dirty so the final
@@ -148,10 +148,10 @@ struct IOSSnapshotSyncV2PortableBoundaryTests {
             store.addChapter()
             store.syncV2AccountTransitionRequested = false
 
-            #expect(store.document != original)
-            #expect(store.document.title == "認証中に届いた作品名")
-            #expect(store.localEditGeneration > editGeneration)
-            #expect(store.saveState == .dirty)
+            #expect(store.workspaceModel.document != original)
+            #expect(store.workspaceModel.document.title == "認証中に届いた作品名")
+            #expect(store.workspaceModel.editGeneration > editGeneration)
+            #expect(store.workspaceModel.saveState == .dirty)
         }
     }
 
@@ -164,12 +164,12 @@ struct IOSSnapshotSyncV2PortableBoundaryTests {
             )
             await store.bootstrap()
             #expect(await store.makeNewDocument())
-            let activeWorkID = try #require(store.syncV2ActiveWorkID)
+            let activeWorkID = try #require(store.workspaceModel.activeWorkID)
             let application = try #require(store.snapshotSyncV2Application)
             store.updateDocumentTitle("サインアウト直前の未保存作品名")
-            let savedBeforePark = store.document
-            #expect(store.saveState == .dirty)
-            store.syncV2LibraryItems = [SyncV2LibraryItem(
+            let savedBeforePark = store.workspaceModel.document
+            #expect(store.workspaceModel.saveState == .dirty)
+            store.workspaceModel.libraryRows = [SyncV2LibraryItem(
                 workID: activeWorkID,
                 title: savedBeforePark.title,
                 availability: .cached,
@@ -201,8 +201,8 @@ struct IOSSnapshotSyncV2PortableBoundaryTests {
             #expect(store.snapshotSyncV2RemoteOnlyOpenToken == nil)
             #expect(store.snapshotSyncV2RemoteOnlyOpeningWorkID == nil)
             #expect(task.isCancelled)
-            #expect(store.syncV2ActiveWorkID == activeWorkID)
-            #expect(store.syncV2LibraryItems.contains {
+            #expect(store.workspaceModel.activeWorkID == activeWorkID)
+            #expect(store.workspaceModel.libraryRows.contains {
                 $0.workID == activeWorkID &&
                     $0.accountState == .parkedDifferentAccount &&
                     $0.availability == .localOnly
@@ -212,8 +212,8 @@ struct IOSSnapshotSyncV2PortableBoundaryTests {
             let reopened = try await application.openLocal(workID: activeWorkID)
             #expect(reopened.document?.title == "サインアウト直前の未保存作品名")
             store.updateDocumentTitle("棚へ戻った後の遅延入力")
-            #expect(store.document.title == "棚へ戻った後の遅延入力")
-            #expect(store.saveState == .dirty)
+            #expect(store.workspaceModel.document.title == "棚へ戻った後の遅延入力")
+            #expect(store.workspaceModel.saveState == .dirty)
         }
     }
 
@@ -249,14 +249,14 @@ struct IOSSnapshotSyncV2PortableBoundaryTests {
             await store.bootstrap()
             #expect(await store.makeNewDocument())
             guard let application = store.snapshotSyncV2Application,
-                  let workID = store.syncV2ActiveWorkID,
+                  let workID = store.workspaceModel.activeWorkID,
                   let beforeState = await application.uiState(workID: workID),
                   case let .saved(generation, snapshotID) = beforeState.localDurability else {
                 Issue.record("v2 work was not durably checkpointed")
                 return
             }
             #expect(await store.refreshSnapshotHistory(for: workID))
-            let beforeLocalHistoryCount = store.syncV2HistoryItems.count(where: {
+            let beforeLocalHistoryCount = store.workspaceModel.historyItems.count(where: {
                 $0.source == .local
             })
             let conflict = SyncV2ConflictProjection(
@@ -269,14 +269,14 @@ struct IOSSnapshotSyncV2PortableBoundaryTests {
             )
             // The UI projection is durable in production; this fixture models a
             // rendered inbox while the test runtime itself has no remote conflict.
-            store.snapshotSyncState = SyncUIState(
+            store.workspaceModel.syncUIState = SyncUIState(
                 workID: workID,
                 localDurability: beforeState.localDurability,
                 remoteProgress: .needsChoice,
                 conflict: conflict,
                 lastTypedResult: .conflictPending
             )
-            store.snapshotSyncConflict = conflict
+            store.workspaceModel.syncConflict = conflict
 
             let displayedSelection = try #require(
                 store.snapshotSyncV2DisplayedConflictSelection
@@ -296,25 +296,25 @@ struct IOSSnapshotSyncV2PortableBoundaryTests {
                 remoteSnapshotID: conflict.remoteSnapshotID,
                 sourceGeneration: conflict.sourceGeneration
             )
-            store.snapshotSyncState = SyncUIState(
+            store.workspaceModel.syncUIState = SyncUIState(
                 workID: workID,
                 localDurability: beforeState.localDurability,
                 remoteProgress: .needsChoice,
                 conflict: newerConflict,
                 lastTypedResult: .conflictPending
             )
-            store.snapshotSyncConflict = newerConflict
+            store.workspaceModel.syncConflict = newerConflict
             #expect(
                 await store.resolveSnapshotSyncV2Conflict(
                     using: .useServer,
                     expectedSelection: displayedSelection
                 ) == false
             )
-            #expect(store.snapshotSyncConflict == newerConflict)
+            #expect(store.workspaceModel.syncConflict == newerConflict)
             let afterState = await application.uiState(workID: workID)
             #expect(afterState?.localDurability == beforeState.localDurability)
             #expect(await store.refreshSnapshotHistory(for: workID))
-            #expect(store.syncV2HistoryItems.count(where: { $0.source == .local }) == beforeLocalHistoryCount)
+            #expect(store.workspaceModel.historyItems.count(where: { $0.source == .local }) == beforeLocalHistoryCount)
         }
     }
 }
@@ -366,7 +366,7 @@ extension IOSSnapshotSyncV2PortableBoundaryTests {
                 #expect(store.documentCreatedAt == expectedCanonicalCreatedAt)
                 #expect(store.syncV2PortableCreatedAt == expectedCreatedAt)
                 #expect(store.syncV2PortableResources == expectedResources)
-                importedWorkID = try #require(store.syncV2ActiveWorkID)
+                importedWorkID = try #require(store.workspaceModel.activeWorkID)
             }
 
             // Drop the test composition so the next store opens the persisted

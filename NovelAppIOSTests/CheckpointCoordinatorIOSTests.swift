@@ -21,8 +21,8 @@ struct CheckpointCoordinatorIOSTests {
         await store.bootstrap()
         #expect(await store.makeNewDocument())
         let application = try #require(store.snapshotSyncV2Application)
-        let workID = try #require(store.syncV2ActiveWorkID)
-        let document = store.document
+        let workID = try #require(store.workspaceModel.activeWorkID)
+        let document = store.workspaceModel.document
         let pause = CheckpointCompletionPause()
         store.workspaceCheckpointOverride = { request in
             let result = try await application.checkpoint(
@@ -40,22 +40,26 @@ struct CheckpointCoordinatorIOSTests {
         let task = Task { await store.saveNow() }
         await pause.waitUntilPaused()
         if change == "work" {
-            store.document = .newDocument(title: "新作品")
-            store.syncV2ActiveWorkID = WorkID(UUID())
+            store.workspaceModel.document = .newDocument(title: "新作品")
+            store.workspaceModel.documentSessionToken.documentID = store.workspaceModel.document.id
+            store.workspaceModel.activeWorkID = WorkID(UUID())
+            if let workID = store.workspaceModel.activeWorkID {
+                store.workspaceModel.documentSessionToken.workID = workID
+            }
             store.advanceDocumentSessionGeneration()
         } else {
             store.invalidateSnapshotSyncV2AccountOperations()
         }
-        store.saveState = .dirty
+        store.workspaceModel.saveState = .dirty
         store.operationErrorMessage = "新しい画面"
-        let projection = store.snapshotSyncState
-        let conflict = store.snapshotSyncConflict
+        let projection = store.workspaceModel.syncUIState
+        let conflict = store.workspaceModel.syncConflict
         let outcome = store.snapshotSyncOutcome
         pause.release()
         #expect(await !task.value)
-        #expect(store.saveState == .dirty)
-        #expect(store.snapshotSyncState == projection)
-        #expect(store.snapshotSyncConflict == conflict)
+        #expect(store.workspaceModel.saveState == .dirty)
+        #expect(store.workspaceModel.syncUIState == projection)
+        #expect(store.workspaceModel.syncConflict == conflict)
         #expect(store.snapshotSyncOutcome == outcome)
         #expect(store.operationErrorMessage == "新しい画面")
         #expect(try await application.openLocal(workID: workID).document == document)

@@ -3,7 +3,7 @@ import NovelWorkspace
 
 extension IOSDocumentStore {
     func copySelectionManuscript(text: String, expectedEpisodeID: EpisodeID) {
-        guard selectedEpisodeID == expectedEpisodeID, let selectedChapterID else {
+        guard workspaceModel.selectedEpisodeID == expectedEpisodeID, let selectedChapterID = workspaceModel.selectedChapterID else {
             manuscriptCopyNotice = IOSManuscriptCopyNotice(failure: .staleContext)
             return
         }
@@ -11,7 +11,7 @@ extension IOSDocumentStore {
     }
 
     func copyEpisodeManuscript(expectedEpisodeID: EpisodeID) {
-        guard selectedEpisodeID == expectedEpisodeID, let selectedChapterID else {
+        guard workspaceModel.selectedEpisodeID == expectedEpisodeID, let selectedChapterID = workspaceModel.selectedChapterID else {
             if manuscriptCopyNotice == nil {
                 manuscriptCopyNotice = IOSManuscriptCopyNotice(failure: .staleContext)
             }
@@ -21,11 +21,11 @@ extension IOSDocumentStore {
     }
 
     func copyChapterManuscript(expectedChapterID: ChapterID) {
-        guard selectedChapterID == expectedChapterID else {
+        guard workspaceModel.selectedChapterID == expectedChapterID else {
             manuscriptCopyNotice = IOSManuscriptCopyNotice(failure: .staleContext)
             return
         }
-        guard selectedEpisodeID != nil else {
+        guard workspaceModel.selectedEpisodeID != nil else {
             if manuscriptCopyNotice == nil {
                 manuscriptCopyNotice = IOSManuscriptCopyNotice(failure: .staleContext)
             }

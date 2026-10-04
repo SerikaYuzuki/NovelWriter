@@ -10,7 +10,7 @@ import NovelWritingSupport
 
 extension AppState: WorkspaceWritingHost {
     var writingInteractionAllowed: Bool {
-        permitsDocumentInteraction && snapshotSyncV2ActiveWorkID != nil
+        permitsDocumentInteraction && workspaceModel.activeWorkID != nil
     }
 
     var writingApplication: SyncV2Application? {
@@ -27,9 +27,9 @@ extension AppState: WorkspaceWritingHost {
 
     func installWritingMutation(_ replacement: NovelDocument, attachments values: [WritingAttachment]) throws {
         snapshotSyncV2Attachments = values.map { SyncAttachment(attachmentId: $0.id, fileName: $0.fileName, bytes: $0.bytes) }
-        attachments = values.map { Attachment(fileName: $0.fileName, byteCount: Int64($0.bytes.count)) }
+        workspaceModel.attachments = values.map { Attachment(fileName: $0.fileName, byteCount: Int64($0.bytes.count)) }
         attachmentPreviewURLs.removeAll()
-        document = replacement
+        workspaceModel.document = replacement
         repairWritingSelection()
     }
 
@@ -46,10 +46,10 @@ extension AppState: WorkspaceWritingHost {
     }
 
     var writingAssistantHost: WritingAssistantHost? {
-        guard let application = snapshotSyncV2Application, let work = snapshotSyncV2ActiveWorkID,
+        guard let application = snapshotSyncV2Application, let work = workspaceModel.activeWorkID,
               let workUUID = UUID(uuidString: work.description) else { return nil }
         let scope = operationContext
-        let contextID = "\(workUUID)-\(documentSessionToken)-\(snapshotSyncV2AccountScopeToken)"
+        let contextID = "\(workUUID)-\(workspaceModel.documentSessionToken)-\(snapshotSyncV2AccountScopeToken)"
         let validate = { [weak self] in
             guard !Task.isCancelled, let self, writingInteractionAllowed,
                   operationContext.workID == scope.workID, operationContext.session == scope.session,
@@ -85,27 +85,27 @@ extension AppState: WorkspaceWritingHost {
     }
 
     func invalidateEditorContent() {
-        editorContentGeneration &+= 1
+        workspaceModel.editorContentGeneration &+= 1
     }
 
     private func repairWritingSelection() {
-        if !document.chapters.contains(where: { $0.id == selectedChapterID }) {
-            selectedChapterID = document.chapters.first?.id
+        if !workspaceModel.document.chapters.contains(where: { $0.id == workspaceModel.selectedChapterID }) {
+            workspaceModel.selectedChapterID = workspaceModel.document.chapters.first?.id
         }
-        let chapter = document.chapters.first { $0.id == selectedChapterID }
-        if chapter?.episodes.contains(where: { $0.id == selectedEpisodeID }) != true {
-            selectedEpisodeID = chapter?.episodes.first?.id
+        let chapter = workspaceModel.document.chapters.first { $0.id == workspaceModel.selectedChapterID }
+        if chapter?.episodes.contains(where: { $0.id == workspaceModel.selectedEpisodeID }) != true {
+            workspaceModel.selectedEpisodeID = chapter?.episodes.first?.id
         }
-        if !document.characters.contains(where: { $0.id == selectedCharacterID }) {
+        if !workspaceModel.document.characters.contains(where: { $0.id == selectedCharacterID }) {
             selectedCharacterID = nil
         }
-        if !document.plotCards.contains(where: { $0.id == selectedPlotCardID }) {
+        if !workspaceModel.document.plotCards.contains(where: { $0.id == selectedPlotCardID }) {
             selectedPlotCardID = nil
         }
-        if !document.flags.contains(where: { $0.id == selectedFlagID }) {
+        if !workspaceModel.document.flags.contains(where: { $0.id == selectedFlagID }) {
             selectedFlagID = nil
         }
-        if !document.worldNotes.contains(where: { $0.id == selectedWorldNoteID }) {
+        if !workspaceModel.document.worldNotes.contains(where: { $0.id == selectedWorldNoteID }) {
             selectedWorldNoteID = nil
         }
     }

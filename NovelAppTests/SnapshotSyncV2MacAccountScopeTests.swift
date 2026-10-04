@@ -16,11 +16,11 @@ struct SnapshotSyncV2MacAccountScopeTests {
     @MainActor
     func invalidationAdvancesScopeAndRejectsCompletion() async throws {
         let state = try AppState(dependencies: makeAccountScopeDependencies())
-        state.authSession = makeMacV2Session(accountID: "account-a", fence: "fence-a")
+        state.workspaceModel.authSession = makeMacV2Session(accountID: "account-a", fence: "fence-a")
         for _ in 0 ..< 2 {
             let scope = state.snapshotSyncV2AccountScopeToken
             let completion = WorkspaceOperationContext(workID: state.currentSnapshotSyncV2WorkID,
-                                                       session: state.documentSessionToken, account: scope, editGeneration: nil)
+                                                       session: state.workspaceModel.documentSessionToken, account: scope, editGeneration: nil)
             #expect(state.matchesSnapshotSyncV2AccountScope(scope))
             #expect(state.matchesSyncOperation(completion))
             await Task.yield()
@@ -67,7 +67,7 @@ struct SnapshotSyncV2MacAccountScopeTests {
                 authState: .signedIn(accountID: "account-a")
             )
             let workID = try #require(state.currentSnapshotSyncV2WorkID)
-            state.document.title = "変更前"
+            state.workspaceModel.document.title = "変更前"
             state.markDocumentDirty()
 
             #expect(await state.transitionFuminiwaSession(
@@ -82,7 +82,7 @@ struct SnapshotSyncV2MacAccountScopeTests {
                 #expect(parked.remoteProgress == .parkedDifferentAccount)
                 #expect(parked.isOpenable)
             }
-            state.document.title = "遷移後"
+            state.workspaceModel.document.title = "遷移後"
             state.markDocumentDirty()
             #expect(await state.saveNow())
 
@@ -118,7 +118,7 @@ struct SnapshotSyncV2MacAccountScopeTests {
         )
         let workID = try #require(state.currentSnapshotSyncV2WorkID)
 
-        state.document.title = "編集中"
+        state.workspaceModel.document.title = "編集中"
         state.markDocumentDirty()
         #expect(await state.transitionFuminiwaSession(
             to: nil,
@@ -130,7 +130,7 @@ struct SnapshotSyncV2MacAccountScopeTests {
         #expect(state.permitsDocumentInteraction)
 
         // The editor remains available while Apple is awaiting a response.
-        state.document.title = "Apple待機中の追加入力"
+        state.workspaceModel.document.title = "Apple待機中の追加入力"
         state.markDocumentDirty()
         #expect(await state.transitionFuminiwaSession(
             to: session,
@@ -138,7 +138,7 @@ struct SnapshotSyncV2MacAccountScopeTests {
             resumeRemoteAfterTransition: false
         ))
         #expect(state.currentSnapshotSyncV2WorkID == workID)
-        #expect(state.document.title == "Apple待機中の追加入力")
+        #expect(state.workspaceModel.document.title == "Apple待機中の追加入力")
         #expect(await configuration.remote.recordedOperations().isEmpty)
 
         let library = try #require(state.snapshotSyncV2Application)
@@ -194,8 +194,8 @@ struct SnapshotSyncV2MacAccountScopeTests {
 
         await state.restoreFuminiwaSession()
 
-        #expect(state.authSession == session)
-        #expect(state.authUIState == .signedIn(accountID: session.accountID))
+        #expect(state.workspaceModel.authSession == session)
+        #expect(state.workspaceModel.authUIState == .signedIn(accountID: session.accountID))
         #expect(state.snapshotSyncLibraryWorks.contains { $0.workID == workID })
     }
 
@@ -264,11 +264,11 @@ struct SnapshotSyncV2MacAccountScopeTests {
         }
         defer { providerFallback.cancel() }
 
-        #expect(state.authUIState == AuthUIState.signingIn)
+        #expect(state.workspaceModel.authUIState == AuthUIState.signingIn)
         #expect(state.permitsDocumentTransitionOperation)
         #expect(state.permitsDocumentInteraction)
         #expect(await state.createNewDocument())
-        state.document.title = "待機中に作った作品"
+        state.workspaceModel.document.title = "待機中に作った作品"
         state.markDocumentDirty()
         #expect(await state.saveNow())
         let createdWorkID = try #require(state.currentSnapshotSyncV2WorkID)
@@ -279,7 +279,7 @@ struct SnapshotSyncV2MacAccountScopeTests {
         #expect(await state.openDocument(at: packageURL))
         let openedWorkID = try #require(state.currentSnapshotSyncV2WorkID)
         #expect(openedWorkID != createdWorkID)
-        #expect(state.document.title == "待機中に取り込む作品")
+        #expect(state.workspaceModel.document.title == "待機中に取り込む作品")
 
         #expect(await state.importExternalDocument(at: exportURL))
         let importedWorkID = try #require(state.currentSnapshotSyncV2WorkID)
@@ -291,17 +291,17 @@ struct SnapshotSyncV2MacAccountScopeTests {
         #expect(await state.restoreSnapshotV2(snapshotID: snapshotID))
         #expect(await state.saveNow())
         let currentWorkID = try #require(state.currentSnapshotSyncV2WorkID)
-        let currentTitle = state.document.title
+        let currentTitle = state.workspaceModel.document.title
 
         provider.resume()
         await signingIn.value
         #expect(state.interactiveAuthOperationCount == 0)
         #expect(state.permitsDocumentTransitionOperation)
-        #expect(state.authSession?.accountID == session.accountID)
+        #expect(state.workspaceModel.authSession?.accountID == session.accountID)
         // The delayed auth result may rebind parked rows, but it cannot adopt
         // or overwrite a Work opened locally while the exchange was waiting.
         #expect(state.currentSnapshotSyncV2WorkID == currentWorkID)
-        #expect(state.document.title == currentTitle)
+        #expect(state.workspaceModel.document.title == currentTitle)
     }
 }
 
@@ -358,7 +358,7 @@ struct SnapshotSyncV2MacAuthBoundaryTests {
         #expect(state.interactiveAuthOperationCount == 0)
         #expect(state.permitsDocumentTransitionOperation)
         #expect(await state.createNewDocument())
-        state.document.title = "exchange待機中のローカル編集"
+        state.workspaceModel.document.title = "exchange待機中のローカル編集"
         state.markDocumentDirty()
         #expect(await state.saveNow())
 
@@ -421,7 +421,7 @@ struct SnapshotSyncV2MacAuthBoundaryTests {
             to: queuedOpenURL
         )
 
-        state.document.title = "remote revoke 待機前"
+        state.workspaceModel.document.title = "remote revoke 待機前"
         state.markDocumentDirty()
         let signingOut = Task { @MainActor in
             await state.signOutFromFuminiwa()
@@ -431,18 +431,18 @@ struct SnapshotSyncV2MacAuthBoundaryTests {
         }
 
         // Durable parking is complete before the server revoke is released.
-        #expect(state.authSession == nil)
+        #expect(state.workspaceModel.authSession == nil)
         #expect(state.interactiveAuthOperationCount == 0)
         #expect(state.permitsDocumentTransitionOperation)
         #expect(state.permitsDocumentInteraction)
-        #expect(state.snapshotSyncV2ActiveWorkID == originalWorkID)
+        #expect(state.workspaceModel.activeWorkID == originalWorkID)
         #expect(state.snapshotSyncLibraryWorks.contains {
             $0.workID == originalWorkID && $0.remoteProgress == .parkedDifferentAccount
         })
 
         // Local operations remain available after releasing the revoke lease;
         // the retired account's parked lanes cannot send checkpoints.
-        state.document.title = "revoke 待機中の追加入力"
+        state.workspaceModel.document.title = "revoke 待機中の追加入力"
         state.markDocumentDirty()
         #expect(await state.saveNow())
         #expect(await state.createNewDocument())
@@ -464,7 +464,7 @@ struct SnapshotSyncV2MacAuthBoundaryTests {
         defer { signInProviderFallback.cancel() }
         await signingOut.value
         try await eventuallyMac { signInProvider.isWaiting }
-        #expect(state.authUIState == .signingIn)
+        #expect(state.workspaceModel.authUIState == .signingIn)
         #expect(state.interactiveAuthOperationCount == 0)
         #expect(await state.createNewDocument())
         #expect(await state.openDocument(at: queuedOpenURL))
@@ -479,8 +479,8 @@ struct SnapshotSyncV2MacAuthBoundaryTests {
         #expect(state.interactiveAuthOperationCount == 0)
         // This remote fixture returns authenticationRequired for the catalog.
         // The new login remains durable, while the UI must offer reauthentication.
-        #expect(state.authSession?.accountID == session.accountID)
-        #expect(state.authUIState == .failed("認証の有効期限が切れました。Appleで再サインインしてください。原稿はこの端末に保存されています。"))
+        #expect(state.workspaceModel.authSession?.accountID == session.accountID)
+        #expect(state.workspaceModel.authUIState == .failed("認証の有効期限が切れました。Appleで再サインインしてください。原稿はこの端末に保存されています。"))
         #expect(state.permitsDocumentInteraction)
     }
 }
@@ -529,8 +529,8 @@ struct SnapshotSyncV2MacAccountCompletionTests {
         )
         await refresh.value
 
-        #expect(state.authSession?.accountID == "account-b")
-        #expect(state.snapshotSyncRemoteCatalogItems.isEmpty)
+        #expect(state.workspaceModel.authSession?.accountID == "account-b")
+        #expect(state.workspaceModel.remoteCatalogItems.isEmpty)
         #expect(state.snapshotSyncLibraryWorks.allSatisfy { $0.workID != staleWorkID })
     }
 
@@ -549,9 +549,9 @@ struct SnapshotSyncV2MacAccountCompletionTests {
             to: makeMacV2Session(accountID: "account-a", fence: "fence-a"),
             authState: .signedIn(accountID: "account-a")
         )
-        let originalWorkID = try #require(state.snapshotSyncV2ActiveWorkID)
-        let originalSession = state.documentSessionToken
-        let originalDocument = state.document
+        let originalWorkID = try #require(state.workspaceModel.activeWorkID)
+        let originalSession = state.workspaceModel.documentSessionToken
+        let originalDocument = state.workspaceModel.document
         let remoteWorkID = WorkID(UUID())
         let remoteWork = StartupLibraryWork(
             id: remoteWorkID.rawValue,
@@ -587,10 +587,10 @@ struct SnapshotSyncV2MacAccountCompletionTests {
         }
 
         #expect(await remoteOpen.value == false)
-        #expect(state.authSession?.accountID == "account-b")
-        #expect(state.snapshotSyncV2ActiveWorkID == originalWorkID)
-        #expect(state.documentSessionToken != originalSession)
-        #expect(state.document == originalDocument)
+        #expect(state.workspaceModel.authSession?.accountID == "account-b")
+        #expect(state.workspaceModel.activeWorkID == originalWorkID)
+        #expect(state.workspaceModel.documentSessionToken != originalSession)
+        #expect(state.workspaceModel.document == originalDocument)
         #expect(state.operationMessage == nil)
     }
 
@@ -609,9 +609,9 @@ struct SnapshotSyncV2MacAccountCompletionTests {
             to: makeMacV2Session(accountID: "account-a", fence: "fence-a"),
             authState: .signedIn(accountID: "account-a")
         )
-        let originalWorkID = try #require(state.snapshotSyncV2ActiveWorkID)
-        let originalSession = state.documentSessionToken
-        let originalDocument = state.document
+        let originalWorkID = try #require(state.workspaceModel.activeWorkID)
+        let originalSession = state.workspaceModel.documentSessionToken
+        let originalDocument = state.workspaceModel.document
         let localWorkID = WorkID(UUID())
         let localWork = StartupLibraryWork(
             id: localWorkID.rawValue,
@@ -643,13 +643,13 @@ struct SnapshotSyncV2MacAccountCompletionTests {
             )
         )
         _ = await accountSwitch.value
-        try await eventuallyMac { state.authSession?.accountID == "account-b" }
+        try await eventuallyMac { state.workspaceModel.authSession?.accountID == "account-b" }
 
         #expect(await opening.value == false)
-        #expect(state.authSession?.accountID == "account-b")
-        #expect(state.snapshotSyncV2ActiveWorkID == originalWorkID)
-        #expect(state.documentSessionToken != originalSession)
-        #expect(state.document == originalDocument)
+        #expect(state.workspaceModel.authSession?.accountID == "account-b")
+        #expect(state.workspaceModel.activeWorkID == originalWorkID)
+        #expect(state.workspaceModel.documentSessionToken != originalSession)
+        #expect(state.workspaceModel.document == originalDocument)
         #expect(state.operationMessage == nil)
     }
 }

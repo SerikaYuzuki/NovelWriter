@@ -9,7 +9,7 @@ extension IOSDocumentStore {
     }
 
     func thumbnailData(_ owner: ThumbnailOwner) -> Data? {
-        workspaceAttachments[owner.fileName]?.bytes
+        workspaceModel.attachmentSet[owner.fileName]?.bytes
     }
 
     func setThumbnail(_ bytes: Data?, owner: ThumbnailOwner, session: WorkspaceSessionToken,
@@ -18,7 +18,7 @@ extension IOSDocumentStore {
             guard self.validateCurrentDocumentSession(session), self.snapshotSyncV2AccountScope == account,
                   !self.syncV2AccountTransitionInProgress,
                   self.synchronizeActiveEditorForAttachmentMutation(expectedSession: session),
-                  self.snapshotSyncV2Application != nil, self.syncV2ActiveWorkID != nil else { return false }
+                  self.snapshotSyncV2Application != nil, self.workspaceModel.activeWorkID != nil else { return false }
             return await self.attachmentCommands(
                 checkpointFailure: "画像を保存できませんでした。もう一度お試しください。", requiresPostSave: true
             ).setThumbnail(bytes, owner: owner, context: self.operationContext)
