@@ -46,7 +46,7 @@ struct WritingPromptsView: View {
                 }
                 Text("共通設定に作品別の指定を加え、次の依頼から使用します。競合した案も残ります。")
                     .font(.caption).foregroundStyle(.secondary)
-                TextEditor(text: $text).frame(minHeight: 200)
+                TextEditor(text: $text).frame(minHeight: 200, idealHeight: 300)
                     .accessibilityLabel("AIに渡すプロンプト")
                 Button("この内容を保存") { Task { await save() } }.disabled(saving)
                 if let notice {

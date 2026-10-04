@@ -130,7 +130,6 @@ struct OutlineView: View {
                             OutlineEpisodeRow(
                                 episode: episode,
                                 chapterID: chapter.id,
-                                expectedSession: episodeRequest.session,
                                 showsSaveState: OutlineSaveStateVisibility.episode(
                                     episode.id,
                                     selectedEpisodeID: appState.selectedEpisodeID
@@ -163,7 +162,6 @@ struct OutlineView: View {
                     } label: {
                         OutlineChapterRow(
                             chapter: chapter,
-                            expectedSession: chapterItem.session,
                             showsSaveState: OutlineSaveStateVisibility.chapter(
                                 chapter.id,
                                 selectedChapterID: appState.selectedChapterID,
