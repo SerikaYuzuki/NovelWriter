@@ -10,8 +10,8 @@ struct AppStateProjectSectionTests {
         let defaults = makeIsolatedTestUserDefaults()
         let state = AppState(dependencies: AppDependencies(repository: ProjectSectionRepository(), userDefaults: defaults),
                              initialStartupState: .ready)
-        state.document.flags = [Flag(title: "未回収の伏線", note: "")]
-        #expect(state.document.flags.count(where: { !$0.isResolved }) == 1)
+        state.workspaceModel.document.flags = [Flag(title: "未回収の伏線", note: "")]
+        #expect(state.workspaceModel.document.flags.count(where: { !$0.isResolved }) == 1)
         var transition: Task<Bool, Never>?
         let selection = ProjectSidebarView.selectionBinding(appState: state) { section in
             transition = Task { await state.selectProjectSectionAfterTransition(section) }
@@ -44,7 +44,7 @@ struct AppStateProjectSectionTests {
         #expect(defaults.string(forKey: AppPreferenceKey.projectSection) == "projectInfo")
     }
 
-    @Test("既存ショートカットを保ち感想・アドバイスを追加する")
+    @Test("既存ショートカットを保ち感想を追加する")
     func projectSectionShortcutsMatchRevisedOrder() {
         #expect(ProjectSection.allCases.map { $0.rawValue } == [
             "projectInfo", "structure", "plot", "characters", "worldbuilding", "references", "feedback", "settings"

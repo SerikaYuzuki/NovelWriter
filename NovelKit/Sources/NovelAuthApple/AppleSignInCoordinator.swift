@@ -28,6 +28,13 @@ public final class AppleSignInCoordinator: NSObject, ASAuthorizationControllerDe
         super.init()
     }
 
+    private var anchorProvider: (@MainActor () -> ASPresentationAnchor)?
+
+    public convenience init(presentationAnchorProvider: @escaping @MainActor () -> ASPresentationAnchor) {
+        self.init()
+        anchorProvider = presentationAnchorProvider
+    }
+
     public func authorize(using challenge: AuthChallenge) async throws -> AppleAuthorizationPayload {
         guard continuation == nil else { throw AuthError.authorizationInProgress }
         guard challenge.provider == .apple, challenge.flow == "native", challenge.requestedScopes.isEmpty,
@@ -50,10 +57,13 @@ public final class AppleSignInCoordinator: NSObject, ASAuthorizationControllerDe
     }
 
     public func presentationAnchor(for _: ASAuthorizationController) -> ASPresentationAnchor {
+        if let anchorProvider {
+            return anchorProvider()
+        }
         #if os(macOS)
-        NSApplication.shared.keyWindow ?? NSApplication.shared.windows.first ?? ASPresentationAnchor()
+        return NSApplication.shared.keyWindow ?? NSApplication.shared.windows.first ?? ASPresentationAnchor()
         #else
-        UIApplication.shared.connectedScenes
+        return UIApplication.shared.connectedScenes
             .compactMap { $0 as? UIWindowScene }
             .flatMap(\.windows)
             .first(where: \.isKeyWindow) ?? UIWindow()

@@ -5,6 +5,7 @@ import NovelSyncV2
 import NovelSyncV2Application
 import NovelSyncV2Store
 import NovelUI
+import NovelWorkspaceUI
 import SwiftUI
 import Testing
 import UIKit
@@ -52,9 +53,9 @@ struct ShallowHistoryCaptureTests {
             try await Task.sleep(for: .milliseconds(10))
         }
         #expect(try await application.historySnapshotAvailability(workID: fixture.workID, snapshotID: selected) == .local)
-        #expect(fixture.store.document.title == "取得中の追記")
+        #expect(fixture.store.workspaceModel.document.title == "取得中の追記")
         #expect(await fixture.store.restoreSnapshotSyncV2(snapshotID: selected.rawValue))
-        #expect(fixture.store.document.title == "海辺の便り")
+        #expect(fixture.store.workspaceModel.document.title == "海辺の便り")
         _ = await application.beginAccountTransitionRemoteSuspension()
         await local.close()
     }
@@ -75,33 +76,34 @@ struct ShallowHistoryCaptureTests {
             let suffix = dark ? "dark" : "light"
             try await fixture.local.setBackfillStatus(workID: fixture.workID, binding: fixture.binding, status: .paused)
             _ = try await application.fetchHistoryNow(workID: fixture.workID)
-            try await capture(NavigationStack { IOSSnapshotHistoryView(store: fixture.store) }, dark: dark,
+            try await capture(NavigationStack { IOSSnapshotHistoryView(store: fixture.store).environment(fixture.store.workspaceModel) }, dark: dark,
                               url: directory.appendingPathComponent("history-unfetched-\(suffix).png"))
             await application.setHistoryBackfillNetwork(online: false, constrained: false)
-            try await capture(NavigationStack { IOSSnapshotHistoryView(store: fixture.store) }, dark: dark,
+            try await capture(NavigationStack { IOSSnapshotHistoryView(store: fixture.store).environment(fixture.store.workspaceModel) }, dark: dark,
                               url: directory.appendingPathComponent("history-offline-\(suffix).png"))
             let suspension = await application.beginAccountTransitionRemoteSuspension()
             _ = await application.endAccountTransitionRemoteSuspension(suspension, resume: false)
             await application.setHistoryBackfillNetwork(online: true, constrained: true)
             let restore = HistoryFetchControls(application: application, workID: fixture.workID,
                                                snapshotID: fixture.snapshots[0].snapshotId,
-                                               rowDate: Date(timeIntervalSince1970: 1_780_000_000), rowKind: "手動保存").presentingRestoreForCapture()
+                                               rowDate: Date(timeIntervalSince1970: 1_780_000_000), rowKind: "手動保存",
+                                               userDefaults: fixture.store.userDefaults, showsRestoreInitially: true)
             try await capture(NavigationStack { List { restore }.navigationTitle("履歴") }, dark: dark,
                               url: directory.appendingPathComponent("restore-unfetched-\(suffix).png"))
             await application.setHistoryBackfillNetwork(online: true, constrained: false)
             try await fixture.local.setBackfillStatus(workID: fixture.workID, binding: fixture.binding, status: .paused, failureCode: "interrupted")
-            try await capture(NavigationStack { IOSSnapshotHistoryView(store: fixture.store) }, dark: dark,
+            try await capture(NavigationStack { IOSSnapshotHistoryView(store: fixture.store).environment(fixture.store.workspaceModel) }, dark: dark,
                               url: directory.appendingPathComponent("failure-retry-\(suffix).png"))
             try await fixture.local.setBackfillStatus(workID: fixture.workID, binding: fixture.binding, status: .failed, failureCode: "invalidRemoteData")
-            try await capture(NavigationStack { IOSSnapshotHistoryView(store: fixture.store) }, dark: dark,
+            try await capture(NavigationStack { IOSSnapshotHistoryView(store: fixture.store).environment(fixture.store.workspaceModel) }, dark: dark,
                               url: directory.appendingPathComponent("validation-failure-\(suffix).png"))
-            fixture.store.syncV2LibraryItems = [SyncV2LibraryItem(workID: fixture.workID, title: "海辺の便り", availability: .cached, accountState: .active)]
+            fixture.store.workspaceModel.libraryRows = [SyncV2LibraryItem(workID: fixture.workID, title: "海辺の便り", availability: .cached, accountState: .active)]
             fixture.store.applySnapshotSyncV2State(SyncUIState(workID: fixture.workID,
                                                                localDurability: .saved(generation: 1, snapshotID: fixture.head.snapshotId),
                                                                remoteProgress: .retryable(.historyIncomplete), conflict: nil, lastTypedResult: .queued))
             let home = NavigationStack {
                 IOSProjectHomeView(store: fixture.store, openWriting: {}, openProjectInfo: {}, openPlot: {}, openCharacters: {},
-                                   openWorldbuilding: {}, openFeedback: {}, openReferences: {}, openSettings: {})
+                                   openWorldbuilding: {}, openFeedback: {}, openReferences: {}, openSettings: {}).environment(fixture.store.workspaceModel)
             }
             try await capture(home, dark: dark, url: directory.appendingPathComponent("work-home-\(suffix).png"))
             try await capture(home, dark: dark, url: directory.appendingPathComponent("conflict-waiting-\(suffix).png"), scrollToBottom: true)

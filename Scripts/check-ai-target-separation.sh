@@ -40,9 +40,9 @@ jq -e '
       select(.value.isa == "PBXNativeTarget") |
       .value.name ] | all(test("Experimental|NovelAI"; "i") | not)) and
   packageProducts($objects; "NovelApp") ==
-    ["EditorKit", "NovelAuth", "NovelAuthApple", "NovelCore", "NovelExport", "NovelStorage", "NovelSyncV2PortableBridge", "NovelSyncV2Runtime", "NovelTextAnalysis", "NovelThumbnail", "NovelTiming", "NovelUI", "NovelWritingProgress", "NovelWritingSupport"] and
+    ["EditorKit", "NovelAuth", "NovelAuthApple", "NovelCore", "NovelExport", "NovelStorage", "NovelSyncV2PortableBridge", "NovelSyncV2Runtime", "NovelTextAnalysis", "NovelThumbnail", "NovelTiming", "NovelUI", "NovelWorkspace", "NovelWorkspaceUI", "NovelWritingProgress", "NovelWritingSupport"] and
   packageProducts($objects; "FUMINIWAIOS") ==
-    ["EditorKit", "NovelAuth", "NovelAuthApple", "NovelCore", "NovelExport", "NovelStorage", "NovelSyncV2PortableBridge", "NovelSyncV2Runtime", "NovelTextAnalysis", "NovelThumbnail", "NovelTiming", "NovelUI", "NovelWritingProgress", "NovelWritingSupport"] and
+    ["EditorKit", "NovelAuth", "NovelAuthApple", "NovelCore", "NovelExport", "NovelStorage", "NovelSyncV2PortableBridge", "NovelSyncV2Runtime", "NovelTextAnalysis", "NovelThumbnail", "NovelTiming", "NovelUI", "NovelWorkspace", "NovelWorkspaceUI", "NovelWritingProgress", "NovelWritingSupport"] and
   packageProducts($objects; "NovelAppTests") == [] and
   packageProducts($objects; "FUMINIWAIOSTests") == []
 ' "$audit_tmp" >/dev/null
@@ -185,7 +185,7 @@ fi
 
 # The new opt-in assistant owns its HTTP/Keychain boundary separately from
 # manuscript persistence, synchronization and the native editor.
-if rg -n 'import (NovelSync|NovelAuth|EditorKit)|Process\(|NSWorkspace|UIApplication' NovelApp/WritingAssistant; then
+if rg -n 'import (NovelSync|NovelAuth|EditorKit)|Process\(|NSWorkspace|UIApplication' NovelApp/WritingAssistant NovelKit/Sources/NovelWorkspaceUI/WritingAssistant; then
   echo "error: writing assistant crossed its text-only application boundary" >&2
   exit 1
 fi
@@ -211,6 +211,8 @@ jq -e '
   . as $package |
   (transitiveClosure($package; ["NovelCore", "NovelStorage", "EditorKit", "NovelUI", "NovelExport"])
     | index("NovelAI") == null) and
+  (transitiveClosure($package; ["NovelStorage", "NovelSyncV2Runtime", "NovelSyncV2Store", "NovelSyncV2Application", "EditorKit"])
+    | all(. != "NovelWorkspace" and . != "NovelWorkspaceUI")) and
   ([$package.targets[].name] | all(test("Experimental|NovelAI"; "i") | not))
 ' "$package_tmp" >/dev/null
 

@@ -21,7 +21,7 @@ Swift 6対応Xcode、XcodeGen、SwiftFormat、SwiftLint、jq、ripgrep、Python 
 open FUMINIWA.xcodeproj
 ```
 
-`FUMINIWA`または`FUMINIWAIOS` schemeを選ぶ。`project.yml`が生成元で、生成物とローカル署名設定はコミットしない。検証は[AGENTS](AGENTS.md)の4段階で選び、重たい検証は`./Scripts/check.sh`を使う。
+`FUMINIWA`または`FUMINIWAIOS` schemeを選ぶ。`project.yml`が生成元で、生成物とローカル署名設定はコミットしない。検証は[AGENTS](AGENTS.md)の4段階で選び、中ぐらいの検証は`./Scripts/check-changed.py`、重たい検証は`./Scripts/check.sh`を使う。
 
 ## AIによる起動・画面確認
 

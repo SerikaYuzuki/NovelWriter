@@ -21,6 +21,12 @@
 
 macOSの滑らかなカーソルを通常EditorKitへ組み込み、端末の執筆設定で切り替える。[表示の仕様と受入](CARET_ANIMATION_INVESTIGATION.md)。
 
+## 共通App層（D-111）
+
+P1〜P11の移設を完了し、NovelWorkspaceの`WorkspaceModel`と機能別coordinator／commandを両OSのadapterから使う。共有状態はdocument・章／話選択・identity／account generation・添付・保存／同期projection・棚／取り込み・keep-both・AI依頼所有権。既存名のforwarderはmodelのObservationを読む。共有SwiftUIはNovelWorkspaceUIへ分離した。
+
+OSごとのstartup・終了／scene／background・navigation・window／toolbar・MCP・private working copyとIME／保存gateはAppに残す。機能選択の寿命とMacの起動画面用棚の表示identity／availabilityは維持する。呼出元のない旧機能helper・runtime判定を除去した。保存・wire・schemaは変えておらず、実機受入は別途必要。[現行構成](DESIGN.md#52-workspacemodelとapp-adapter)。
+
 ## 実装が残るもの
 
 - Sync v2全体の不具合・性能・構造・UIの課題。[全体レビュー](SYNC_REVIEW.md)。D-01の端末内自動保存・昇格は実装済み。残る項目は個別に扱う。
@@ -32,7 +38,6 @@ macOSの滑らかなカーソルを通常EditorKitへ組み込み、端末の執
 
 - Apple通知: 規範`/v1/auth/providers/apple/notifications`に対し、`auth_http.rs`は`/v1/auth/apple/notifications`を登録している。規範へ揃える際はApple側の登録先も確認する。[通知契約](auth/v1/apple-notification.md)。
 - LAN CA export: `Scripts/export-sync-v2-staging-ca.sh`のedge固定名が現行role-splitと異なり、Sync epoch検査も不足する。[LAN手順](SNAPSHOT_SYNC_V2_STAGING.md)。
-
 
 いずれも今回の文書更新では実装修正していない。
 
@@ -56,7 +61,6 @@ NovelThumbnailが予約名・所有者判定とImageIO／CoreGraphicsでの縮�
 
 作品全体検索・置換と人物の登場話一覧は両OSで共有ロジックを使う。検索結果の件数上限・ページングは設けず、全一致を保持してListで表示するため、非常に多い一致では結果メモリと描画負荷が残る。置換の一時Undoは直前一回だけで、編集済みの話は戻さず明示履歴へ案内する。検索後の対象本文変更は全体中止で統一する。通常のネイティブUndo／Redoの集計は第1弾の一般規則を維持し、置換と検索画面からの「元に戻す」は集計しない。実機IME・Dynamic Type・VoiceOver、二端末同期の受入は別途必要。
 
-表記・記号チェックは端末内の手動解析。Apple CFStringTokenizerの語分割・読みはOS辞書に依存し、同音異義語や固有名詞の誤検出・見逃しがある。人物名は同じ文字種・長さ・1字差・少ない出現に限定し、別の登録人物名は候補から除く。ひらがなの人物読みも同じ文字種内で照合するが、未知語の分割次第では拾えない。無視・件数の多数派表示で利用者が判断し、検出器は差し替え可能にした。ルビの親字は語として調べ、傍点で文字ごとに分かれた表記は語分割の限界が残る。結果の件数上限・ページングは設けず、多数の指摘ではメモリ・List描画負荷が残る。同数では置換を提案せず、3表記以上の組は最少数→最多数を入力する。個別無視は位置・文脈を含むため周辺の編集で再指摘され得る。実機VoiceOver・長時間IME・iPadの受入は別途必要。
 
 ## 執筆中の負荷（2026-10-03）
 
@@ -140,8 +144,6 @@ Gは通常autosaveを一回で区切り、保存中の追加入力は入力停�
 
 再計測は`cd NovelKit && FUMINIWA_TYPING_BENCHMARK=1 swift test -c release --filter 'typingEnergyCheckpointBenchmark|typingEnergyOutlineCountBenchmark'`。iOSのdelegate計測はEditorKitの`IOSTextAdapterIntegrationTests`に含む（destinationは指定端末）。
 
-今回の追加依頼後の最終の重たい検証は成功。NovelKit全774件、macOS App全236件、Pro MaxのEditorKit全87件・iOS App全194件、Python／Swift／Rust conformance、SwiftFormat／SwiftLint、指定UDIDでの`./Scripts/check.sh`全体が通った。PostgreSQL integrationは既存ゲートに従い明示SKIP。最初のcheckpoint軽量化の検証では、既存の150ms download期限テストがlostResponseで一度失敗した。単独再実行は成功し、大文書テストの引数を直列化した全体再実行でも成功した。タイミング依存の原因は未確定。
-
-追加レビューの途中では、競合解決テストが単独でも`safeBoundaryRejected`となった。open読込中に別connectionのremote状態が更新され、stampの安定性照合をopenの成功条件へ追加していたことが原因。完全読込後のcache記帳は失敗してもopenを失敗に変えないよう修正し、回帰テストと全体検証が成功した。新規`NovelTiming`のApp依存許可リストとiOS専用3テストのinitializerも更新した。指定Simulatorの別xcodebuildを検出する保護が一度停止し、現在は5秒ごとに空きを再確認してiOS検証を進める。サーバー側に起因するRust失敗はなかった。今回追加したruntime注入テストのpreview構成引数漏れと、新規テストの201文字の行がSwiftLint上限を超えた点は修正し、全体再実行が成功した。時間設定のUserDefaultsテストはmacOS／iOS両方で通った。
-
 修正前のHEADを同じworktree内の一時packageとして実行し、1千／10万／30万／約100万字と添付・resource有無の8条件で修正後とsnapshot/object ID、manifest bytes、entries、works/history、intent/resource行を比較して一致した。実行ごとのoccurrence／intent UUIDと時刻だけ正規化した。一時package・比較用生成物・今回のビルド生成物は除いた。実account・実原稿・実DB・サーバー稼働反映・実機受入は対象外。
+
+校正はD-112のチェック項目と変更理由付きの提案を使う。送信本文の一意な抜粋だけを置換し、不一致・曖昧・重なる提案は別表示する。実APIでの短い話の校正、参考情報preview、適用後の日本語IME・native Undoは実機受入として確認する。

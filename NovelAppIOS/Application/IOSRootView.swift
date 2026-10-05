@@ -2,10 +2,13 @@ import NovelCore
 import NovelSyncV2
 import NovelSyncV2Application
 import NovelUI
+import NovelWorkspace
+import NovelWorkspaceUI
 import SwiftUI
 import UniformTypeIdentifiers
 
 struct IOSRootView: View {
+    @Environment(WorkspaceModel.self) private var workspace
     @Environment(\.scenePhase) private var scenePhase
     @Bindable var store: IOSDocumentStore
     @State private var conflictNotice: ConflictResolutionNotice?
@@ -31,6 +34,23 @@ struct IOSRootView: View {
                 )
             }
         }
+        .environment(store.workspaceModel)
+        .safeAreaInset(edge: .top) {
+            if workspace.keepBothPendingWorkID != nil, !workspace.isDocumentTransitionInProgress {
+                KeepBothRecoveryView(
+                    retry: {
+                        guard await store.retryKeepBothHandoff() else { return false }
+                        showCurrentProjectHome()
+                        return true
+                    }, leave: { await workspaceNavigation.returnToLibrary(using: store) }
+                )
+            }
+        }
+        .onChange(of: workspace.isDocumentTransitionInProgress) { _, transitioning in
+            if !transitioning, workspace.keepBothPendingWorkID != nil {
+                store.showsConflictSheet = false
+            }
+        }
         .task(id: AutomaticSyncObservationID(
             session: store.currentDocumentSessionToken,
             account: store.snapshotSyncV2AccountScope,
@@ -43,10 +63,10 @@ struct IOSRootView: View {
         .task(id: AutomaticSyncObservationID(
             session: store.currentDocumentSessionToken,
             account: store.snapshotSyncV2AccountScope,
-            chapter: store.selectedChapterID, episode: store.selectedEpisodeID,
-            isActive: scenePhase == .active && store.startupState == .ready && !store.isDocumentTransitionInProgress
+            chapter: workspace.selectedChapterID, episode: workspace.selectedEpisodeID,
+            isActive: scenePhase == .active && store.startupState == .ready && !workspace.isDocumentTransitionInProgress
         )) {
-            if scenePhase == .active, !store.isDocumentTransitionInProgress {
+            if scenePhase == .active, !workspace.isDocumentTransitionInProgress {
                 await store.runAutomaticSnapshotSyncV2()
             }
         }
@@ -62,10 +82,10 @@ struct IOSRootView: View {
         .sheet(isPresented: $showingConflictHistory) {
             NavigationStack { IOSSnapshotHistoryView(store: store) }
         }
-        .onChange(of: store.snapshotSyncConflict, initial: true) { _, conflict in
+        .onChange(of: workspace.syncConflict, initial: true) { _, conflict in
             store.showsConflictSheet = conflict != nil
         }
-        .onChange(of: store.syncV2ActiveWorkID) { _, _ in clearConflictPresentation() }
+        .onChange(of: workspace.activeWorkID) { _, _ in clearConflictPresentation() }
         .onChange(of: store.snapshotSyncV2AccountScope) { _, _ in clearConflictPresentation() }
         .safeAreaInset(edge: .bottom) {
             if let notice = conflictNotice {
@@ -85,7 +105,7 @@ struct IOSRootView: View {
                 .background(FuminiwaColor.surface.color)
             }
         }
-        .disabled(store.isDocumentTransitionInProgress)
+        .disabled(workspace.isDocumentTransitionInProgress)
         .overlay {
             if store.showsDocumentTransitionOverlay {
                 ZStack {
@@ -151,7 +171,7 @@ struct IOSRootView: View {
         store.showsConflictSheet = false
         let snapshot = choice == .useDevice ? selection.conflict.remoteSnapshotID : selection.conflict.localSnapshotID
         let available = await (try? application.historySnapshotAvailability(workID: selection.workID, snapshotID: snapshot)) == .local
-        guard store.syncV2ActiveWorkID == selection.workID,
+        guard workspace.activeWorkID == selection.workID,
               store.snapshotSyncV2AccountScope == selection.accountScope else { return true }
         let undo: (@MainActor () async -> Bool)? = if available {
             { await store.undoConflictSelection(selection, choice: choice, snapshotID: snapshot) }
@@ -194,7 +214,7 @@ struct IOSRootView: View {
 
     private var operationErrorIsPresented: Binding<Bool> {
         Binding(
-            get: { store.operationErrorMessage != nil },
+            get: { store.operationErrorMessage != nil && workspace.keepBothPendingWorkID == nil },
             set: { isPresented in
                 if !isPresented {
                     store.operationErrorMessage = nil
@@ -256,8 +276,8 @@ private struct IOSShareSheet: UIViewControllerRepresentable {
 }
 
 private struct AutomaticSyncObservationID: Equatable {
-    let session: IOSDocumentSessionToken?
-    let account: IOSSnapshotSyncV2AccountScope
+    let session: WorkspaceSessionToken?
+    let account: WorkspaceAccountScope
     var chapter: ChapterID?
     var episode: EpisodeID?
     let isActive: Bool

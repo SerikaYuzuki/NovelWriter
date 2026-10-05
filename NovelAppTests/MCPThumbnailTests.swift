@@ -35,7 +35,7 @@ struct MCPThumbnailTests {
     func replacementCropReplayAndRemovalUndo(version: WritingMCPVersion) async throws {
         let fixture = try await MCPThumbnailHarness.make(), owner = fixture.owner(.character)
         let original = try ThumbnailEncoder.encode(MCPThumbnailHarness.source(), owner: owner)
-        #expect(await fixture.state.setThumbnail(original, owner: owner, session: fixture.state.documentSessionToken,
+        #expect(await fixture.state.setThumbnail(original, owner: owner, session: fixture.state.workspaceModel.documentSessionToken,
                                                  account: fixture.state.snapshotSyncV2AccountScopeToken))
         let before = fixture.state.snapshotSyncV2Attachments, id = UUID()
         let source = try MCPThumbnailHarness.source(.jpeg)
@@ -120,7 +120,7 @@ struct MCPThumbnailTests {
     @Test func undoSurvivesRestartAndRecordsNeverContainImages() async throws {
         let fixture = try await MCPThumbnailHarness.make(), owner = fixture.owner()
         let original = try ThumbnailEncoder.encode(MCPThumbnailHarness.source(), owner: owner)
-        #expect(await fixture.state.setThumbnail(original, owner: owner, session: fixture.state.documentSessionToken,
+        #expect(await fixture.state.setThumbnail(original, owner: owner, session: fixture.state.workspaceModel.documentSessionToken,
                                                  account: fixture.state.snapshotSyncV2AccountScopeToken))
         let before = fixture.state.snapshotSyncV2Attachments
         let source = try MCPThumbnailHarness.source(.jpeg), id = UUID()
@@ -147,13 +147,14 @@ struct MCPThumbnailTests {
             initialStartupState: .ready
         )
         state.snapshotSyncV2Application = restarted
-        // Reinstall as a real relaunch does: the stored creation time anchors the next checkpoint.
-        #expect(state.installV2Document(document, workID: fixture.work, createdAt: local.documentCreatedAt,
-                                        attachments: local.attachments, resources: local.resources))
+        state.installV2Document(document, workID: fixture.work, createdAt: local.documentCreatedAt)
+        state.snapshotSyncV2Attachments = local.attachments
         await state.reloadAttachments()
         let host = try #require(state.writingAssistantHost)
         args["sessionId"] = host.contextID
-        #expect(try await fixture.call("undo_edit", args, host: host)["isError"] as? Bool == false)
+        let undoResult = try await fixture.call("undo_edit", args, host: host)
+        let message = (undoResult["content"] as? [[String: Any]])?.first?["text"] as? String
+        #expect(undoResult["isError"] as? Bool == false, "\(message ?? "Undo response missing")")
         #expect(state.snapshotSyncV2Attachments == before)
         #expect(try await restarted.openLocal(workID: fixture.work).attachments == before)
     }
@@ -165,11 +166,11 @@ struct MCPThumbnailTests {
             fixture.arguments(owner, requestID: id, image: MCPThumbnailHarness.source())
         )["isError"] as? Bool == false)
         let manual = try ThumbnailEncoder.encode(MCPThumbnailHarness.source(), owner: owner, crop: .init(zoom: 3))
-        #expect(await fixture.state.setThumbnail(manual, owner: owner, session: fixture.state.documentSessionToken,
+        #expect(await fixture.state.setThumbnail(manual, owner: owner, session: fixture.state.workspaceModel.documentSessionToken,
                                                  account: fixture.state.snapshotSyncV2AccountScopeToken))
         #expect(try await fixture.undo(id)["isError"] as? Bool == true)
         #expect(fixture.state.thumbnailData(owner) == manual)
-        #expect(fixture.state.deleteCharacter(id: fixture.state.document.characters[0].id))
+        #expect(fixture.state.deleteCharacter(id: fixture.state.workspaceModel.document.characters[0].id))
         #expect(try await fixture.undo(id)["isError"] as? Bool == true)
         #expect(fixture.state.thumbnailData(owner) == nil)
     }

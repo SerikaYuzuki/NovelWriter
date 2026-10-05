@@ -1,8 +1,11 @@
 import NovelTextAnalysis
 import NovelUI
+import NovelWorkspace
+import NovelWorkspaceUI
 import SwiftUI
 
 struct MacWorkSearchView: View {
+    @Environment(WorkspaceModel.self) private var workspace
     @Environment(AppState.self) private var appState
     @Environment(EditorSearchSession.self) private var editorSearch
     @State private var confirmingReplacement = false
@@ -59,10 +62,10 @@ struct MacWorkSearchView: View {
         }
         .padding(.top, Spacing.medium)
         .workbenchGlassChromeStyle()
-        .onAppear { search.setVisible(true, document: appState.document, scope: appState.workSearchScope); queryFocused = true }
-        .onDisappear { search.setVisible(false, document: appState.document, scope: appState.workSearchScope) }
+        .onAppear { search.setVisible(true, document: workspace.document, scope: appState.workSearchScope); queryFocused = true }
+        .onDisappear { search.setVisible(false, document: workspace.document, scope: appState.workSearchScope) }
         .onChange(of: search.query) { _, _ in confirmingReplacement = false; refresh() }
-        .onChange(of: appState.documentChangeRevision) { _, _ in confirmingReplacement = false; search.markStale() }
+        .onChange(of: workspace.editGeneration) { _, _ in confirmingReplacement = false; search.markStale() }
         .onChange(of: appState.workSearchScope) { _, _ in confirmingReplacement = false; refresh() }
         .onExitCommand { search.isPresented = false }
         .confirmationDialog("\(search.includedCount)件を置換しますか？", isPresented: $confirmingReplacement) {
@@ -75,7 +78,7 @@ struct MacWorkSearchView: View {
     }
 
     private func refresh() {
-        appState.workSearch.refresh(document: appState.document, scope: appState.workSearchScope)
+        appState.workSearch.refresh(document: workspace.document, scope: appState.workSearchScope)
     }
 
     private func jump(_ result: EpisodeTextMatches, _ match: WorkTextMatch) {

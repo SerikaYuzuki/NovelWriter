@@ -5,6 +5,7 @@ import NovelSyncV2
 import NovelSyncV2Application
 import NovelSyncV2PortableBridge
 import NovelSyncV2Runtime
+import NovelWorkspaceUI
 import NovelWritingProgress
 import OSLog
 
@@ -19,20 +20,6 @@ private func snapshotSyncV2StartupErrorType(_ error: any Error) -> String {
     String(reflecting: type(of: error))
 }
 
-func acceptsSnapshotSyncV2ConflictResult(_ result: SyncV2TypedResult) -> Bool {
-    switch result {
-    case .queued, .noChanges: true
-    default: false
-    }
-}
-
-func acceptsSnapshotSyncV2RemoteOnlyOpen(
-    _ opened: SyncV2OpenedWork,
-    requestedWorkID: WorkID
-) -> Bool {
-    opened.workID == requestedWorkID
-}
-
 extension IOSDocumentStore {
     /// Retires asynchronous remote-only work before a new document operation
     /// can change the session. The task itself must not clear a newer task's
@@ -42,11 +29,13 @@ extension IOSDocumentStore {
     }
 
     func invalidateSnapshotSyncV2AccountOperations() {
+        workspaceModel.accountGeneration &+= 1
+        workspaceModel.assistantRequestCenter.cancelAll()
         libraryPrefetchTask?.cancel()
-        libraryImportPhases.removeAll()
-        libraryImportFailures.removeAll()
+        workspaceModel.libraryImportPhases.removeAll()
+        workspaceModel.libraryImportFailures.removeAll()
         cancelSnapshotSyncV2BackgroundOperations()
-        syncV2KeepBothPendingWorkID = nil
+        clearKeepBothHandoff()
         libraryRefreshGeneration &+= 1
         remoteCatalogRefreshGeneration &+= 1
         historyRefreshGeneration &+= 1

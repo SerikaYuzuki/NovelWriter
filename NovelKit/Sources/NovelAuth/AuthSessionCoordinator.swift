@@ -165,6 +165,11 @@ public actor AuthSessionCoordinator {
         return refreshed
     }
 
+    /// Presence only; replay credentials stay inside the vault.
+    public func hasPendingRevoke() async throws -> Bool {
+        try await vault.loadPendingRevoke() != nil
+    }
+
     /// Replays only the durable revoke operation left by an earlier sign-out.
     ///
     /// This is deliberately separate from `signOut()`: a new session may have
@@ -191,6 +196,16 @@ public actor AuthSessionCoordinator {
             }
             throw error
         }
+    }
+
+    /// Atomically journals/removes the current session without awaiting remote revoke.
+    /// The account adapter holds its request window until this durable step completes.
+    public func prepareSignOut() async throws {
+        guard let current = try await vault.load() else { return }
+        _ = try await vault.loadOrReserveRevokeOperation(
+            proposed: UUID(), for: current, now: clock(),
+            receiptLifetimeSeconds: authLimits.authReceiptLifetimeSeconds
+        )
     }
 
     public func signOut() async throws {

@@ -3,14 +3,16 @@ import NovelCore
 import NovelSyncV2
 import NovelSyncV2Application
 import NovelSyncV2PortableBridge
+import NovelWorkspace
+import NovelWorkspaceUI
 
 extension IOSDocumentStore {
     func performCoordinatedDocumentSave(_ value: NovelDocument) async throws {
         writingProgress.requestFlush()
-        guard snapshotSyncV2Application != nil, syncV2ActiveWorkID != nil else {
+        guard snapshotSyncV2Application != nil, workspaceModel.activeWorkID != nil else {
             throw SyncV2ApplicationError.invalidRuntimeMode
         }
-        guard await checkpointSnapshotSyncV2(value, reason: .autosave) else {
+        guard await checkpointSnapshotSyncV2(value, reason: .autosave, acknowledgeLocalCommit: true) else {
             throw IOSPrivateWorkingCopyLocationError.unsafeRoot
         }
     }
@@ -31,7 +33,7 @@ extension IOSDocumentStore {
             do {
                 guard try await reloadLibraryItems() else {
                     startupState = .library
-                    saveState = .saved
+                    workspaceModel.saveState = .saved
                     return
                 }
                 if let name = userDefaults.string(forKey: Self.lastWorkIDKey),
@@ -40,7 +42,7 @@ extension IOSDocumentStore {
                 }
                 if startupState != .ready {
                     startupState = .library
-                    saveState = .saved
+                    workspaceModel.saveState = .saved
                 }
             } catch {
                 logSyncV2PresentationFailure(error)
@@ -66,7 +68,7 @@ extension IOSDocumentStore {
                   !isSyncV2AccountTransitionActive,
                   let application = snapshotSyncV2Application else { return false }
             let expectedSession = currentDocumentSessionToken
-            let expectedWorkID = syncV2ActiveWorkID
+            let expectedWorkID = workspaceModel.activeWorkID
             let expectedAccountScope = snapshotSyncV2AccountScope
             return await performDocumentTransition {
                 try await checkpointAndInstallNewDocument(
@@ -90,7 +92,7 @@ extension IOSDocumentStore {
         cancelSnapshotSyncV2BackgroundOperations()
         let expectedAccountScope = snapshotSyncV2AccountScope
         let expectedSession = currentDocumentSessionToken
-        let expectedWorkID = syncV2ActiveWorkID
+        let expectedWorkID = workspaceModel.activeWorkID
         let accessed = sourceURL.startAccessingSecurityScopedResource()
         defer {
             if accessed {
@@ -186,7 +188,7 @@ extension IOSDocumentStore {
                     syncV2PortableResources = portable.resources
                     archiveImportedPackage(at: staging)
                     startupState = .ready
-                    saveState = .saved
+                    workspaceModel.saveState = .saved
                 } catch {
                     archiveImportedPackage(at: staging)
                     throw error
@@ -221,19 +223,22 @@ extension IOSDocumentStore {
     }
 
     func performDocumentTransition(_ operation: () async throws -> Void) async -> Bool {
-        guard !deviceSyncStartupFailedSafely, !isDocumentTransitionInProgress else { return false }
+        guard !deviceSyncStartupFailedSafely, !workspaceModel.isDocumentTransitionInProgress else { return false }
         guard editorCommandSession.prepareForDocumentTransition() else {
             operationErrorMessage = "日本語入力を確定できませんでした。"
             return false
         }
-        isDocumentTransitionInProgress = true
+        workspaceModel.isDocumentTransitionInProgress = true
         defer {
             editorCommandSession.resumeAfterDocumentTransition()
-            isDocumentTransitionInProgress = false
+            workspaceModel.isDocumentTransitionInProgress = false
         }
         do {
             if startupState == .ready {
-                guard await saveNow() else {
+                guard await ConflictCoordinator.saveBeforeDeparture(
+                    currentWorkID: workspaceModel.activeWorkID, pendingDuplicateID: workspaceModel.keepBothPendingWorkID,
+                    save: { await self.saveNow() }
+                ) else {
                     throw IOSPrivateWorkingCopyLocationError.unsafeRoot
                 }
             }
@@ -248,20 +253,20 @@ extension IOSDocumentStore {
 
     @discardableResult
     func saveNow() async -> Bool {
+        guard workspaceModel.keepBothPendingWorkID == nil else { return false }
         writingProgress.requestFlush()
         guard startupState == .ready else { return false }
-        let workID = syncV2ActiveWorkID
-        let session = currentDocumentSessionToken
-        let account = snapshotSyncV2AccountScope
-        guard await saveCoordinator.saveNow(), currentDocumentSessionToken == session,
-              syncV2ActiveWorkID == workID, matchesSyncAccount(account) else { return false }
+        let workID = workspaceModel.activeWorkID
+        let context = CheckpointCoordinator.context(of: self)
+        guard await saveCoordinator.saveNow(), CheckpointCoordinator.matches(context, host: self) else { return false }
         do {
             if let workID, let application = snapshotSyncV2Application {
                 try await application.promoteCheckpoint(workID: workID)
             }
-            return true
+            return CheckpointCoordinator.matches(context, host: self)
         } catch {
-            saveState = .failed
+            guard CheckpointCoordinator.matches(context, host: self) else { return false }
+            workspaceModel.saveState = .failed
             return false
         }
     }
@@ -269,18 +274,18 @@ extension IOSDocumentStore {
     func requestExport(readable: Bool = false) async {
         guard !isSyncV2AccountTransitionActive,
               let expectedSession = currentDocumentSessionToken,
-              let expectedWorkID = syncV2ActiveWorkID else { return }
+              let expectedWorkID = workspaceModel.activeWorkID else { return }
         let expectedAccountScope = snapshotSyncV2AccountScope
         await documentOperationGate.perform { [weak self] in
             guard let self,
                   !isSyncV2AccountTransitionActive,
                   currentDocumentSessionToken == expectedSession,
-                  syncV2ActiveWorkID == expectedWorkID,
+                  workspaceModel.activeWorkID == expectedWorkID,
                   matchesSyncAccount(expectedAccountScope) else { return }
             _ = await performDocumentTransition {
                 guard !isSyncV2AccountTransitionActive,
                       currentDocumentSessionToken == expectedSession,
-                      syncV2ActiveWorkID == expectedWorkID,
+                      workspaceModel.activeWorkID == expectedWorkID,
                       matchesSyncAccount(expectedAccountScope),
                       snapshotSyncV2Application != nil,
                       let attachments = currentV2Attachments() else {
@@ -298,17 +303,17 @@ extension IOSDocumentStore {
                     }
                 }
                 let destination = root.appendingPathComponent(
-                    readable ? "本文と資料.zip" : Self.portableExportFilename(for: document.title),
+                    readable ? "本文と資料.zip" : Self.portableExportFilename(for: workspaceModel.document.title),
                     isDirectory: !readable
                 )
                 let exportResources = try SyncV2PortableMetadata.resourcesForExport(
                     syncV2PortableResources
                 )
                 if readable {
-                    try await ReadableExport.write(document, attachments: attachments, resources: exportResources, to: destination)
+                    try await ReadableExport.write(workspaceModel.document, attachments: attachments, resources: exportResources, to: destination)
                 } else {
                     try await portableBridge.exportExplicitPackage(
-                        document: document,
+                        document: workspaceModel.document,
                         attachments: attachments,
                         documentCreatedAt: syncV2PortableCreatedAt ?? documentCreatedAt,
                         resources: exportResources,
@@ -317,7 +322,7 @@ extension IOSDocumentStore {
                 }
                 guard !isSyncV2AccountTransitionActive,
                       currentDocumentSessionToken == expectedSession,
-                      syncV2ActiveWorkID == expectedWorkID,
+                      workspaceModel.activeWorkID == expectedWorkID,
                       matchesSyncAccount(expectedAccountScope) else {
                     throw SyncV2ApplicationError.invalidRuntimeMode
                 }
@@ -329,13 +334,13 @@ extension IOSDocumentStore {
     }
 
     private func matchesSnapshotSyncV2OperationSource(
-        session: IOSDocumentSessionToken?,
+        session: WorkspaceSessionToken?,
         workID: WorkID?,
-        accountScope: IOSSnapshotSyncV2AccountScope
+        accountScope: WorkspaceAccountScope
     ) -> Bool {
         !isSyncV2AccountTransitionActive
             && currentDocumentSessionToken == session
-            && syncV2ActiveWorkID == workID
+            && workspaceModel.activeWorkID == workID
             && matchesSyncAccount(accountScope)
     }
 
@@ -359,7 +364,8 @@ extension IOSDocumentStore {
         if snapshotSyncV2Application != nil, workID == nil {
             return false
         }
-        document = value
+        workspaceModel.document = value
+        workspaceModel.documentSessionToken.documentID = value.id
         documentCreatedAt = createdAt
             ?? (try? url.resourceValues(forKeys: [.creationDateKey]).creationDate)
             ?? Date()
@@ -367,23 +373,25 @@ extension IOSDocumentStore {
             ? url.standardizedFileURL
             : libraryRoot.standardizedFileURL
         if snapshotSyncV2Application != nil {
-            syncV2ActiveWorkID = workID
-            syncV2KeepBothPendingWorkID = nil
+            workspaceModel.activeWorkID = workID
+            if let workID {
+                workspaceModel.documentSessionToken.workID = workID
+            }
+            clearKeepBothHandoff()
         }
         replaceAttachments(attachments)
-        syncV2AttachmentPayloads = [:]
-        syncV2AttachmentIDs = [:]
+        workspaceModel.attachmentSet = WorkspaceAttachmentSet()
         syncV2PortableResources = []
         syncV2PortableCreatedAt = nil
-        selectedChapterID = value.chapters.first?.id
-        selectedEpisodeID = value.chapters.first?.episodes.first?.id
+        workspaceModel.selectedChapterID = value.chapters.first?.id
+        workspaceModel.selectedEpisodeID = value.chapters.first?.episodes.first?.id
         advanceDocumentSessionGeneration()
         advanceEditorContentGeneration()
         if rememberRecent {
             userDefaults.set(url.lastPathComponent, forKey: Self.lastDocumentNameKey)
         }
         if snapshotSyncV2Application != nil {
-            userDefaults.set(syncV2ActiveWorkID?.rawValue.uuidString, forKey: Self.lastWorkIDKey)
+            userDefaults.set(workspaceModel.activeWorkID?.rawValue.uuidString, forKey: Self.lastWorkIDKey)
         }
         if let workID {
             writingProgress.install(value, workID: workID.rawValue)

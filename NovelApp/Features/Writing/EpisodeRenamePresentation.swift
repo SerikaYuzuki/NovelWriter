@@ -1,18 +1,19 @@
 import NovelCore
+import NovelWorkspace
 import SwiftUI
 
 struct EpisodeRenameRequest {
     let episodeID: EpisodeID
     let chapterID: ChapterID
-    let session: DocumentSessionToken
-    let account: SnapshotSyncV2AccountScopeToken
+    let session: WorkspaceSessionToken
+    let account: WorkspaceAccountScope
     var title: String
 
     @MainActor
     init(episode: Episode, chapterID: ChapterID, appState: AppState) {
         episodeID = episode.id
         self.chapterID = chapterID
-        session = appState.documentSessionToken
+        session = appState.workspaceModel.documentSessionToken
         account = appState.snapshotSyncV2AccountScopeToken
         title = episode.title
     }
@@ -21,7 +22,7 @@ struct EpisodeRenameRequest {
     func apply(to appState: AppState) {
         let normalizedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalizedTitle.isEmpty,
-              appState.documentSessionToken == session,
+              appState.workspaceModel.documentSessionToken == session,
               appState.snapshotSyncV2AccountScopeToken == account else { return }
         appState.updateEpisodeTitle(normalizedTitle, for: episodeID, in: chapterID)
     }

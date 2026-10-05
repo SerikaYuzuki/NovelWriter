@@ -24,9 +24,9 @@ struct SnapshotSyncV2MacTests {
 
         state.installV2Document(document, workID: workID, createdAt: Date())
 
-        #expect(state.snapshotSyncV2ActiveWorkID == workID)
-        #expect(state.documentSessionToken.workID == workID)
-        #expect(state.documentSessionToken.documentID == document.id)
+        #expect(state.workspaceModel.activeWorkID == workID)
+        #expect(state.workspaceModel.documentSessionToken.workID == workID)
+        #expect(state.workspaceModel.documentSessionToken.documentID == document.id)
         #expect(defaults.string(forKey: "fuminiwa.v2.activeWorkID") == workID.rawValue.uuidString)
     }
 
@@ -54,7 +54,7 @@ struct SnapshotSyncV2MacTests {
         #expect(await state.configureSnapshotSyncV2(using: state.snapshotSyncV2Factory))
         state.markDocumentDirty()
         #expect(await state.saveNow() == false)
-        #expect(state.snapshotSyncV2ActiveWorkID == nil)
+        #expect(state.workspaceModel.activeWorkID == nil)
     }
 
     @Test("offline checkpoint and close remain local boundaries")
@@ -141,9 +141,9 @@ struct SnapshotSyncV2MacTests {
         )
         #expect(await state.configureSnapshotSyncV2(using: state.snapshotSyncV2Factory))
         await state.bootstrap()
-        let localWorkID = try #require(state.snapshotSyncV2ActiveWorkID)
+        let localWorkID = try #require(state.workspaceModel.activeWorkID)
         let remoteOnlyWorkID = WorkID(UUID())
-        state.snapshotSyncRemoteCatalogItems = [
+        state.workspaceModel.remoteCatalogItems = [
             SyncV2RemoteCatalogEntry(workID: localWorkID, title: "remote title", head: nil),
             SyncV2RemoteCatalogEntry(workID: localWorkID, title: "duplicate", head: nil),
             SyncV2RemoteCatalogEntry(workID: remoteOnlyWorkID, title: "remote only", head: nil)
@@ -189,9 +189,9 @@ struct SnapshotSyncV2MacTests {
         #expect(await state.configureSnapshotSyncV2(using: state.snapshotSyncV2Factory))
         await state.bootstrap()
         let application = try #require(state.snapshotSyncV2Application)
-        let currentWorkID = try #require(state.snapshotSyncV2ActiveWorkID)
-        let currentDocument = state.document
-        let currentSession = state.documentSessionToken
+        let currentWorkID = try #require(state.workspaceModel.activeWorkID)
+        let currentDocument = state.workspaceModel.document
+        let currentSession = state.workspaceModel.documentSessionToken
 
         let secondWorkID = WorkID(UUID())
         let secondDocument = NovelDocument.newDocument(title: "取得待ち中に開く別作品")
@@ -204,7 +204,7 @@ struct SnapshotSyncV2MacTests {
         #expect(await state.returnToSnapshotLibrary())
 
         let remoteOnlyWorkID = WorkID(UUID())
-        state.snapshotSyncRemoteCatalogItems = [
+        state.workspaceModel.remoteCatalogItems = [
             SyncV2RemoteCatalogEntry(workID: remoteOnlyWorkID, title: "通信待ち作品", head: nil)
         ]
         await state.refreshSnapshotLibrary()
@@ -223,19 +223,19 @@ struct SnapshotSyncV2MacTests {
         #expect(state.snapshotSyncV2RemoteOnlyOpeningWorkID == remoteOnlyWorkID)
         #expect(state.snapshotSyncV2RemoteOnlyOpenStartedAt != nil)
         #expect(state.startupState.isReady == false)
-        #expect(state.snapshotSyncV2ActiveWorkID == currentWorkID)
-        #expect(state.document == currentDocument)
-        #expect(state.documentSessionToken == currentSession)
-        #expect(state.isDocumentTransitionInProgress == false)
+        #expect(state.workspaceModel.activeWorkID == currentWorkID)
+        #expect(state.workspaceModel.document == currentDocument)
+        #expect(state.workspaceModel.documentSessionToken == currentSession)
+        #expect(state.workspaceModel.isDocumentTransitionInProgress == false)
 
         // A second gate operation remains available while the remote request
         // is suspended. Installing that local work cancels the stale request.
         #expect(await state.openLibraryWork(secondWork))
-        #expect(state.snapshotSyncV2ActiveWorkID == secondWorkID)
-        #expect(state.document.title == secondDocument.title)
-        let secondSession = state.documentSessionToken
+        #expect(state.workspaceModel.activeWorkID == secondWorkID)
+        #expect(state.workspaceModel.document.title == secondDocument.title)
+        let secondSession = state.workspaceModel.documentSessionToken
         #expect(await state.addChapterAfterTransition())
-        #expect(state.documentSessionToken == secondSession)
+        #expect(state.workspaceModel.documentSessionToken == secondSession)
 
         let delayedRemoteDocument = NovelDocument.newDocument(title: "遅れて届いた作品")
         await suspendedOpen.resume(
@@ -252,12 +252,12 @@ struct SnapshotSyncV2MacTests {
         }
 
         #expect(await remoteOpen.value == false)
-        #expect(state.snapshotSyncV2ActiveWorkID == secondWorkID)
-        #expect(state.documentSessionToken == secondSession)
-        #expect(state.document.title == secondDocument.title)
+        #expect(state.workspaceModel.activeWorkID == secondWorkID)
+        #expect(state.workspaceModel.documentSessionToken == secondSession)
+        #expect(state.workspaceModel.document.title == secondDocument.title)
         #expect(state.operationMessage == nil)
         #expect(state.startupState.isReady)
-        #expect(state.isDocumentTransitionInProgress == false)
+        #expect(state.workspaceModel.isDocumentTransitionInProgress == false)
     }
 
     @Test("platform gate rejects IME and unsaved adoption")
@@ -309,7 +309,7 @@ struct SnapshotSyncV2MacTests {
         let preview = try #require(state.attachmentPreviewURL(for: first))
         #expect(try Data(contentsOf: preview) == bytes)
         #expect(await state.deleteAttachment(first))
-        #expect(state.attachments.contains(where: { $0.fileName == first.fileName }) == false)
+        #expect(state.workspaceModel.attachments.contains(where: { $0.fileName == first.fileName }) == false)
 
         let emptyURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("空資料-\(UUID().uuidString).txt")
@@ -317,11 +317,11 @@ struct SnapshotSyncV2MacTests {
         defer { try? FileManager.default.removeItem(at: emptyURL) }
         let empty = try #require(await state.addAttachment(from: emptyURL))
         #expect(empty.byteCount == 0)
-        let beforeFailedAdd = state.attachments
+        let beforeFailedAdd = state.workspaceModel.attachments
         let beforeFailedPayloads = state.snapshotSyncV2Attachments
         state.snapshotSyncV2Application = nil
         #expect(await state.addAttachment(from: sourceURL) == nil)
-        #expect(state.attachments == beforeFailedAdd)
+        #expect(state.workspaceModel.attachments == beforeFailedAdd)
         #expect(state.snapshotSyncV2Attachments == beforeFailedPayloads)
     }
 }
@@ -559,14 +559,15 @@ func makeMacConflictFixture(
     dependencies.snapshotSyncV2CheckpointOverride = checkpointOverride
     let state = AppState(dependencies: dependencies, initialStartupState: .ready)
     state.snapshotSyncV2Application = kernel.application
-    state.authSession = makeMacV2Session(accountID: "test-account", fence: "test-fence")
-    state.authUIState = .signedIn(accountID: "test-account")
+    state.workspaceModel.authSession = makeMacV2Session(accountID: "test-account", fence: "test-fence")
+    state.workspaceModel.authUIState = .signedIn(accountID: "test-account")
     state.installV2Document(
         kernel.storage.document,
         workID: kernel.storage.workID,
         createdAt: kernel.storage.createdAt
     )
     state.snapshotSyncV2Session = await kernel.application.beginSession(workID: kernel.storage.workID)
+    await state.refreshSnapshotSyncV2UIState()
     return MacConflictFixture(
         configuration: configuration,
         application: kernel.application,

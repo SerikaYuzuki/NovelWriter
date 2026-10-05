@@ -1,5 +1,6 @@
 import Foundation
 @testable import FUMINIWAIOS
+import NovelWorkspaceUI
 import Testing
 
 @MainActor
@@ -15,7 +16,7 @@ struct IOSAssistantFeedbackTests {
         #expect(await store.makeNewDocument())
         let session = try #require(store.currentDocumentSessionToken)
         let account = store.snapshotSyncV2AccountScope
-        let original = store.document
+        let original = store.workspaceModel.document
         let feedback = AssistantFeedback(id: UUID(), purpose: .impressions, scopeTitle: "第一話",
                                          createdAt: Date(timeIntervalSince1970: 1_790_000_001), markdown: "# 感想\n\n続きが気になる。")
         #expect(await store.saveAssistantFeedback(feedback, session: session, account: account))
@@ -25,7 +26,7 @@ struct IOSAssistantFeedbackTests {
         let reopened = IOSDocumentStore(userDefaults: defaults, libraryRoot: root)
         await reopened.bootstrap()
         #expect(reopened.assistantFeedback == [feedback])
-        #expect(reopened.document == original)
+        #expect(reopened.workspaceModel.document == original)
         let newSession = try #require(reopened.currentDocumentSessionToken)
         #expect(await reopened.deleteAssistantFeedback(feedback, session: newSession, account: reopened.snapshotSyncV2AccountScope))
         #expect(reopened.assistantFeedback.isEmpty)

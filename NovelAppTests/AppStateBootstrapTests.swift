@@ -19,9 +19,9 @@ struct AppStateBootstrapTests {
         await state.bootstrap()
 
         #expect(state.startupState == .ready)
-        let activeWorkID = try #require(state.snapshotSyncV2ActiveWorkID)
+        let activeWorkID = try #require(state.workspaceModel.activeWorkID)
         #expect(state.snapshotSyncV2Session?.workID == activeWorkID)
-        #expect(activeWorkID.rawValue != state.document.id)
+        #expect(activeWorkID.rawValue != state.workspaceModel.document.id)
         #expect(state.userDefaults.string(forKey: "fuminiwa.v2.activeWorkID") == activeWorkID.rawValue.uuidString)
     }
 
@@ -46,7 +46,7 @@ struct AppStateBootstrapTests {
         await state.bootstrap()
 
         #expect(state.startupState == .ready)
-        let activeWorkID = try #require(state.snapshotSyncV2ActiveWorkID)
+        let activeWorkID = try #require(state.workspaceModel.activeWorkID)
         #expect(activeWorkID != staleWorkID)
         #expect(state.userDefaults.string(forKey: "fuminiwa.v2.activeWorkID") == activeWorkID.rawValue.uuidString)
     }
@@ -86,10 +86,10 @@ struct AppStateBootstrapTests {
 
         #expect(await state.returnToSnapshotLibrary())
         #expect(state.permitsDocumentImport)
-        let session = state.documentSessionToken
+        let session = state.workspaceModel.documentSessionToken
         #expect(await state.importExternalDocument(at: source, expectedSession: session))
-        #expect(state.document.title == imported.title)
-        let activeWorkID = try #require(state.snapshotSyncV2ActiveWorkID)
+        #expect(state.workspaceModel.document.title == imported.title)
+        let activeWorkID = try #require(state.workspaceModel.activeWorkID)
         #expect(state.snapshotSyncV2Session?.workID == activeWorkID)
         #expect(activeWorkID.rawValue != imported.id)
         #expect(state.userDefaults.string(forKey: "fuminiwa.v2.activeWorkID") == activeWorkID.rawValue.uuidString)

@@ -38,7 +38,7 @@ struct SnapshotHistoryPresentationTests {
     @Test func staleRestoreRequestIsRejected() async throws {
         let state = AppState(dependencies: AppDependencies(userDefaults: makeIsolatedTestUserDefaults()))
         let presenter = SnapshotMenuPresenter(appState: state)
-        let request = try SnapshotRestoreRequest(entry: entries()[0], session: state.documentSessionToken)
+        let request = try SnapshotRestoreRequest(entry: entries()[0], session: state.workspaceModel.documentSessionToken)
         presenter.requestRestore(request)
         #expect(presenter.snapshotPendingRestore == nil)
         await presenter.restore(request)
@@ -50,7 +50,7 @@ struct SnapshotHistoryPresentationTests {
         let presenter = SnapshotMenuPresenter(appState: state)
         for dark in [false, true] {
             let view = SnapshotPopover(overlayState: WorkbenchOverlayState())
-                .environment(state).environment(presenter)
+                .environment(state).environment(state.workspaceModel).environment(presenter)
                 .frame(width: 420, height: 560)
                 .background(Color(nsColor: .windowBackgroundColor))
                 .preferredColorScheme(dark ? .dark : .light)
@@ -63,7 +63,7 @@ struct SnapshotHistoryPresentationTests {
             try await Task.sleep(for: .milliseconds(300))
             presenter.snapshots = try entries().map { SnapshotRestoreRequest(
                 entry: $0,
-                session: state.documentSessionToken
+                session: state.workspaceModel.documentSessionToken
             ) }
             try await Task.sleep(for: .milliseconds(400))
             host.layoutSubtreeIfNeeded()
@@ -85,12 +85,12 @@ struct SnapshotHistoryPresentationTests {
         for dark in [false, true] {
             let window = UIWindow(windowScene: scene)
             window.frame = CGRect(x: 0, y: 0, width: 440, height: 956)
-            let host = UIHostingController(rootView: NavigationStack { IOSSnapshotHistoryView(store: fixture.store) }
+            let host = UIHostingController(rootView: NavigationStack { IOSSnapshotHistoryView(store: fixture.store).environment(fixture.store.workspaceModel) }
                 .preferredColorScheme(dark ? .dark : .light))
             window.rootViewController = host
             window.makeKeyAndVisible()
             try await Task.sleep(for: .milliseconds(300))
-            fixture.store.syncV2HistoryItems = try entries()
+            fixture.store.workspaceModel.historyItems = try entries()
             try await Task.sleep(for: .milliseconds(400))
             host.view.layoutIfNeeded()
             let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in

@@ -1,23 +1,11 @@
 import Foundation
 @testable import FUMINIWAIOS
+import NovelWorkspace
 import Testing
 
 @MainActor
 @Suite("iOS clipboard prompt")
 struct IOSClipboardPromptBuilderTests {
-    @Test("選択・話・章をAI依頼文なしでコピーする")
-    func buildsPlainTextForEveryScope() throws {
-        let cases: [(ManuscriptCopySource, String)] = [
-            (.selection(text: "選択本文😀"), "選択本文😀"),
-            (.episode(title: "第一話", content: "話本文"), "第一話\n\n話本文"),
-            (.chapter(title: "第一章", episodes: [.init(title: "第一話", content: "章内本文")]),
-             "第一章\n\n第一話\n\n章内本文")
-        ]
-        for (source, expected) in cases {
-            #expect(try ManuscriptCopyBuilder.make(source: source).text == expected)
-        }
-    }
-
     @Test("空本文はclipboardへ書かない")
     func emptySourceDoesNotWriteClipboard() async throws {
         let suiteName = "jp.fuminiwa.ios.clipboard-tests.\(UUID().uuidString)"
@@ -38,7 +26,7 @@ struct IOSClipboardPromptBuilderTests {
         #expect(await store.configureSnapshotSyncV2())
         await store.bootstrap()
         #expect(await store.makeNewDocument())
-        let episodeID = try #require(store.selectedEpisodeID)
+        let episodeID = try #require(store.workspaceModel.selectedEpisodeID)
 
         store.copySelectionManuscript(
             text: " \n　",
@@ -70,7 +58,7 @@ struct IOSClipboardPromptBuilderTests {
         #expect(await store.configureSnapshotSyncV2())
         await store.bootstrap()
         #expect(await store.makeNewDocument())
-        let episodeID = try #require(store.selectedEpisodeID)
+        let episodeID = try #require(store.workspaceModel.selectedEpisodeID)
 
         store.copySelectionManuscript(
             text: "コピー対象",

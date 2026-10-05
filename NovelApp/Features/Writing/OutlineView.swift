@@ -2,6 +2,7 @@ import AppKit
 import EditorKit
 import NovelCore
 import NovelUI
+import NovelWorkspace
 import SwiftUI
 
 struct OutlineContainerView: View {
@@ -109,6 +110,7 @@ struct OutlineContainerView: View {
 }
 
 struct OutlineView: View {
+    @Environment(WorkspaceModel.self) private var workspace
     @Environment(AppState.self) private var appState
 
     @Binding var chapterPendingDeletion: SessionBoundValue<Chapter>?
@@ -130,15 +132,14 @@ struct OutlineView: View {
                             OutlineEpisodeRow(
                                 episode: episode,
                                 chapterID: chapter.id,
-                                expectedSession: episodeRequest.session,
                                 showsSaveState: OutlineSaveStateVisibility.episode(
                                     episode.id,
-                                    selectedEpisodeID: appState.selectedEpisodeID
+                                    selectedEpisodeID: workspace.selectedEpisodeID
                                 )
                             )
                             .contextMenu {
                                 Button("話の名前を変更", systemImage: "pencil") {
-                                    guard appState.documentSessionToken == episodeRequest.session else { return }
+                                    guard workspace.documentSessionToken == episodeRequest.session else { return }
                                     episodePendingRename = EpisodeRenameRequest(
                                         episode: episode, chapterID: chapter.id, appState: appState
                                     )
@@ -163,11 +164,10 @@ struct OutlineView: View {
                     } label: {
                         OutlineChapterRow(
                             chapter: chapter,
-                            expectedSession: chapterItem.session,
                             showsSaveState: OutlineSaveStateVisibility.chapter(
                                 chapter.id,
-                                selectedChapterID: appState.selectedChapterID,
-                                selectedEpisodeID: appState.selectedEpisodeID
+                                selectedChapterID: workspace.selectedChapterID,
+                                selectedEpisodeID: workspace.selectedEpisodeID
                             )
                         )
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -247,34 +247,34 @@ struct OutlineView: View {
         .onAppear {
             disclosureState.reset(
                 chapterIDs: chapterIDs,
-                revealing: appState.selectedChapterID
+                revealing: workspace.selectedChapterID
             )
             revealSearchMatches()
         }
-        .onChange(of: appState.documentSessionToken) {
+        .onChange(of: workspace.documentSessionToken) {
             chapterPendingRename = nil
             disclosureState.reset(
                 chapterIDs: chapterIDs,
-                revealing: appState.selectedChapterID
+                revealing: workspace.selectedChapterID
             )
             revealSearchMatches()
         }
         .onChange(of: chapterIDs) { _, newChapterIDs in
             disclosureState.synchronize(
                 chapterIDs: newChapterIDs,
-                revealing: appState.selectedChapterID
+                revealing: workspace.selectedChapterID
             )
             if let chapterPendingRename, !newChapterIDs.contains(chapterPendingRename.value.id) {
                 self.chapterPendingRename = nil
             }
         }
-        .onChange(of: appState.selectedChapterID) { _, chapterID in
+        .onChange(of: workspace.selectedChapterID) { _, chapterID in
             if let chapterID {
                 disclosureState.reveal(chapterID)
             }
         }
-        .onChange(of: appState.selectedEpisodeID) { _, episodeID in
-            if episodeID != nil, let chapterID = appState.selectedChapterID {
+        .onChange(of: workspace.selectedEpisodeID) { _, episodeID in
+            if episodeID != nil, let chapterID = workspace.selectedChapterID {
                 disclosureState.reveal(chapterID)
             }
         }
@@ -287,7 +287,7 @@ struct OutlineView: View {
             beginEditingTitle(
                 for: SessionBoundValue(
                     value: chapter,
-                    session: appState.documentSessionToken
+                    session: workspace.documentSessionToken
                 )
             )
         }
@@ -295,8 +295,8 @@ struct OutlineView: View {
 
     private var filteredChapters: [Chapter] {
         let query = appState.outlinePresentation.searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return appState.document.chapters }
-        return appState.document.chapters.filter { chapter in
+        guard !query.isEmpty else { return workspace.document.chapters }
+        return workspace.document.chapters.filter { chapter in
             chapter.title.localizedStandardContains(query) ||
                 chapter.episodes.contains {
                     $0.title.localizedStandardContains(query) ||
@@ -306,7 +306,7 @@ struct OutlineView: View {
     }
 
     private var sessionBoundChapters: [SessionBoundValue<Chapter>] {
-        let session = appState.documentSessionToken
+        let session = workspace.documentSessionToken
         return filteredChapters.map {
             SessionBoundValue(value: $0, session: session)
         }
@@ -323,7 +323,7 @@ struct OutlineView: View {
 
     private func sessionBoundEpisodes(
         in chapter: Chapter,
-        session: DocumentSessionToken
+        session: WorkspaceSessionToken
     ) -> [EpisodeDeletionRequest] {
         filteredEpisodes(in: chapter).map {
             EpisodeDeletionRequest(episode: $0, chapterID: chapter.id, session: session)
@@ -332,10 +332,10 @@ struct OutlineView: View {
 
     private var selectionBinding: Binding<EpisodeID?> {
         Binding(
-            get: { appState.selectedEpisodeID },
+            get: { workspace.selectedEpisodeID },
             set: { episodeID in
                 guard let episodeID,
-                      let chapter = appState.document.chapters.first(where: {
+                      let chapter = workspace.document.chapters.first(where: {
                           $0.episodes.contains(where: { $0.id == episodeID })
                       }) else { return }
                 Task {
@@ -349,7 +349,7 @@ struct OutlineView: View {
     }
 
     private var chapterIDs: [ChapterID] {
-        appState.document.chapters.map(\.id)
+        workspace.document.chapters.map(\.id)
     }
 
     private var normalizedSearchQuery: String {
@@ -388,8 +388,8 @@ struct OutlineView: View {
     private func commitChapterTitleRename() {
         guard let request = chapterPendingRename else { return }
         chapterPendingRename = nil
-        guard request.session == appState.documentSessionToken,
-              appState.document.chapters.contains(where: { $0.id == request.value.id }) else { return }
+        guard request.session == workspace.documentSessionToken,
+              workspace.document.chapters.contains(where: { $0.id == request.value.id }) else { return }
 
         let trimmedTitle = chapterTitleDraft.trimmingCharacters(in: .whitespacesAndNewlines)
         appState.updateChapterTitle(trimmedTitle.isEmpty ? "無題の章" : trimmedTitle, for: request.value.id)

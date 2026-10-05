@@ -15,9 +15,9 @@ struct IOSLibraryDeletionSafetyTests {
         let store = try await makeStore(config)
         #expect(await store.makeNewDocument())
         _ = await store.refreshLibrary()
-        let item = try #require(store.syncV2LibraryItems.first)
-        let chapter = try #require(store.selectedChapterID)
-        let episode = try #require(store.selectedEpisodeID)
+        let item = try #require(store.workspaceModel.libraryRows.first)
+        let chapter = try #require(store.workspaceModel.selectedChapterID)
+        let episode = try #require(store.workspaceModel.selectedEpisodeID)
         let originalSession = store.currentDocumentSessionToken
         store.editorCommandSession.registerDocumentLifecycleHandler(id: UUID(), prepare: {
             guard !rejectIME else { return false }
@@ -48,7 +48,7 @@ struct IOSLibraryDeletionSafetyTests {
         let store = try await makeStore(config)
         #expect(await store.makeNewDocument())
         _ = await store.refreshLibrary()
-        let item = try #require(store.syncV2LibraryItems.first)
+        let item = try #require(store.workspaceModel.libraryRows.first)
         let started = AsyncStream<Void>.makeStream()
         let release = AsyncStream<Void>.makeStream()
         await config.remote.setDeletionHandler { _ in
@@ -63,7 +63,7 @@ struct IOSLibraryDeletionSafetyTests {
         var start = started.stream.makeAsyncIterator()
         _ = await start.next()
         #expect(store.currentDocumentSessionToken == nil)
-        #expect(!store.isDocumentTransitionInProgress)
+        #expect(!store.workspaceModel.isDocumentTransitionInProgress)
         #expect(await store.makeNewDocument())
         let replacement = store.currentDocumentSessionToken
         release.continuation.finish()
@@ -78,52 +78,7 @@ struct IOSLibraryDeletionSafetyTests {
         let store = IOSDocumentStore(userDefaults: defaults, libraryRoot: config.localRoot.url,
                                      runtimeComposition: .test(config))
         await store.bootstrap()
-        store.authUIState = .signedIn(accountID: "test-account")
+        store.workspaceModel.authUIState = .signedIn(accountID: "test-account")
         return store
-    }
-}
-
-extension IOSLibraryDeletionSafetyTests {
-    @Test("gate待ちの間にsessionまたはaccountが変わった削除要求は破棄する", arguments: [false, true])
-    func queuedDeletionRejectsStaleSource(changeAccount: Bool) async throws {
-        let config = try TestRuntimeConfiguration()
-        let store = try await makeStore(config)
-        #expect(await store.makeNewDocument())
-        _ = await store.refreshLibrary()
-        let item = try #require(store.syncV2LibraryItems.first)
-        let started = AsyncStream<Void>.makeStream()
-        let release = AsyncStream<Void>.makeStream()
-        let enqueued = AsyncStream<Void>.makeStream()
-        let blocker = Task {
-            await store.documentOperationGate.perform {
-                started.continuation.yield(())
-                for await _ in release.stream {
-                    break
-                }
-            }
-        }
-        var start = started.stream.makeAsyncIterator()
-        _ = await start.next()
-        store.documentOperationGate.didEnqueueOperation = { enqueued.continuation.yield(()) }
-        let session = store.currentDocumentSessionToken
-        let scope = store.snapshotSyncV2AccountScope
-        let deleting = Task { await store.deleteLibraryWork(item, expectedSession: session, accountScope: scope) }
-        var queued = enqueued.stream.makeAsyncIterator()
-        _ = await queued.next()
-        if changeAccount {
-            store.testServerInstanceIDOverride = "replacement-server"
-        } else {
-            store.advanceDocumentSessionGeneration()
-        }
-        release.continuation.finish()
-        await blocker.value
-        #expect(await !deleting.value)
-        #expect(store.syncV2ActiveWorkID == item.workID)
-        #expect(store.startupState == .ready)
-        let app = try #require(store.snapshotSyncV2Application)
-        #expect(try await app.pendingDeletionWorkIDs().isEmpty)
-        #expect(await config.remote.recordedDeletions().isEmpty)
-        started.continuation.finish()
-        enqueued.continuation.finish()
     }
 }

@@ -2,6 +2,7 @@ import AppKit
 import Foundation
 import NovelCore
 import NovelExport
+import NovelWorkspace
 import Observation
 import UniformTypeIdentifiers
 
@@ -132,23 +133,23 @@ enum ExportPresentationState: Equatable {
 final class ExportPresenter {
     private let documentTitleProvider: @MainActor () -> String
     private let documentProvider: @MainActor () -> NovelDocument
-    private let documentSessionProvider: @MainActor () -> DocumentSessionToken?
+    private let documentSessionProvider: @MainActor () -> WorkspaceSessionToken?
     @ObservationIgnored private let panelPresenter: any ExportPanelPresenting
     @ObservationIgnored private let executor: any ExportExecuting
     @ObservationIgnored private let packageExporter: @MainActor @Sendable (
         URL,
-        DocumentSessionToken?
+        WorkspaceSessionToken?
     ) async throws -> Void
-    @ObservationIgnored private var readableExporter: (@MainActor @Sendable (URL, DocumentSessionToken?) async throws -> Void)?
+    @ObservationIgnored private var readableExporter: (@MainActor @Sendable (URL, WorkspaceSessionToken?) async throws -> Void)?
     @ObservationIgnored private var exportTask: Task<Void, Never>?
 
     private(set) var state: ExportPresentationState = .idle
 
     convenience init(appState: AppState) {
         self.init(
-            documentTitleProvider: { appState.document.title },
-            documentProvider: { appState.document },
-            documentSessionProvider: { appState.documentSessionToken },
+            documentTitleProvider: { appState.workspaceModel.document.title },
+            documentProvider: { appState.workspaceModel.document },
+            documentSessionProvider: { appState.workspaceModel.documentSessionToken },
             panelPresenter: MacExportPanelPresenter(),
             executor: BackgroundNovelExportExecutor(),
             packageExporter: { destination, expectedSession in
@@ -166,12 +167,12 @@ final class ExportPresenter {
     init(
         documentTitleProvider: @escaping @MainActor () -> String,
         documentProvider: @escaping @MainActor () -> NovelDocument,
-        documentSessionProvider: @escaping @MainActor () -> DocumentSessionToken? = { nil },
+        documentSessionProvider: @escaping @MainActor () -> WorkspaceSessionToken? = { nil },
         panelPresenter: any ExportPanelPresenting,
         executor: any ExportExecuting,
         packageExporter: @escaping @MainActor @Sendable (
             URL,
-            DocumentSessionToken?
+            WorkspaceSessionToken?
         ) async throws -> Void = { _, _ in
             throw PackageExportError.unavailable
         }

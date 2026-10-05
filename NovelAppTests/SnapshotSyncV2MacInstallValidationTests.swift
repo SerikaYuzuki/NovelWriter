@@ -16,8 +16,8 @@ struct SnapshotSyncV2MacInstallValidationTests {
             ),
             initialStartupState: .ready
         )
-        let originalDocument = state.document
-        let originalSession = state.documentSessionToken
+        let originalDocument = state.workspaceModel.document
+        let originalSession = state.workspaceModel.documentSessionToken
         let invalidResources = [
             PortableResource(
                 pathComponents: SyncV2PortableMetadata.localCreatedAtPath,
@@ -39,8 +39,8 @@ struct SnapshotSyncV2MacInstallValidationTests {
                 resources: invalidResources
             ) == false
         )
-        #expect(state.document == originalDocument)
-        #expect(state.documentSessionToken == originalSession)
+        #expect(state.workspaceModel.document == originalDocument)
+        #expect(state.workspaceModel.documentSessionToken == originalSession)
         #expect(state.snapshotSyncV2Resources.isEmpty)
     }
 
@@ -53,8 +53,8 @@ struct SnapshotSyncV2MacInstallValidationTests {
             ),
             initialStartupState: .ready
         )
-        let originalDocument = state.document
-        let originalSession = state.documentSessionToken
+        let originalDocument = state.workspaceModel.document
+        let originalSession = state.workspaceModel.documentSessionToken
         let document = NovelDocument.newDocument(title: "別identity")
 
         #expect(
@@ -66,7 +66,7 @@ struct SnapshotSyncV2MacInstallValidationTests {
                 expectedDocumentID: UUID()
             ) == false
         )
-        #expect(state.document == originalDocument)
-        #expect(state.documentSessionToken == originalSession)
+        #expect(state.workspaceModel.document == originalDocument)
+        #expect(state.workspaceModel.documentSessionToken == originalSession)
     }
 }

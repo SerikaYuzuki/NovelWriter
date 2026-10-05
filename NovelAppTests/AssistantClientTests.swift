@@ -1,6 +1,7 @@
 import Foundation
 import NovelCore
-import NovelSyncV2
+import NovelWorkspaceUI
+import NovelWritingSupport
 #if os(macOS)
 @testable import FUMINIWA
 #else
@@ -8,77 +9,7 @@ import NovelSyncV2
 #endif
 import Testing
 
-@Suite("Assistant Markdown presentation")
-struct AssistantMarkdownTests {
-    @Test func japaneseEmphasisPreservesCodeAndEscapes() {
-        let text = AssistantMarkdown.inline("まず、**「人物の動機」**が伝わる。")
-        #expect(String(text.characters) == "まず、「人物の動機」が伝わる。")
-        #expect(text.runs.contains { $0.inlinePresentationIntent?.contains(.stronglyEmphasized) == true })
-        #expect(String(AssistantMarkdown.inline("`**literal**`").characters) == "**literal**")
-        #expect(String(AssistantMarkdown.inline(#"\*\*literal\*\*"#).characters) == "**literal**")
-    }
-
-    @Test func responseBlocksPreserveCodeAndDistinguishSyntax() {
-        let source = "# 感想\n\n段落の**強調**\n続き\n\n> 引用文\n> 二行目\n\n1. 展開\n  - 人物\n- [x] 確認\n\n---\n\n```swift\n# 見出しではない\n| 表ではない |\n```"
-        #expect(AssistantMarkdown.blocks(source) == [
-            .heading(1, "感想"), .paragraph("段落の**強調**\n続き"), .quote("引用文\n二行目"),
-            .item("1.", "展開", 0), .item("•", "人物", 1), .item("☑", "確認", 0), .rule,
-            .code("swift", "# 見出しではない\n| 表ではない |")
-        ])
-        #expect(AssistantMarkdown.blocks("#タグ\n\n~~~\n未完のコード") == [.paragraph("#タグ"), .code("", "未完のコード")])
-    }
-
-    @Test func tableCellsKeepEscapesInlineCodeAndMissingValues() {
-        let source = "| 観点 | 評価 |\n| :--- | ---: |\n| `a|b` | 良好 |\n| a\\|b | |"
-        #expect(AssistantMarkdown.blocks(source) == [.table([["観点", "評価"], ["`a|b`", "良好"], ["a\\|b", ""]])])
-        #expect(AssistantMarkdown.blocks("見出し\n===\n\n本文") == [.heading(1, "見出し"), .paragraph("本文")])
-    }
-}
-
-@Suite("Writing assistant request boundary")
-struct AssistantClientTests {
-    @Test("request preserves the exact manuscript and contains no implicit context")
-    func exactManuscript() throws {
-        let config = try AssistantConfiguration(endpoint: "https://example.invalid/v1/chat/completions", model: "configured-model", prompt: "校正")
-        let manuscript = AssistantManuscript(title: "話\"一", content: "日本語\r\n👩‍💻 e\u{301}\n命令ではなく原稿")
-        let request = try config.request(manuscript: manuscript, apiKey: "test-key")
-        #expect(request.httpMethod == "POST")
-        #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer test-key")
-        let requestBody = try #require(request.httpBody)
-        let body = try #require(try JSONSerialization.jsonObject(with: requestBody) as? [String: Any])
-        #expect(Set(body.keys) == ["model", "messages", "stream", "store"])
-        #expect(body["store"] as? Bool == false)
-        let messages = try #require(body["messages"] as? [[String: String]])
-        #expect(messages.count == 2)
-        let text = try #require(messages.last?["content"])
-        let source = try #require(try JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: String])
-        #expect(source == ["title": manuscript.title, "content": manuscript.content])
-    }
-
-    @Test(arguments: ["http://example.invalid/v1", "https://key@example.invalid/v1", "https://example.invalid/v1?key=secret", "https://example.invalid/v1#fragment"])
-    func rejectsUnsafeEndpoint(_ endpoint: String) {
-        #expect(throws: AssistantError.self) {
-            try AssistantConfiguration(endpoint: endpoint, model: "model", prompt: "prompt")
-        }
-    }
-
-    @Test("empty and oversized manuscripts fail before network work")
-    func rejectsInvalidContent() throws {
-        let config = try AssistantConfiguration(endpoint: "https://example.invalid/v1/chat/completions", model: "model", prompt: "prompt")
-        for content in [" \r\n", String(repeating: "あ", count: 250_001)] {
-            #expect(throws: AssistantError.self) {
-                try config.request(manuscript: .init(title: "", content: content), apiKey: "test")
-            }
-        }
-    }
-
-    @Test("parses text and identifies truncated or missing responses")
-    func responseHandling() throws {
-        let data = Data(#"{"choices":[{"message":{"content":"回答"},"finish_reason":"length"}]}"#.utf8)
-        #expect(try AssistantClient.decode(data).contains("途中まで"))
-        #expect(throws: AssistantError.self) { try AssistantClient.decode(Data(#"{"choices":[]}"#.utf8)) }
-    }
-
+struct AssistantPreferencesTests {
     @Test("test composition cannot access the production credential store")
     func hostRejectsCredentialAccess() throws {
         let preferences = AssistantPreferences(defaults: UserDefaults())
@@ -100,168 +31,6 @@ struct AssistantClientTests {
         #expect(try preferences.configuration(.advice).model == "old-model")
     }
 
-    @Test("incomplete AI answers describe the cause without exposing partial manuscript output",
-          arguments: ["max_output_tokens", "content_filter", "unknown"])
-    func incompleteAnswerReason(reason: String) throws {
-        let data = try JSONSerialization.data(withJSONObject: [
-            "status": "incomplete", "incomplete_details": ["reason": reason],
-            "output": [["type": "message", "content": [["type": "output_text", "text": "partial"]]]]
-        ])
-        do {
-            _ = try AssistantClient.decode(data)
-            Issue.record("incomplete answer was accepted")
-        } catch let error as AssistantError {
-            let expected: AssistantError = switch reason {
-            case "max_output_tokens": .incompleteOutput
-            case "content_filter": .filteredOutput
-            default: .unfinishedOutput
-            }
-            #expect(error.localizedDescription == expected.localizedDescription)
-        }
-    }
-
-    @Test("OpenAI uses Responses and only completed text is accepted")
-    func responsesAndCatalog() throws {
-        let config = try AssistantConfiguration(endpoint: "https://api.openai.com/v1/chat/completions", model: "latest-model", prompt: "校正")
-        let request = try config.request(manuscript: .init(title: "題", content: "本文"), apiKey: "synthetic")
-        #expect(request.url?.path == "/v1/responses")
-        let requestData = try #require(request.httpBody)
-        let body = try #require(try JSONSerialization.jsonObject(with: requestData) as? [String: Any])
-        #expect(body["store"] as? Bool == false)
-        #expect(body["input"] as? String != nil)
-        #expect(try AssistantClient.decode(Data(#"{"status":"completed","output":[{"type":"reasoning"},{"type":"message","content":[{"type":"output_text","text":"回答"}]}]}"#.utf8)) == "回答")
-        #expect(throws: AssistantError.self) { try AssistantClient.decode(Data(#"{"status":"incomplete","output":[]}"#.utf8)) }
-        #expect(try AssistantClient.decodeModels(Data(#"{"data":[{"id":"old","created":1},{"id":"new","created":3}]}"#.utf8)) == ["new", "old"])
-        #expect(try AssistantClient.proofreadContent(#"{"content":"本文\n続き"}"#) == "本文\n続き")
-        #expect(throws: AssistantError.self) { try AssistantClient.proofreadContent("途中のJSON") }
-    }
-
-    @Test("proofreading requires complete structured manuscript output", arguments: ["https://api.openai.com/v1/responses", "https://example.invalid/v1/chat/completions"])
-    func proofreadingSchema(endpoint: String) throws {
-        let config = try AssistantConfiguration(endpoint: endpoint, model: "model", prompt: "校正", replacesManuscript: true)
-        let request = try config.request(manuscript: .init(title: "題", content: "原文"), apiKey: "synthetic")
-        let data = try #require(request.httpBody)
-        let body = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
-        let envelope = (body["text"] ?? body["response_format"]) as? [String: Any]
-        let format = try #require((envelope?["format"] ?? envelope?["json_schema"]) as? [String: Any])
-        #expect(format["strict"] as? Bool == true)
-        let schema = try #require(format["schema"] as? [String: Any])
-        #expect(schema["required"] as? [String] == ["content"])
-        #expect(schema["additionalProperties"] as? Bool == false)
-    }
-}
-
-@Suite("Assistant explicit scope")
-struct AssistantScopeTests {
-    @Test func chapterKeepsOrderAndUsesLiveText() throws {
-        let first = Episode(title: "一話", content: "保存済み", memo: "送らないメモ")
-        let second = Episode(title: "二話", content: "二話の本文")
-        let chapter = Chapter(title: "選択章", episodes: [second, first])
-        let other = Chapter(title: "対象外", content: "秘密")
-        let result = try AssistantScope.chapter(chapter.id).capture(chapters: [other, chapter], currentID: first.id) {
-            AssistantManuscript(title: first.title, content: "確定した最新本文")
-        }
-        #expect(result == AssistantManuscript(title: "選択章", content: "# 二話\n二話の本文\n\n# 一話\n確定した最新本文"))
-    }
-
-    @Test func unrelatedEpisodeDoesNotCaptureActiveEditor() throws {
-        let episode = Episode(title: "指定話", content: "  本文\r\n", memo: "非公開")
-        let result = try AssistantScope.episode(episode.id).capture(chapters: [Chapter(title: "章", episodes: [episode])], currentID: EpisodeID()) {
-            throw AssistantError.composing
-        }
-        #expect(result == AssistantManuscript(title: episode.title, content: episode.content))
-    }
-
-    @Test func rejectsCompositionAndMissingTargets() {
-        let chapter = Chapter(title: "章", content: "本文")
-        #expect(throws: AssistantError.self) {
-            try AssistantScope.chapter(chapter.id).capture(chapters: [chapter], currentID: chapter.episodes[0].id) {
-                throw AssistantError.composing
-            }
-        }
-        #expect(throws: AssistantError.self) {
-            try AssistantScope.episode(EpisodeID()).capture(chapters: [chapter], currentID: nil) {
-                AssistantManuscript(title: "", content: "")
-            }
-        }
-        let empty = Chapter(title: "空章", content: "  ")
-        #expect(throws: AssistantError.self) {
-            try AssistantScope.chapter(empty.id).capture(chapters: [empty], currentID: nil) {
-                AssistantManuscript(title: "", content: "")
-            }
-        }
-    }
-}
-
-extension AssistantScopeTests {
-    @Test func checkboxSelectionCombinesChaptersAndEpisodes() {
-        let first = Episode(title: "一", content: "本文")
-        let second = Episode(title: "二", content: "本文")
-        let chapters = [Chapter(title: "章", episodes: [first, second])]
-        var scope = AssistantScope.current
-        scope.setSelected([first.id, second.id], to: true, chapters: chapters, currentID: first.id)
-        #expect(scope.selectedEpisodeIDs(chapters: chapters, currentID: first.id) == [first.id, second.id])
-        scope.setSelected([second.id], to: false, chapters: chapters, currentID: first.id)
-        #expect(scope == .current)
-        scope.setSelected([first.id, second.id], to: false, chapters: chapters, currentID: first.id)
-        #expect(scope == .episodes([]))
-    }
-
-    @Test func multipleSelectionUsesDocumentOrderAndOnlySelectedText() throws {
-        let first = Episode(title: "一", content: "保存済み")
-        let second = Episode(title: "二", content: "二本文", memo: "対象外メモ")
-        let third = Episode(title: "三", content: "三本文")
-        let excluded = Episode(title: "除外", content: "対象外本文")
-        let chapters = [Chapter(title: "前章", episodes: [second, excluded, first]),
-                        Chapter(title: "後章", episodes: [third])]
-        var captures = 0
-        let result = try AssistantScope.episodes([first.id, third.id, second.id]).capture(
-            chapters: chapters, currentID: first.id
-        ) {
-            captures += 1
-            return AssistantManuscript(title: "一", content: "最新本文")
-        }
-        #expect(captures == 1)
-        #expect(result.content == "# 前章\n\n## 二\n二本文\n\n## 一\n最新本文\n\n# 後章\n\n## 三\n三本文")
-        #expect(result.title == "選択した3話")
-    }
-
-    @Test func selectedSetRejectsMissingOrEmptyTargetsAndRespectsIME() throws {
-        let first = Episode(title: "一", content: "本文")
-        let second = Episode(title: "二", content: "第二本文")
-        let chapters = [Chapter(title: "章", episodes: [first, second])]
-        for ids: Set<EpisodeID> in [[], [EpisodeID()], [first.id, EpisodeID()], [first.id, second.id]] {
-            #expect(throws: AssistantError.self) {
-                try AssistantScope.episodes(ids).capture(chapters: chapters, currentID: first.id) {
-                    throw AssistantError.composing
-                }
-            }
-        }
-        let result = try AssistantScope.episodes([second.id]).capture(chapters: chapters, currentID: first.id) {
-            throw AssistantError.composing
-        }
-        #expect(result.content == second.content)
-        let empty = Chapter(title: "空", episodes: [Episode(title: "一", content: "  "), Episode(title: "二", content: "\n")])
-        #expect(throws: AssistantError.self) {
-            try AssistantScope.episodes(Set(empty.episodes.map(\.id))).capture(chapters: [empty], currentID: nil) {
-                throw AssistantError.composing
-            }
-        }
-    }
-}
-
-extension AssistantScopeTests {
-    @Test func proofreadingAlwaysUsesCurrentEpisode() {
-        let selection = AssistantScope.episodes([EpisodeID(), EpisodeID()])
-        #expect(selection.forPurpose(.proofreading) == .current)
-        for purpose in AssistantPurpose.allCases where purpose != .proofreading {
-            #expect(selection.forPurpose(purpose) == selection)
-        }
-    }
-}
-
-@Suite("Assistant purpose isolation and saved Markdown")
-struct AssistantFeedbackTests {
     @Test func repairsOnlyMisassignedDefaultAndKeepsCustomPrompts() throws {
         let suite = "assistant-purpose.\(UUID())"
         let defaults = try #require(UserDefaults(suiteName: suite))
@@ -282,35 +51,206 @@ struct AssistantFeedbackTests {
         #expect(body["text"] == nil)
         #expect(preferences.prompt(.proofreading) == AssistantPurpose.proofreading.defaultPrompt)
     }
-
-    @Test func feedbackMarkdownRoundTripAndMalformedFiles() throws {
-        let feedback = AssistantFeedback(id: UUID(), purpose: .impressions, scopeTitle: "選択した2話",
-                                         createdAt: Date(timeIntervalSince1970: 1_790_000_000), markdown: "# 感想\n\n**緊張感**が続く。\n\n- 理由\n")
-        let attachment = try feedback.attachment()
-        #expect(AssistantFeedback.decode(fileName: attachment.fileName, bytes: attachment.bytes) == feedback)
-        #expect(AssistantFeedback.decode(fileName: "普通の資料.md", bytes: attachment.bytes) == nil)
-        #expect(AssistantFeedback.decode(fileName: attachment.fileName, bytes: Data("<!-- fuminiwa-feedback-v1 ! -->\n\n本文".utf8)) == nil)
-        #expect(AssistantFeedback.decode(fileName: attachment.fileName, bytes: Data([0xFF])) == nil)
-        let proofreading = AssistantFeedback(id: UUID(), purpose: .proofreading, scopeTitle: "話", createdAt: Date(), markdown: "修正")
-        #expect(throws: AssistantError.self) { try proofreading.attachment() }
-    }
 }
 
-extension AssistantFeedbackTests {
-    @Test func savedMarkdownUsesExistingSnapshotRoundTripAndDeletion() throws {
-        let record = AssistantFeedback(id: UUID(), purpose: .advice, scopeTitle: "二話",
-                                       createdAt: Date(timeIntervalSince1970: 1_790_000_000), markdown: "## 改善案\n\n人物の目的を示す。")
-        let workID = WorkID(UUID())
-        let document = NovelDocument.newDocument(title: "同期試験")
-        let encoded = try SnapshotCodec.encode(SnapshotModel(workId: workID, document: document,
-                                                             documentCreatedAt: record.createdAt, attachments: [record.attachment()]))
-        let received = try SnapshotCodec.decode(manifestBytes: encoded.manifestBytes, objects: encoded.objects)
-        #expect(AssistantFeedback.list(received.attachments) == [record])
-        #expect(received.document == document)
-        let deleted = try SnapshotCodec.encode(SnapshotModel(workId: workID, document: received.document,
-                                                             documentCreatedAt: record.createdAt, attachments: []), parents: [encoded.snapshotId])
-        let receivedDeletion = try SnapshotCodec.decode(manifestBytes: deleted.manifestBytes, objects: deleted.objects)
-        #expect(receivedDeletion.attachments.isEmpty)
-        #expect(receivedDeletion.document == document)
+@MainActor
+struct AssistantDeliveryTests {
+    @Test func proofreadingChecksExactTextAndEpisodeBeforeEditing() async throws {
+        let work = UUID(), episode = Episode(title: "話", content: "元の本文"), other = Episode(title: "別の話", content: "別本文")
+        var document = NovelDocument(title: "合成", chapters: [Chapter(title: "章", episodes: [episode, other])])
+        var selected = episode.id, edits = 0
+        let center = AssistantRequestCenter()
+        let host = WritingAssistantHost(contextID: "session", workID: work, accountID: "account", requestCenter: center,
+                                        capture: { WritingCapture(workId: work, document: document, episodeId: selected) },
+                                        records: { _ in [] }, append: { _ in }, synchronize: {}, apply: { _, _ in edits += 1 }, undo: { _ in })
+        let metadata = AssistantRequestRecord(purpose: .proofreading, documentId: document.id, episodeId: episode.id, scope: "話", permission: "校正")
+        let config = try AssistantConfiguration(endpoint: "https://example.invalid/responses", model: "synthetic", prompt: "指示", replacesManuscript: true)
+        let input = try host.savedInput(config.request(manuscript: AssistantManuscript(title: "話", content: episode.content), apiKey: "synthetic"))
+        let result = #"{"changes":[{"before":"元","after":"新","reason":"誤字","check":"typo"}]}"#
+        selected = other.id
+        await #expect(throws: WritingError.self) { try await host.applyProofreadingResult(metadata: metadata, input: input, raw: result, id: UUID()) }
+        selected = episode.id; document.chapters[0].episodes[0].content = "手で変えた本文"
+        await #expect(throws: WritingError.self) { try await host.applyProofreadingResult(metadata: metadata, input: input, raw: result, id: UUID()) }
+        #expect(edits == 0)
+    }
+
+    @Test func preflightFailureCanRetryWithoutDuplicatingInputs() async throws {
+        let suite = "assistant-preflight.\(UUID())", defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let work = UUID(), document = NovelDocument(title: "合成", chapters: [])
+        var records: [WritingEnvelope] = [], sends = 0, failures = 1
+        let center = AssistantRequestCenter()
+        var host = WritingAssistantHost(contextID: "session", workID: work, requestCenter: center,
+                                        capture: { WritingCapture(workId: work, document: document, episodeId: nil) }, records: { _ in records },
+                                        append: { record in
+                                            if record.kind == "request", failures > 0 {
+                                                failures -= 1; throw WritingError.unavailable
+                                            }
+                                            if !records.contains(where: { $0.id == record.id }) {
+                                                records.append(WritingEnvelope(record: record))
+                                            }
+                                        }, synchronize: {}, apply: { _, _ in }, undo: { _ in })
+        host.transmit = { _, _, _, _, _ in sends += 1; return "合成の感想" }
+        let metadata = AssistantRequestRecord(purpose: .impressions, documentId: document.id, episodeId: nil, scope: "全話", permission: "感想")
+        let key = host.requestKey(purpose: .impressions)
+        _ = host.startRequest(metadata: metadata, input: "固定入力", defaults: defaults)
+        while center.statuses[key]?.inFlight == true {
+            await Task.yield()
+        }
+        #expect(sends == 0)
+        try await host.retryLatest(key: key, defaults: defaults)
+        while center.statuses[key]?.inFlight == true {
+            await Task.yield()
+        }
+        #expect(sends == 1)
+        #expect(records.count(where: { $0.record.kind == "request" }) == 2)
+        #expect(host.recordedFeedback(records).count == 1)
+    }
+
+    @Test func crashAfterApplyingDoesNotOfferDuplicateExecution() async throws {
+        let suite = "assistant-crash.\(UUID())", defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let work = UUID(), document = NovelDocument(title: "合成", chapters: []), id = UUID()
+        let metadata = AssistantRequestRecord(purpose: .advice, documentId: document.id, episodeId: nil, conversationId: UUID(), scope: "本文なし", permission: "相談だけ")
+        let sent = try WritingRecord(workId: work, kind: "request", key: id.uuidString.lowercased(), payload: WritingRecord.payload(metadata))
+        var records = [WritingEnvelope(record: sent)]
+        defaults.set([sent.key], forKey: WritingAssistantHost.localRequestsKey)
+        var host = WritingAssistantHost(contextID: "session", workID: work, capture: { WritingCapture(workId: work, document: document, episodeId: nil) },
+                                        records: { _ in records }, append: { records.append(WritingEnvelope(record: $0)) }, synchronize: {}, apply: { _, _ in }, undo: { _ in })
+        host.editState = { _ in "applied" }
+        let recovered = try await host.recoverInterruptedRequests(records, defaults: defaults)
+        #expect(try AssistantRequestRecord.latest(recovered).first?.record.decoded(AssistantRequestRecord.self).state == "completed")
+        await #expect(throws: WritingError.self) { try await host.retry(sent, entries: records, defaults: defaults) }
+    }
+
+    @Test func proofreadingResultStaysLocalWithoutFullBodyAndSurvivesRelaunch() async throws {
+        let suite = "assistant-local-proof.\(UUID())", defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let work = UUID(), episode = Episode(title: "話", content: "元の本文" + String(repeating: "保存しない本文", count: 1000))
+        let document = NovelDocument(title: "合成", chapters: [Chapter(title: "章", episodes: [episode])])
+        var records: [WritingEnvelope] = [], applied: WritingEdit?
+        let center = AssistantRequestCenter()
+        var host = WritingAssistantHost(contextID: "session", workID: work, defaults: defaults, requestCenter: center,
+                                        capture: { WritingCapture(workId: work, document: document, episodeId: episode.id) },
+                                        records: { _ in records }, append: { records.append(WritingEnvelope(record: $0)) }, synchronize: {}, apply: { _, _ in }, undo: { _ in })
+        host.transmit = { _, _, _, _, _ in #"{"changes":[{"before":"元","after":"新","reason":"誤字","check":"typo"}]}"# }
+        host.applyExactProofreading = { edit, _, _, _ in applied = edit }
+        let config = try AssistantConfiguration(endpoint: "https://example.invalid/responses", model: "synthetic", prompt: "指示", replacesManuscript: true)
+        let input = try host.savedInput(config.request(manuscript: AssistantManuscript(title: "話", content: episode.content), apiKey: "synthetic"))
+        let id = UUID(), metadata = AssistantRequestRecord(purpose: .proofreading, documentId: document.id, episodeId: episode.id, scope: "話", permission: "校正")
+        #expect(host.startRequest(metadata: metadata, input: input, defaults: defaults, id: id))
+        while center.statuses[host.requestKey(purpose: .proofreading)]?.inFlight == true {
+            await Task.yield()
+        }
+        #expect(applied?.changes.count == 1)
+        #expect(records.allSatisfy { $0.record.kind == "request" })
+        #expect(!records.contains { $0.record.payload.contains("保存しない本文") })
+        #expect(host.proofreadingEditIDs(defaults: defaults) == [id])
+        let saved = try #require(host.proofreadingResult(id: id, defaults: defaults))
+        let localData = try JSONEncoder().encode(saved)
+        #expect(localData.count < 1000)
+        #expect(saved.matches(episode.content))
+        #expect(!saved.matches(episode.content + "変更"))
+        let reloaded = try JSONDecoder().decode(AssistantLocalProofreading.self, from: localData)
+        let display = try reloaded.display(on: episode.content + "変更", completed: false)
+        #expect(display.accepted.isEmpty)
+        #expect(display.rejected.count == 1)
+    }
+
+    @Test func relaunchedChatRebuildsCurrentContextWithoutDuplicatingQuestionOrReply() async throws {
+        let suite = "assistant-chat-relaunch.\(UUID())", defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set("synthetic", forKey: "assistant.model")
+        let work = UUID(), conversation = UUID(), oldRequest = UUID(), episode = Episode(title: "Episode", content: "current manuscript")
+        let document = NovelDocument(title: "Synthetic", chapters: [Chapter(title: "Chapter", episodes: [episode])])
+        let metadata = AssistantRequestRecord(purpose: .advice, documentId: document.id, episodeId: episode.id,
+                                              conversationId: conversation, scope: "current", permission: "read-only")
+        var records = try [
+            WritingRecord(id: conversation, workId: work, kind: "conversation", key: "conversation",
+                          payload: WritingRecord.payload(WritingConversation(title: "Question", documentId: document.id, readConsent: true))),
+            WritingRecord(workId: work, kind: "message", key: conversation.uuidString.lowercased(),
+                          payload: WritingRecord.payload(WritingMessage(role: "user", text: "Question", requestId: oldRequest))),
+            WritingRecord(workId: work, kind: "request", key: oldRequest.uuidString.lowercased(), payload: WritingRecord.payload(metadata))
+        ].map { WritingEnvelope(record: $0) }
+        defaults.set([oldRequest.uuidString.lowercased()], forKey: WritingAssistantHost.localRequestsKey)
+        var transmitted = ""
+        let center = AssistantRequestCenter()
+        var host = WritingAssistantHost(contextID: "relaunched", workID: work, defaults: defaults, requestCenter: center,
+                                        capture: { WritingCapture(workId: work, document: document, episodeId: episode.id) },
+                                        records: { _ in records }, append: { records.append(WritingEnvelope(record: $0)) }, synchronize: {}, apply: { _, _ in }, undo: { _ in })
+        host.transmit = { input, _, _, _, _ in transmitted = input; return "Reply" }
+        let recovered = try await host.recoverInterruptedRequests(records, defaults: defaults)
+        let interrupted = try #require(AssistantRequestRecord.latest(recovered).first)
+        #expect(try interrupted.record.decoded(AssistantRequestRecord.self).state == "interrupted")
+        #expect(try await !host.retry(interrupted.record, entries: records, defaults: defaults))
+        let history = WritingConversation.messages(records, conversation: conversation)
+        #expect(try host.sendChat(question: history[0].text, conversation: conversation, isNew: false, history: [],
+                                  scope: .advice, reference: .current, defaults: defaults, reusingQuestion: true))
+        while center.statuses[host.requestKey(purpose: .advice, conversation: conversation)]?.inFlight == true {
+            await Task.yield()
+        }
+        #expect(transmitted.contains("current manuscript"))
+        #expect(!transmitted.contains("writing_turn"))
+        let messages = WritingConversation.messages(records, conversation: conversation)
+        #expect(messages.count(where: { $0.role == "user" }) == 1)
+        #expect(messages.count(where: { $0.role == "assistant" }) == 1)
+        #expect(records.count(where: { $0.record.kind == "message" }) == 2)
+        #expect(!records.contains { $0.record.payload.contains("current manuscript") })
+    }
+
+    @Test func largeChatEditRemainsInPersistentHistory() async throws {
+        let work = UUID(), document = NovelDocument(title: "合成", chapters: [])
+        var records: [WritingEnvelope] = []
+        let host = WritingAssistantHost(contextID: "session", workID: work, capture: { WritingCapture(workId: work, document: document, episodeId: nil) },
+                                        records: { _ in records }, append: { records.append(WritingEnvelope(record: $0)) }, synchronize: {}, apply: { _, _ in }, undo: { _ in })
+        let edit = WritingEdit(workId: work, documentId: document.id, changes: [WritingChange(path: ["synopsis"], before: .string(String(repeating: "前", count: 200_000)),
+                                                                                              after: .string(String(repeating: "後", count: 200_000)))])
+        try await host.appendEdit(edit)
+        let record = try #require(records.first(where: { $0.record.kind == "edit" }))
+        #expect(try host.decodedEdit(record.record, entries: records) == edit)
+        #expect(records.allSatisfy { $0.record.payload.utf8.count <= 1_000_000 })
+    }
+
+    @Test func backgroundDeliveryRetryKeepsInputOnlyInMemory() async throws {
+        let suite = "assistant-delivery.\(UUID())", defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let work = UUID(), document = NovelDocument(title: "合成", chapters: [])
+        var records: [WritingEnvelope] = [], sentInputs: [String] = []
+        let center = AssistantRequestCenter()
+        var host = WritingAssistantHost(contextID: "session", workID: work, accountID: "account", requestCenter: center,
+                                        capture: { WritingCapture(workId: work, document: document, episodeId: nil) },
+                                        records: { _ in records }, append: { records.append(WritingEnvelope(record: $0)) }, synchronize: {}, apply: { _, _ in }, undo: { _ in })
+        host.transmit = { input, _, _, _, heartbeat in
+            sentInputs.append(input); heartbeat(AssistantProgress(phase: .working))
+            if sentInputs.count == 1 {
+                throw URLError(.networkConnectionLost)
+            }
+            return "合成の感想"
+        }
+        let metadata = AssistantRequestRecord(purpose: .impressions, documentId: document.id, episodeId: nil, scope: "全話", permission: "感想")
+        let input = #"{"instructions":"合成指示","input":"固定した本文"}"#
+        #expect(host.startRequest(metadata: metadata, input: input, defaults: defaults))
+        #expect(!host.startRequest(metadata: metadata, input: "重複", defaults: defaults))
+        let key = host.requestKey(purpose: .impressions)
+        while center.statuses[key]?.inFlight == true {
+            await Task.yield()
+        }
+        let failed = try #require(AssistantRequestRecord.latest(records).first)
+        #expect(try failed.record.decoded(AssistantRequestRecord.self).state == "interrupted")
+        #expect(center.statuses[key]?.failure?.contains("ネットワーク") == true)
+        #expect(host.interrupted(failed.record, defaults: defaults))
+        try await host.retry(failed.record, entries: records, defaults: defaults)
+        while center.statuses[key]?.inFlight == true {
+            await Task.yield()
+        }
+        #expect(sentInputs == [input, input])
+        #expect(!records.contains { $0.record.payload.contains("固定した本文") })
+        let relaunched = WritingAssistantHost(contextID: "new-session", workID: work, accountID: "account", requestCenter: AssistantRequestCenter(),
+                                              capture: { WritingCapture(workId: work, document: document, episodeId: nil) },
+                                              records: { _ in records }, append: { _ in }, synchronize: {}, apply: { _, _ in }, undo: { _ in })
+        #expect(try await !relaunched.retry(failed.record, entries: records, defaults: defaults))
+        #expect(host.recordedFeedback(records).count == 1)
+        #expect(host.recordedFeedback(records).first?.markdown == "合成の感想")
+        #expect(records.count(where: { $0.record.kind == "request" }) == 4)
     }
 }

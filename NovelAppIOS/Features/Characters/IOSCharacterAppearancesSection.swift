@@ -1,9 +1,11 @@
 import NovelCore
 import NovelTextAnalysis
 import NovelUI
+import NovelWorkspace
 import SwiftUI
 
 struct IOSCharacterAppearancesSection: View {
+    @Environment(WorkspaceModel.self) private var workspace
     let store: IOSDocumentStore
     let character: NovelCore.Character
     let openEditor: () -> Void
@@ -40,14 +42,14 @@ struct IOSCharacterAppearancesSection: View {
                 }
             }
         }
-        .onAppear { appearanceSession.setVisible(true, character: character, document: store.document) }
-        .onChange(of: store.localEditGeneration) { _, _ in refresh() }
+        .onAppear { appearanceSession.setVisible(true, character: character, document: workspace.document) }
+        .onChange(of: workspace.editGeneration) { _, _ in refresh() }
         .onChange(of: character) { _, _ in refresh() }
         .onChange(of: store.workSearchScope) { _, _ in refresh() }
-        .onDisappear { appearanceSession.setVisible(false, character: character, document: store.document) }
+        .onDisappear { appearanceSession.setVisible(false, character: character, document: workspace.document) }
     }
 
     private func refresh() {
-        appearanceSession.refresh(character: character, document: store.document)
+        appearanceSession.refresh(character: character, document: workspace.document)
     }
 }

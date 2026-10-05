@@ -2,9 +2,11 @@ import AppKit
 import EditorKit
 import NovelCore
 import NovelUI
+import NovelWorkspace
 import SwiftUI
 
 struct EditorPaneView: View {
+    @Environment(WorkspaceModel.self) private var workspace
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(AppState.self) private var appState
     @Environment(EditorSettings.self) private var editorSettings
@@ -21,8 +23,8 @@ struct EditorPaneView: View {
     var body: some View {
         Group {
             if let episode = appState.selectedEpisode,
-               let chapterID = appState.selectedChapterID {
-                let session = appState.documentSessionToken
+               let chapterID = workspace.selectedChapterID {
+                let session = workspace.documentSessionToken
                 let isEditable = appState.permitsDocumentInteraction
                 let editorCanvas = Color(hex: editorSettings.backgroundColorHex)
                     ?? Color(nsColor: .textBackgroundColor)
@@ -33,7 +35,7 @@ struct EditorPaneView: View {
                             EditorView(
                                 chapterKey: SessionBoundEditorKey(
                                     value: episode.id,
-                                    generation: appState.editorContentGeneration
+                                    generation: workspace.editorContentGeneration
                                 ),
                                 initialText: episode.content,
                                 selectionRequest: editorSearchSession.selectionRequest,
@@ -52,7 +54,7 @@ struct EditorPaneView: View {
                                         for: episode.id,
                                         in: chapterID,
                                         expectedSession: session,
-                                        expectedEditorContentGeneration: appState.editorContentGeneration
+                                        expectedEditorContentGeneration: workspace.editorContentGeneration
                                     )
                                 }
                             )
@@ -79,12 +81,12 @@ struct EditorPaneView: View {
                     Text("章・話の一覧から話を選択するか、話を追加してください。")
                 } actions: {
                     Button("話を追加") { Task { _ = await appState.addEpisodeAfterTransition() } }
-                        .disabled(appState.selectedChapterID == nil || !appState.permitsDocumentInteraction)
+                        .disabled(workspace.selectedChapterID == nil || !appState.permitsDocumentInteraction)
                 }
             }
         }
         .focusedValue(\.workbenchSearchSurface, .editor)
-        .onChange(of: appState.selectedEpisodeID) { _, newSelection in
+        .onChange(of: workspace.selectedEpisodeID) { _, newSelection in
             editorSearchSession.handleEpisodeChange(newSelection)
         }
     }
@@ -96,7 +98,7 @@ struct EditorPaneView: View {
     private func selectionCopyCommands(
         episodeID: EpisodeID,
         chapterID: ChapterID,
-        session: DocumentSessionToken
+        session: WorkspaceSessionToken
     ) -> [EditorSelectionContextMenuCommand] {
         [
             EditorSelectionContextMenuCommand(
@@ -119,6 +121,7 @@ struct EditorPaneView: View {
 }
 
 private struct WritingPlotCardRail: View {
+    @Environment(WorkspaceModel.self) private var workspace
     @Environment(AppState.self) private var appState
 
     let chapterID: ChapterID
@@ -158,7 +161,7 @@ private struct WritingPlotCardRail: View {
     }
 
     private var cards: [PlotCard] {
-        appState.document.plotCards.filter { $0.chapterID == chapterID }
+        workspace.document.plotCards.filter { $0.chapterID == chapterID }
     }
 }
 

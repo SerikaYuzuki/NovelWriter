@@ -4,12 +4,13 @@ import NovelCore
 import NovelSyncV2
 import NovelSyncV2Application
 import NovelThumbnail
+import NovelWorkspaceUI
 import NovelWritingSupport
 
 extension AppState {
     func readMCPThumbnail(_ owner: ThumbnailOwner, validate: () throws -> Void) throws -> Data? {
         try validate()
-        guard owner.exists(in: document) else { throw WritingError.changedTarget }
+        guard owner.exists(in: workspaceModel.document) else { throw WritingError.changedTarget }
         let images = snapshotSyncV2Attachments.filter { $0.fileName == owner.fileName }
         guard images.count <= 1 else { throw WritingError.changedTarget }
         guard let image = images.first else { return nil }
@@ -27,8 +28,8 @@ extension AppState {
             if let state = try await application.writingEditOutcome(request.edit, context: context) {
                 outcome = state; return
             }
-            guard request.edit.documentId == self.document.id,
-                  request.owner.exists(in: self.document) else { throw WritingError.changedScope }
+            guard request.edit.documentId == self.workspaceModel.document.id,
+                  request.owner.exists(in: self.workspaceModel.document) else { throw WritingError.changedScope }
             let old = try self.currentMCPThumbnail(request.owner)
             let new = request.image.map { SyncAttachment(
                 attachmentId: UUID(),
@@ -72,7 +73,7 @@ extension AppState {
                   ["applied", "prepared"].contains(journal.state) else { throw WritingError.interrupted }
             let stored = try JSONDecoder().decode(WritingStoredEdit.self, from: Data(journal.payload.utf8))
             let edit = stored.prepared, owner = try WritingMCPThumbnailRequest.journalOwner(edit)
-            guard edit.documentId == self.document.id, edit.workId == work, owner.exists(in: self.document),
+            guard edit.documentId == self.workspaceModel.document.id, edit.workId == work, owner.exists(in: self.workspaceModel.document),
                   let change = edit.changes.first else { throw WritingError.changedScope }
             let before = try Self.thumbnailAttachment(change.before, owner: owner)
             let after = try Self.thumbnailAttachment(change.after, owner: owner)
@@ -83,13 +84,13 @@ extension AppState {
 
     private func withinMCPThumbnailBoundary(workID: UUID, validate: () throws -> Void,
                                             operation: () async throws -> Void) async throws {
-        let session = documentSessionToken, account = snapshotSyncV2AccountScopeToken
+        let session = workspaceModel.documentSessionToken, account = snapshotSyncV2AccountScopeToken
         let result: Result<Void, Error> = await documentOperationGate.perform {
             do {
                 _ = try await WritingCompositionBoundary.capture {
                     try validate()
                     _ = try self.captureWritingDocument(workUUID: workID)
-                    guard self.documentSessionToken == session, self.snapshotSyncV2AccountScopeToken == account,
+                    guard self.workspaceModel.documentSessionToken == session, self.snapshotSyncV2AccountScopeToken == account,
                           self.editorCommandSession.prepareForDocumentTransition() else {
                         throw WritingError.changedScope
                     }
@@ -130,7 +131,7 @@ extension AppState {
         validate: () throws -> Void
     ) async throws {
         try validate()
-        guard owner.exists(in: document),
+        guard owner.exists(in: workspaceModel.document),
               try currentMCPThumbnail(owner) == expected else { throw WritingError.changedTarget }
         var candidate = snapshotSyncV2Attachments.filter { $0.fileName != owner.fileName }
         if let image {
@@ -139,16 +140,16 @@ extension AppState {
             }
             candidate.append(image)
         }
-        guard await checkpointSnapshotSyncV2(document, reason: .explicit, attachments: candidate) else {
+        guard await checkpointSnapshotSyncV2(workspaceModel.document, reason: .explicit, attachments: candidate) else {
             throw WritingError.interrupted
         }
         try validate()
-        guard owner.exists(in: document),
+        guard owner.exists(in: workspaceModel.document),
               try currentMCPThumbnail(owner) == expected else { throw WritingError.changedTarget }
         removeThumbnailWithOwner(owner)
         if let image {
             snapshotSyncV2Attachments.append(image)
-            attachments.append(Attachment(fileName: image.fileName, byteCount: Int64(image.bytes.count)))
+            workspaceModel.attachments.append(Attachment(fileName: image.fileName, byteCount: Int64(image.bytes.count)))
         }
     }
 

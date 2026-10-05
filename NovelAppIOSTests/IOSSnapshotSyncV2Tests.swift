@@ -25,9 +25,9 @@ struct IOSSnapshotSyncV2Tests {
         #expect(await store.saveNow())
         #expect(store.documentURL == environment.root.standardizedFileURL)
         #expect(!FileManager.default.fileExists(
-            atPath: environment.root.appendingPathComponent(store.document.id.uuidString).path
+            atPath: environment.root.appendingPathComponent(store.workspaceModel.document.id.uuidString).path
         ))
-        #expect(store.snapshotSyncState?.remoteProgress == .pending || store.snapshotSyncState?.remoteProgress == .offline)
+        #expect(store.workspaceModel.syncUIState?.remoteProgress == .pending || store.workspaceModel.syncUIState?.remoteProgress == .offline)
     }
 
     @Test("normal new/open never creates a WorkID directory")
@@ -40,7 +40,7 @@ struct IOSSnapshotSyncV2Tests {
         )
         await store.bootstrap()
         #expect(await store.makeNewDocument())
-        let workID = try #require(store.syncV2ActiveWorkID).rawValue
+        let workID = try #require(store.workspaceModel.activeWorkID).rawValue
         #expect(await store.openSnapshotSyncV2(workID: workID))
         #expect(store.documentURL == environment.root.standardizedFileURL)
         #expect(!FileManager.default.fileExists(
@@ -58,9 +58,9 @@ struct IOSSnapshotSyncV2Tests {
         )
         await store.bootstrap()
         #expect(await store.makeNewDocument())
-        let originalWorkID = try #require(store.syncV2ActiveWorkID)
+        let originalWorkID = try #require(store.workspaceModel.activeWorkID)
         store.updateDocumentTitle("dirty本文")
-        #expect(store.saveState == .dirty)
+        #expect(store.workspaceModel.saveState == .dirty)
 
         let application = try #require(store.snapshotSyncV2Application)
         let runtimeConfiguration = try #require(
@@ -81,10 +81,10 @@ struct IOSSnapshotSyncV2Tests {
         )
 
         #expect(await store.openSnapshotSyncV2(workID: targetWorkID.rawValue))
-        #expect(store.syncV2ActiveWorkID == targetWorkID)
-        #expect(store.document.title == "別作品")
+        #expect(store.workspaceModel.activeWorkID == targetWorkID)
+        #expect(store.workspaceModel.document.title == "別作品")
         #expect(await store.openSnapshotSyncV2(workID: originalWorkID.rawValue))
-        #expect(store.document.title == "dirty本文")
+        #expect(store.workspaceModel.document.title == "dirty本文")
         try await waitForOfflineWorker(
             application,
             remote: runtimeConfiguration.remote,
@@ -118,39 +118,9 @@ struct IOSSnapshotSyncV2Tests {
         )
         await store.bootstrap()
         #expect(await store.makeNewDocument())
-        let workID = try #require(store.syncV2ActiveWorkID)
-        #expect(workID.rawValue != store.document.id)
+        let workID = try #require(store.workspaceModel.activeWorkID)
+        #expect(workID.rawValue != store.workspaceModel.document.id)
         #expect(store.currentDocumentSessionToken?.workID == workID)
-    }
-
-    @Test("3択は実際のSyncV2ConflictActionへ写像できる")
-    func conflictChoicesAreTypedActions() {
-        let workID = WorkID(UUID())
-        let local = SnapshotID(data: Data("local".utf8))
-        let remote = SnapshotID(data: Data("remote".utf8))
-        let choices: [SyncV2ConflictChoice] = [.useDevice, .useServer, .keepBoth]
-        #expect(Set(choices).count == 3)
-        for choice in choices {
-            let action = SyncV2ConflictAction(
-                workID: workID,
-                conflictID: UUID(),
-                revision: 1,
-                baseSnapshotID: nil,
-                localSnapshotID: local,
-                remoteSnapshotID: remote,
-                sourceGeneration: 1,
-                choice: choice
-            )
-            #expect(action.choice == choice)
-            #expect(action.workID == workID)
-        }
-    }
-
-    @Test("競合解決のno-opは冪等成功として再投影し、staleだけを再選択に戻す")
-    func conflictResolutionResultIdempotency() {
-        #expect(acceptsSnapshotSyncV2ConflictResult(.queued))
-        #expect(acceptsSnapshotSyncV2ConflictResult(.noChanges))
-        #expect(!acceptsSnapshotSyncV2ConflictResult(.staleConflictAction))
     }
 
     @Test("resumeはoffline workerを待たずにUIへ戻る")
@@ -165,7 +135,7 @@ struct IOSSnapshotSyncV2Tests {
         #expect(await store.makeNewDocument())
         await store.resumeSnapshotSyncV2()
         #expect(store.startupState == .ready)
-        #expect(store.isDocumentTransitionInProgress == false)
+        #expect(store.workspaceModel.isDocumentTransitionInProgress == false)
     }
 
     @Test("remote-only open failure does not create a local WorkID artifact")
@@ -215,8 +185,8 @@ struct IOSSnapshotSyncV2Tests {
         await store.bootstrap()
         #expect(await store.makeNewDocument())
         store.replaceAttachments([Attachment(fileName: "missing.pdf", byteCount: 12)])
-        #expect(await store.checkpointSnapshotSyncV2(store.document, reason: .explicit) == false)
-        #expect(store.attachments.map { $0.fileName } == ["missing.pdf"])
+        #expect(await store.checkpointSnapshotSyncV2(store.workspaceModel.document, reason: .explicit) == false)
+        #expect(store.workspaceModel.attachments.map { $0.fileName } == ["missing.pdf"])
         #expect(store.snapshotSyncOutcome == .failure(.fatal(.invalidLocalState)))
     }
 
@@ -232,12 +202,12 @@ struct IOSSnapshotSyncV2Tests {
         #expect(await store.makeNewDocument())
         store.updateDocumentTitle("履歴の版")
         #expect(await store.saveNow())
-        let workID = try #require(store.syncV2ActiveWorkID)
+        let workID = try #require(store.workspaceModel.activeWorkID)
 
         #expect(await store.refreshSnapshotHistory(for: workID))
-        #expect(!store.syncV2HistoryItems.isEmpty)
+        #expect(!store.workspaceModel.historyItems.isEmpty)
         #expect(store.syncV2HistoryLocalAvailability == .available)
-        #expect(store.syncV2HistoryItems.contains { $0.source == .local })
+        #expect(store.workspaceModel.historyItems.contains { $0.source == .local })
     }
 
     @Test("restoreはSQLiteのlocal resultを再openしてeditor modelへ反映する")
@@ -256,10 +226,10 @@ struct IOSSnapshotSyncV2Tests {
         }
         store.updateDocumentTitle("復元前の版")
         #expect(await store.saveNow())
-        let workID = try #require(store.syncV2ActiveWorkID)
+        let workID = try #require(store.workspaceModel.activeWorkID)
         let first = try await app.checkpoint(
             workID: workID,
-            document: store.document,
+            document: store.workspaceModel.document,
             reason: .explicit,
             documentCreatedAt: store.documentCreatedAt
         )
@@ -271,7 +241,7 @@ struct IOSSnapshotSyncV2Tests {
         }
 
         #expect(await store.restoreSnapshotSyncV2(snapshotID: selectedSnapshotID.rawValue))
-        #expect(store.document.title == "復元前の版")
+        #expect(store.workspaceModel.document.title == "復元前の版")
     }
 
     @Test("unbound workはsign-out後も残り、sign-in後の明示clone対象になる")
@@ -284,8 +254,8 @@ struct IOSSnapshotSyncV2Tests {
         )
         await store.bootstrap()
         #expect(await store.makeNewDocument())
-        let workID = try #require(store.syncV2ActiveWorkID)
-        store.syncV2LibraryItems = [SyncV2LibraryItem(
+        let workID = try #require(store.workspaceModel.activeWorkID)
+        store.workspaceModel.libraryRows = [SyncV2LibraryItem(
             workID: workID,
             title: "端末作品",
             availability: .localOnly,
@@ -294,8 +264,8 @@ struct IOSSnapshotSyncV2Tests {
 
         await store.signOutFromFuminiwa()
 
-        #expect(store.syncV2ActiveWorkID == workID)
-        #expect(store.syncV2LibraryItems.map { $0.workID } == [workID])
+        #expect(store.workspaceModel.activeWorkID == workID)
+        #expect(store.workspaceModel.libraryRows.map { $0.workID } == [workID])
     }
 
     @Test("世代が進んだeditor callbackは現在の本文へ混入しない")
@@ -308,10 +278,10 @@ struct IOSSnapshotSyncV2Tests {
         )
         await store.bootstrap()
         #expect(await store.makeNewDocument())
-        let chapterID = try #require(store.selectedChapterID)
-        let episodeID = try #require(store.selectedEpisodeID)
+        let chapterID = try #require(store.workspaceModel.selectedChapterID)
+        let episodeID = try #require(store.workspaceModel.selectedEpisodeID)
         let staleToken = try #require(store.currentEpisodeEditingToken)
-        store.document.updateEpisodeContent("新しい本文", for: episodeID, in: chapterID)
+        store.workspaceModel.document.updateEpisodeContent("新しい本文", for: episodeID, in: chapterID)
         store.advanceEditorContentGeneration()
         store.updateEpisodeContent(
             "遅れて届いた古い本文",
@@ -319,7 +289,7 @@ struct IOSSnapshotSyncV2Tests {
             episodeID: episodeID,
             expectedEditingToken: staleToken
         )
-        #expect(store.document.episode(episodeID)?.episode.content == "新しい本文")
+        #expect(store.workspaceModel.document.episode(episodeID)?.episode.content == "新しい本文")
     }
 
     @Test("background promotes a durable leaf even when the save revision is clean")
@@ -329,15 +299,16 @@ struct IOSSnapshotSyncV2Tests {
         let store = IOSDocumentStore(userDefaults: environment.defaults, libraryRoot: environment.root)
         await store.bootstrap()
         #expect(await store.makeNewDocument())
-        let workID = try #require(store.syncV2ActiveWorkID)
+        let workID = try #require(store.workspaceModel.activeWorkID)
         let configuration = try #require(IOSDocumentStore.testRuntimeConfigurations[environment.root.standardizedFileURL])
         let account = try #require(await configuration.vault.currentAccount())
         let scope = V2LocalWorkScope.bound(V2AccountBinding(
             accountID: account.accountID, accountFence: account.accountFence, serverInstanceID: "test-server"
         ))
-        var document = store.document
+        var document = store.workspaceModel.document
         document.title = "latest local leaf"
-        store.document = document
+        store.workspaceModel.document = document
+        store.workspaceModel.documentSessionToken.documentID = store.workspaceModel.document.id
         #expect(await store.checkpointSnapshotSyncV2(document, reason: .autosave))
         let local = try LocalSyncV2Store(root: configuration.localRoot.url, policy: .openExisting)
         #expect(try await local.hasUnpromotedLeaf(workID: workID, scope: scope))
@@ -399,7 +370,7 @@ extension IOSSnapshotSyncV2Tests {
         #expect(await store.configureSnapshotSyncV2())
         await store.bootstrap()
         #expect(await store.makeNewDocument())
-        let workID = try #require(store.syncV2ActiveWorkID)
+        let workID = try #require(store.workspaceModel.activeWorkID)
         store.updateDocumentTitle("旧アカウント")
         #expect(await store.saveNow())
         store.testServerInstanceIDOverride = "test-server"
@@ -411,23 +382,23 @@ extension IOSSnapshotSyncV2Tests {
             to: session,
             authState: .signedIn(accountID: session.accountID)
         ))
-        #expect(store.syncV2LibraryItems.contains { $0.workID == workID })
+        #expect(store.workspaceModel.libraryRows.contains { $0.workID == workID })
         let snapshot = SnapshotID(data: Data("snapshot".utf8))
-        store.syncV2RemoteCatalogItems = [
+        store.workspaceModel.remoteCatalogItems = [
             SyncV2RemoteCatalogEntry(workID: workID, title: "旧アカウント", head: nil)
         ]
-        store.snapshotSyncConflict = SyncV2ConflictProjection(
+        store.workspaceModel.syncConflict = SyncV2ConflictProjection(
             conflictID: UUID(), revision: 1, baseSnapshotID: nil,
             localSnapshotID: snapshot, remoteSnapshotID: snapshot,
             sourceGeneration: 1
         )
         await store.signOutFromFuminiwa()
-        #expect(store.syncV2LibraryItems.map { $0.workID } == [workID])
-        #expect(store.syncV2LibraryItems.first?.availability == .localOnly)
-        #expect(store.syncV2LibraryItems.first?.accountState == .parkedDifferentAccount)
-        #expect(store.syncV2RemoteCatalogItems.isEmpty)
-        #expect(store.snapshotSyncConflict == nil)
-        #expect(store.snapshotSyncState == nil)
+        #expect(store.workspaceModel.libraryRows.map { $0.workID } == [workID])
+        #expect(store.workspaceModel.libraryRows.first?.availability == .localOnly)
+        #expect(store.workspaceModel.libraryRows.first?.accountState == .parkedDifferentAccount)
+        #expect(store.workspaceModel.remoteCatalogItems.isEmpty)
+        #expect(store.workspaceModel.syncConflict == nil)
+        #expect(store.workspaceModel.syncUIState == nil)
     }
 
     @Test("parked作品はlocal履歴をページングし、通信なしで復元できる")
@@ -442,8 +413,8 @@ extension IOSSnapshotSyncV2Tests {
         await store.bootstrap()
         #expect(await store.makeNewDocument())
         let application = try #require(store.snapshotSyncV2Application)
-        let workID = try #require(store.syncV2ActiveWorkID)
-        var value = store.document
+        let workID = try #require(store.workspaceModel.activeWorkID)
+        var value = store.workspaceModel.document
         var firstSnapshotID: SnapshotID?
         let createdAt = store.documentCreatedAt
 
@@ -463,14 +434,15 @@ extension IOSSnapshotSyncV2Tests {
                 firstSnapshotID = snapshotID
             }
         }
-        store.document = value
-        store.saveState = .saved
+        store.workspaceModel.document = value
+        store.workspaceModel.documentSessionToken.documentID = store.workspaceModel.document.id
+        store.workspaceModel.saveState = .saved
         #expect(firstSnapshotID != nil)
         // The isolated test composition has no AuthSessionCoordinator, so
         // its signed-out UI projection intentionally hides active rows. Seed
         // the pre-sign-out account row explicitly; the durable runtime still
         // owns the SQLite binding and performs the actual park transaction.
-        store.syncV2LibraryItems = [SyncV2LibraryItem(
+        store.workspaceModel.libraryRows = [SyncV2LibraryItem(
             workID: workID,
             title: value.title,
             availability: .cached,
@@ -487,7 +459,7 @@ extension IOSSnapshotSyncV2Tests {
         )
         let remoteOperationsBeforeHistory = await runtimeConfiguration.remote.recordedOperations().count
         #expect(await store.refreshSnapshotHistory(for: workID))
-        let firstPageCount = store.syncV2HistoryItems.count
+        let firstPageCount = store.workspaceModel.historyItems.count
         #expect(firstPageCount > 0)
         #expect(store.syncV2HistoryLocalAvailability == .available)
         #expect(store.syncV2HistoryOnlineAvailability == .unavailable)
@@ -498,7 +470,7 @@ extension IOSSnapshotSyncV2Tests {
         )
 
         #expect(await store.refreshSnapshotHistory(for: workID, reset: false))
-        #expect(store.syncV2HistoryItems.count > firstPageCount)
+        #expect(store.workspaceModel.historyItems.count > firstPageCount)
         #expect(store.syncV2HistoryCursor == nil)
         #expect(
             await runtimeConfiguration.remote.recordedOperations().count
@@ -507,7 +479,7 @@ extension IOSSnapshotSyncV2Tests {
 
         let selectedSnapshotID = try #require(firstSnapshotID)
         #expect(await store.restoreSnapshotSyncV2(snapshotID: selectedSnapshotID.rawValue))
-        #expect(store.document.title == "parked-0")
+        #expect(store.workspaceModel.document.title == "parked-0")
     }
 }
 
@@ -561,7 +533,10 @@ extension IOSSnapshotSyncV2Tests {
         defer { environment.cleanup() }
         let store = IOSDocumentStore(userDefaults: environment.defaults, libraryRoot: environment.root)
         let work = WorkID(UUID())
-        store.syncV2ActiveWorkID = work
+        store.workspaceModel.activeWorkID = work
+        if let workID = store.workspaceModel.activeWorkID {
+            store.workspaceModel.documentSessionToken.workID = workID
+        }
         let failed = SyncUIState(workID: work, localDurability: .unsaved,
                                  remoteProgress: .failed(.invalidLocalState),
                                  lastTypedResult: .failure(.fatal(.invalidLocalState)))
@@ -572,7 +547,7 @@ extension IOSSnapshotSyncV2Tests {
             store.applySnapshotSyncV2State(failed)
         }
         #expect(store.operationErrorMessage == nil)
-        #expect(store.snapshotSyncState?.remoteProgress == failed.remoteProgress)
+        #expect(store.workspaceModel.syncUIState?.remoteProgress == failed.remoteProgress)
         store.applySnapshotSyncV2State(nil)
         store.applySnapshotSyncV2State(failed)
         #expect(store.operationErrorMessage == nil)
@@ -581,9 +556,12 @@ extension IOSSnapshotSyncV2Tests {
                                                    lastTypedResult: .failure(.fatal(.unexpected))))
         #expect(store.operationErrorMessage != nil)
         store.operationErrorMessage = nil
-        store.syncV2ActiveWorkID = WorkID(UUID())
+        store.workspaceModel.activeWorkID = WorkID(UUID())
+        if let workID = store.workspaceModel.activeWorkID {
+            store.workspaceModel.documentSessionToken.workID = workID
+        }
         store.applySnapshotSyncV2State(failed)
         #expect(store.operationErrorMessage == nil)
-        #expect(store.snapshotSyncState?.workID == work)
+        #expect(store.workspaceModel.syncUIState?.workID == work)
     }
 }

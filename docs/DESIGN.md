@@ -50,7 +50,7 @@
 | `NovelSyncV2PortableBridge` | 検証済みpackageとv2作品の明示Import / Export変換 |
 | `NovelAuth` / `NovelAuthApple` | session / HTTP認証とApple・Keychain境界 |
 | `NovelWritingSupport` / `NovelWritingStore` | AI記録・範囲付き編集の値型と検証 / 本文と独立したSQLite・outbox・Undo journal |
-| `NovelTextAnalysis` | 全話本文の検索・置換、人物の登場、端末内の表記チェック（Foundation / CoreFoundation / NovelCore） |
+| `NovelTextAnalysis` | 全話本文の検索・置換、人物の登場（Foundation / NovelCore） |
 | `NovelStorage` / `NovelExport` | package codec / 配布用原稿の生成 |
 | `EditorKit` / `NovelUI` / `PreviewSupport` | 本文エディタ / 共有UI / 固定previewデータ |
 | `SyncServerV2/` | `/v2`同期、`auth_v1`認証、PostgreSQL、運用境界 |
@@ -86,7 +86,7 @@ manifestが参照する本文・世界観payloadは必須valid UTF-8。メモは
 
 Applicationは`SyncV2RemoteReads`を通してremoteのcatalog/head/history/conflict/downloadを読み、local kernelを中継しない。`SyncV2LibraryProvider`はローカル棚の投影だけを担当する。RuntimeのHTTP clientには読取専用`SnapshotCache`を注入し、backfillの書込能力は別の`HistoryBackfillPersistence`へ分ける。pageとresume cursorの単一transaction確定はStoreが引き続き所有する。
 
-Mac/iOSで共有する`NovelApp/DocumentLifecycle/SyncSessionController.swift`は、WorkID/session/account/editGenerationを持つ`OperationContext`の照合、remote-only open・prefetch・reprojectionのtask所有権、認証のremote suspension leaseを担当する。platform側はIME確定→ローカル保存→installとdocument operation gateを維持する。Macの即時取消とiOSの終了待ち取消は明示policyで区別する。両safe-adoption gateはarm解除・token消費の意味が異なるため別実装を維持する（[R-05](SYNC_REVIEW.md)）。
+Mac/iOSで共有する`NovelKit/Sources/NovelWorkspace/DocumentLifecycle/SyncSessionController.swift`は、WorkID/session/account/editGenerationを持つ`WorkspaceOperationContext`の照合、remote-only open・prefetch・reprojectionのtask所有権、認証のremote suspension leaseを担当する。platform側はIME確定→ローカル保存→installとdocument operation gateを維持する。Macの即時取消とiOSの終了待ち取消は明示policyで区別する。両safe-adoption gateはarm解除・token消費の意味が異なるため別実装を維持する（[R-05](SYNC_REVIEW.md)）。
 
 ApplicationはWorkID付きUI stateとadoption可能イベントを通知する。作品別streamは最新state/adoption通知をcoalesceし、他作品の通知でその作品のwakeを失わない。両アプリのadoption待ちは30秒の明示deadlineで終了し、通知を受けてもsession/account・編集世代とIMEの確認を省略しない。iOS rootとmacOS Workbenchが継続購読を所有する。
 
@@ -152,9 +152,15 @@ account / fence変更をまたぐACK、catalog、history、worker完了を新sco
 
 macOSの[AppDependencies](../NovelApp/Application/AppDependencies.swift)と各Appのcomposition rootが具体実装を組み立てる。通常appとapp-hosted testは`FUMINIWA_TEST_COMPOSITION`で分離する。v2の物理modeはproduction / test / previewであり、testへproduction root・URL・vaultを渡さない。
 
-### 5.2 AppState
+### 5.2 WorkspaceModelとApp adapter
 
-macOSは`NovelApp/AppState.swift`、iOSは`NovelAppIOS/DocumentLifecycle/IOSDocumentStore.swift`が画面の状態を持つ。機能処理は既存の責務別extensionに置く。作品操作と非同期確認は呼出時のsession / WorkID / account scopeを保持し、完了時に検査する。
+`NovelWorkspace.WorkspaceModel`は`@MainActor @Observable`の共通状態を持つ。document、章／話選択、WorkspaceSessionToken、account scope／generation、添付setと表示一覧、保存状態、SyncUIState／競合、棚の同期行・catalog・loading／取り込み状態、keep-bothのwrite freeze、AssistantRequestCenterを両OSで共有する。AppState／IOSDocumentStoreはそれぞれ一つのmodelを所有し、ViewはSwiftUI environmentのmodelを読み、App内の処理はworkspaceModelへ直接アクセスする。モデル自体は保存・通信を開始しない。
+
+`AppState`／`IOSDocumentStore`はmodelと共通coordinator／commandへの薄いadapterである。`ProjectFeatureCommands`、`WorkspaceAttachmentCommands`、`WritingAssistantHostFactory`／`WorkReplacementHostFactory`、`LibraryCoordinator`、`CheckpointCoordinator`／`V2DocumentSaveCoordinator`、`WorkOpenCoordinator`、`AdoptionCoordinator`、`ConflictCoordinator`、`OutlineCommands`／`EpisodeTransition`、`ManuscriptCopyCommand`、`AccountTransitionCoordinator`へ機能処理を委譲し、`SyncSessionController`が非同期taskの所有権を持つ。共有SwiftUIはNovelWorkspaceUIに置く。[D-111](DECISIONS.md#d-111-共通app層の段階移設2026-10-04)。
+
+startup、終了・window／toolbar・MCP、iOSのscene／background・navigation departure・private working copy、IMEとdocument gate、provider／Keychain／HTTP compositionはAppに残す。Macの機能選択・棚の起動画面用表示identity／availabilityと、iOSの画面内機能選択は寿命・型が異なるため共有状態にしない。OS別の保存policy・通知・gateの意味差をこの整理で変えない。
+
+app側identityは`WorkspaceSessionToken`（generation／workID／install済みdocumentID）と`WorkspaceAccountScope`（accountID／fence／serverInstanceID／protocolEpoch／generation）を共有する。account無効化ごとにmodelのgenerationを進め、全fieldで古いcompletionを拒否する。iOSのcurrent sessionはstartup eligibilityを確認してからmodelのpayload／active WorkIDで投影し、Macのinstall済みtokenは従来の更新境界を維持する。gate固有の`NovelSyncV2Application.DocumentSessionToken`は別型のまま保つ。
 
 ### 5.3 ContentView
 
@@ -242,17 +248,6 @@ AI／MCP編集とそのUndo、open／import／remote install／復元、話の�
 
 人物の登場は名前と読みを同じ照合規則で検索し、話ごとの回数・最初／最後の話を表示する。重なる名前／読みは一回と数える。既存の名前・読みの照合語は維持し、ジャンプは名前優先から本文内で最初の一致へ変更する（最初の登場位置を選択するため）。人物名の変更は本文へ自動反映せず、人物詳細menuの「本文の名前を置換…」で検索語を入力した検索画面を開く。モデル・同期schemaは追加しない。
 
-### 6.10 表記・記号チェック（端末内）
-
-`NovelTextAnalysis.TextChecker`が記号、組込み辞書・同じ読みの表記ゆれ、登録人物名に似た語を検出する。作品全体／現在の話の不変snapshotを「チェック」時だけ非同期解析し、本文・人物設定・対象・会話文オプション・WorkID/session/account変更で結果を失効する。入力中には実行せず、ネットワークやAIへ本文を送らない。
-
-読みは日本語localeのApple `CFStringTokenizer`のLatin transcriptionを`CFStringTransform`でひらがな化する。`JapaneseTextTokenizing`で差し替え可能。語の分割・読み・同音異義語の精度は保証しない。各表記2件以上、2字以上、漢字を含む組に限定し、助詞・数字・記号を除く。組込み辞書は代表的な活用を含む40組で、同じ組の読み一致は二重報告しない。
-
-記号はルビ・傍点記法の内部を除外する。表記チェックは親字を扱い、ルビの読みと記法delimiterは数えない。会話文（「」『』内）除外は既定OFFで、表記ゆれと人物名だけに適用する。地の文の行頭はIndentRulesの全角字下げと鉤括弧除外を維持する。
-
-結果はルール→章・話順に件数と文脈を示し、第2弾の保存・scope・本文一致確認つきジャンプで指摘範囲を選択する。多数派を正解とは決めず、同数なら置換提案をしない。「置換…」は最少数の表記を検索欄、最多数を置換欄へ入れて既存の作品全体検索を開く。確認・明示履歴・Undoは第2弾へ委ね、この機能には本文の書込操作を持たせない。
-
-指摘単位／表記の組単位の無視と解除は`fuminiwa.textcheck.ignored.<workID>`のUserDefaultsへ端末内保存し、同期しない。個別無視の識別には話ID・位置・文脈を使うため、周辺を編集すると再度指摘される場合がある。
 
 ## 7. 未実装・将来の機能
 

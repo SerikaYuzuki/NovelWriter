@@ -8,12 +8,14 @@ import NovelSyncV2Application
 import NovelSyncV2PortableBridge
 import NovelSyncV2Runtime
 import NovelTiming
+import NovelWorkspace
+import NovelWorkspaceUI
 import NovelWritingProgress
 import NovelWritingSupport
 import Observation
 
 enum IOSStartupState: Equatable { case loading, library, ready, recovery(message: String) }
-enum IOSSaveState: Equatable { case saved, dirty, saving, failed }
+typealias IOSSaveState = WorkspaceSaveState
 
 /// Build-time composition boundary for the app-hosted iOS tests. A Test
 /// binary cannot name the production case, while Run/Archive binaries do not
@@ -39,48 +41,31 @@ enum IOSRuntimeComposition: Sendable {
     #endif
 }
 
-enum IOSAuthUIState: Equatable {
-    case unavailable, signedOut, signingIn, signedIn(accountID: String), failed(String)
-    var label: String {
-        switch self {
-        case .unavailable: "アカウント同期は未設定"
-        case .signedOut: "未サインイン"
-        case .signingIn: "サインイン中…"
-        case let .signedIn(accountID): "サインイン済み（\(accountID)）"
-        case let .failed(message): message
-        }
-    }
-}
+typealias IOSAuthUIState = WorkspaceAuthUIState
 
 struct IOSEpisodeEditingToken: Hashable, Sendable {
-    let documentSession: IOSDocumentSessionToken
+    let documentSession: WorkspaceSessionToken
     let chapterID: ChapterID
     let episodeID: EpisodeID
     let editorContentGeneration: UInt64
 }
 
 struct IOSEditorContentKey: Hashable {
-    let documentSession: IOSDocumentSessionToken
+    let documentSession: WorkspaceSessionToken
     let episodeID: EpisodeID
     let editorContentGeneration: UInt64
 }
 
 struct IOSSnapshotSyncV2ConflictSelection: Equatable, Sendable {
     let workID: WorkID
-    let session: IOSDocumentSessionToken
+    let session: WorkspaceSessionToken
     let editGeneration: UInt64
-    let accountScope: IOSSnapshotSyncV2AccountScope
+    let accountScope: WorkspaceAccountScope
     let conflict: SyncV2ConflictProjection
 }
 
-struct IOSSnapshotSyncV2AccountScope: Hashable, Sendable {
-    let accountID: String?
-    let accountFence: String?
-    let serverInstanceID: String?
-    let protocolEpoch: Int64?
-}
-
 private struct IOSDocumentStoreAuthComposition {
+    let browserAuthorization: @MainActor @Sendable (URL) async throws -> Void
     let sessionVault: (any AuthSessionVault)?
     let sessionCoordinator: AuthSessionCoordinator?
     let appleSignInCoordinator: AppleSignInCoordinator?
@@ -98,6 +83,7 @@ private enum IOSDocumentStoreComposition {
     static func makeAuth(userDefaults: UserDefaults) -> IOSDocumentStoreAuthComposition {
         #if FUMINIWA_TEST_COMPOSITION
         return IOSDocumentStoreAuthComposition(
+            browserAuthorization: { try await AuthComposition.authorizeBrowser(url: $0) },
             sessionVault: nil,
             sessionCoordinator: nil,
             appleSignInCoordinator: nil,
@@ -105,24 +91,22 @@ private enum IOSDocumentStoreComposition {
             uiState: .unavailable
         )
         #else
-        #if canImport(Security)
-        let vault: (any AuthSessionVault)? = KeychainAuthSessionVault(
-            service: "dev.serikayuzuki.fuminiwa.sync.ios"
+        let environment = FuminiwaRuntimeEnvironment(userDefaults: userDefaults)
+        let url = environment.syncServerURL
+        let auth = AuthComposition(
+            origin: environment.allowsNetwork && url?.scheme?.lowercased() == "https" ? url : nil,
+            keychainService: "dev.serikayuzuki.fuminiwa.sync.ios",
+            clientPlatform: .ios,
+            appleFlow: .native,
+            phaseObserver: { logIOSAppleAuthenticationPhase($0) }
         )
-        #else
-        let vault: (any AuthSessionVault)? = nil
-        #endif
-        let auth = makeProductionAuthSession(userDefaults: userDefaults, vault: vault)
-        let appleSignIn = AppleSignInCoordinator()
         return IOSDocumentStoreAuthComposition(
-            sessionVault: vault,
-            sessionCoordinator: auth,
-            appleSignInCoordinator: appleSignIn,
-            appleAuthenticationOrchestrator: makeProductionAppleOrchestrator(
-                auth: auth,
-                appleSignIn: appleSignIn
-            ),
-            uiState: auth == nil ? .unavailable : .signedOut
+            browserAuthorization: auth.browserAuthorization,
+            sessionVault: auth.sessionVault,
+            sessionCoordinator: auth.sessionCoordinator,
+            appleSignInCoordinator: auth.appleSignInCoordinator,
+            appleAuthenticationOrchestrator: auth.appleAuthenticationOrchestrator,
+            uiState: auth.sessionCoordinator == nil ? .unavailable : .signedOut
         )
         #endif
     }
@@ -166,69 +150,13 @@ private enum IOSDocumentStoreComposition {
         )
         #endif
     }
-
-    #if !FUMINIWA_TEST_COMPOSITION
-    private static func makeProductionAuthSession(
-        userDefaults: UserDefaults,
-        vault: (any AuthSessionVault)?
-    ) -> AuthSessionCoordinator? {
-        let environment = FuminiwaRuntimeEnvironment(userDefaults: userDefaults)
-        #if canImport(Security)
-        guard environment.allowsNetwork,
-              let vault,
-              let url = environment.syncServerURL,
-              url.scheme?.lowercased() == "https",
-              let configuration = try? AuthClientConfiguration(
-                  origin: url,
-                  clientVersion: "0.1.0",
-                  clientPlatform: .ios
-              ),
-              let transport = try? FuminiwaHTTPAuthTransport(configuration: configuration),
-              let limits = try? AuthLimits(
-                  accessTokenLifetimeSeconds: 900,
-                  authReceiptLifetimeSeconds: 86400,
-                  challengeLifetimeSeconds: 300,
-                  maxCanonicalCommandBytes: 65536,
-                  maxProviderClockSkewSeconds: 300,
-                  refreshTokenLifetimeSeconds: 86400
-              ) else { return nil }
-        return AuthSessionCoordinator(
-            transport: transport,
-            vault: vault,
-            authLimits: limits,
-            platform: .ios
-        )
-        #else
-        return nil
-        #endif
-    }
-
-    private static func makeProductionAppleOrchestrator(
-        auth: AuthSessionCoordinator?,
-        appleSignIn: AppleSignInCoordinator
-    ) -> AppleAuthenticationOrchestrator? {
-        #if canImport(AuthenticationServices)
-        guard let auth else { return nil }
-        return AppleAuthenticationOrchestrator(
-            authSessionCoordinator: auth,
-            authorizationProvider: appleSignIn,
-            credentialStateHandleVault: KeychainAppleCredentialStateHandleVault(),
-            credentialStateProvider: SystemAppleCredentialStateProvider(),
-            phaseObserver: { phase in
-                logIOSAppleAuthenticationPhase(phase)
-            }
-        )
-        #else
-        return nil
-        #endif
-    }
-    #endif
 }
 
 @MainActor
 @Observable
 final class IOSDocumentStore {
-    let syncSessionController = SyncSessionController<IOSDocumentSessionToken?, IOSSnapshotSyncV2AccountScope, Void>()
+    let workspaceModel: WorkspaceModel
+    let syncSessionController = SyncSessionController<Void>()
     static let lastDocumentNameKey = "FUMINIWAIOS.lastDocumentName"
     /// v2 reopens by WorkID.  The legacy package-recent key remains available
     /// for explicit import/export compatibility, but is never the v2 identity.
@@ -250,57 +178,30 @@ final class IOSDocumentStore {
     let timing: FuminiwaTiming
     let writingSyncScheduler: WritingSyncScheduler
     let writingProgress: WritingProgressTracker
-    var document: NovelDocument
     var documentCreatedAt: Date
     var documentURL: URL
-    var selectedChapterID: ChapterID?
-    var selectedEpisodeID: EpisodeID?
     var startupState: IOSStartupState = .loading
-    var saveState: IOSSaveState = .saved
-    var authUIState: IOSAuthUIState = .unavailable
     var showsDocumentTransitionOverlay: Bool {
-        isDocumentTransitionInProgress && !isNavigationDepartureInProgress && !isRemoteAdoptionInProgress
+        workspaceModel.isDocumentTransitionInProgress && !isNavigationDepartureInProgress && !isRemoteAdoptionInProgress
     }
 
     var isRemoteAdoptionInProgress = false
-    var isDocumentTransitionInProgress = false
     var isNavigationDepartureInProgress = false
-    var documentSessionGeneration: UInt64 = 0
-    var editorContentGeneration: UInt64 = 0
-    var localEditGeneration: UInt64 = 0
     var isImporterPresented = false
     var pendingExportURL: URL?
     var manuscriptCopyNotice: IOSManuscriptCopyNotice?
     var operationErrorMessage: String?
-    var attachments: [Attachment] = []
     var libraryItems: [IOSDocumentLibraryItem] = []
     var deviceSyncStartupFailedSafely = false
     var snapshotSyncOutcome: SyncV2TypedResult?
-    var snapshotSyncConflict: SyncV2ConflictProjection?
     /// Set only after a remote-only document has passed the install boundary.
     /// The shelf uses it to navigate after the asynchronous fetch completes.
-    var libraryImportPhases: [WorkID: ImportPhase] = [:]
-    var libraryImportFailures: [WorkID: SyncV2Failure] = [:]
     var snapshotSyncV2RemoteOnlyOpenFailure: SyncV2Failure?
     var showsConflictSheet = false
     var libraryNotice: String?
-    var libraryIsLoading = false
-    var libraryFailure: SyncV2Failure?
-    var isSnapshotSyncInFlight = false
-    var snapshotSyncState: SyncUIState?
-    @ObservationIgnored var presentedSyncFailures: [IOSSnapshotSyncV2AccountScope: [WorkID: SyncV2FatalReason]] = [:]
-    @ObservationIgnored var automaticAdoptionAttempts: [IOSSnapshotSyncV2AccountScope: [WorkID: Set<UUID>]] = [:]
-    var pendingDeletionWorkIDs: Set<WorkID> = []
     var deletedLibraryWorkIDs: Set<WorkID> = []
-    var syncV2LibraryItems: [SyncV2LibraryItem] = []
-    var syncV2RemoteCatalogItems: [SyncV2RemoteCatalogEntry] = []
-    var syncV2RemoteCatalogCursor: String?
     var syncV2RemoteCatalogIsLoading = false
     var syncV2RemoteCatalogError: SyncV2Failure?
-    /// Local SQLite and remote occurrences share one history projection.  A
-    /// SnapshotID is not a deduplication key: the same snapshot can have a
-    /// different local/remote restore authority.
-    var syncV2HistoryItems: [SyncV2HistoryItem] = []
     var syncV2HistoryCursor: String?
     var syncV2HistoryWorkID: WorkID?
     var syncV2HistoryLocalAvailability: SyncV2HistoryAvailability = .unavailable
@@ -309,46 +210,36 @@ final class IOSDocumentStore {
     /// A signed-out store keeps local SQLite data intact but parks the former
     /// account's remote projection and active sync status.
     var syncV2ParkedAccountID: String?
-    /// WorkID is the sync identity; NovelDocument.id is only its payload
-    /// anchor and may differ after import, remote open, keep-both, or clone.
-    var syncV2ActiveWorkID: WorkID?
     var syncV2AccountCloneInFlight = false
-    /// Keep-both reserves a second WorkID before the remote acknowledgement.
-    /// Until the candidate is safely opened, the original editor is read-only
-    /// so a later autosave cannot accidentally write the source Work again.
-    var syncV2KeepBothPendingWorkID: WorkID?
+    #if FUMINIWA_TEST_COMPOSITION
+    var snapshotSyncV2KeepBothInstallOverride: (@MainActor () async -> Bool)?
+    #endif
 
     var snapshotSyncV2DisplayedConflictSelection: IOSSnapshotSyncV2ConflictSelection? {
-        guard let workID = syncV2ActiveWorkID,
+        guard let workID = workspaceModel.activeWorkID,
               let session = currentDocumentSessionToken,
-              let conflict = snapshotSyncConflict else { return nil }
+              let conflict = workspaceModel.syncConflict else { return nil }
         return IOSSnapshotSyncV2ConflictSelection(
             workID: workID,
             session: session,
-            editGeneration: localEditGeneration,
+            editGeneration: workspaceModel.editGeneration,
             accountScope: snapshotSyncV2AccountScope,
             conflict: conflict
         )
     }
 
-    var snapshotSyncV2AccountScope: IOSSnapshotSyncV2AccountScope {
+    var snapshotSyncV2AccountScope: WorkspaceAccountScope {
         let serverInstanceID: String?
         #if FUMINIWA_TEST_COMPOSITION
         serverInstanceID = testServerInstanceIDOverride
-            ?? authSession?.serverInstanceID.uuidString.lowercased()
+            ?? workspaceModel.authSession?.serverInstanceID.uuidString.lowercased()
         #else
-        serverInstanceID = authSession?.serverInstanceID.uuidString.lowercased()
+        serverInstanceID = workspaceModel.authSession?.serverInstanceID.uuidString.lowercased()
         #endif
-        return IOSSnapshotSyncV2AccountScope(
-            accountID: authSession?.accountID,
-            accountFence: authSession?.accountFence,
-            serverInstanceID: serverInstanceID,
-            protocolEpoch: authSession.flatMap { Int64(exactly: $0.syncProtocolEpoch) }
-        )
+        return workspaceModel.accountScope(serverInstanceID: serverInstanceID)
     }
 
     let workSearch = WorkSearchSession()
-    let textCheck: TextCheckSession
     var workTextSelectionRequest: EditorSelectionRequest?
     var workTextSelectionToken: IOSEpisodeEditingToken?
 
@@ -364,22 +255,37 @@ final class IOSDocumentStore {
     @ObservationIgnored let privateWorkingCopyLocation: IOSPrivateWorkingCopyLocation?
     @ObservationIgnored let backgroundTaskController: any IOSBackgroundTaskControlling
     @ObservationIgnored let clipboardWriter: any IOSPlainTextClipboardWriting
+    @ObservationIgnored let browserAuthorization: @MainActor @Sendable (URL) async throws -> Void
+    #if FUMINIWA_TEST_COMPOSITION
+    @ObservationIgnored var authSessionVault: (any AuthSessionVault)?
+    @ObservationIgnored var authSessionCoordinator: AuthSessionCoordinator?
+    @ObservationIgnored var appleSignInCoordinator: AppleSignInCoordinator?
+    @ObservationIgnored var appleAuthenticationOrchestrator: AppleAuthenticationOrchestrator?
+    #else
     @ObservationIgnored let authSessionVault: (any AuthSessionVault)?
     @ObservationIgnored let authSessionCoordinator: AuthSessionCoordinator?
     @ObservationIgnored let appleSignInCoordinator: AppleSignInCoordinator?
     @ObservationIgnored let appleAuthenticationOrchestrator: AppleAuthenticationOrchestrator?
+    #endif
     #if FUMINIWA_TEST_COMPOSITION
     /// App-hosted tests use the production sign-in entry point with a
     /// suspended exchange.  The seam is test-composition-only and is not
     /// present in the shipped iOS target.
+    @ObservationIgnored var testBrowserAuthorization: (@MainActor @Sendable (URL) async throws -> Void)?
     @ObservationIgnored var testAppleSignInHandler: (@MainActor () async throws -> FuminiwaSession)?
     /// The test runtime's scope resolver uses a fixed server namespace. This
     /// override keeps the adapter test aligned with that isolated runtime;
     /// production always uses the session's attested UUID.
     @ObservationIgnored var testServerInstanceIDOverride: String?
     #endif
-    @ObservationIgnored var authSession: FuminiwaSession?
+    #if FUMINIWA_TEST_COMPOSITION
+    @ObservationIgnored var documentOperationDidEnqueue: (@MainActor () -> Void)?
+    @ObservationIgnored lazy var documentOperationGate = DocumentOperationGate(didEnqueueOperation: { [weak self] in
+        self?.documentOperationDidEnqueue?()
+    })
+    #else
     @ObservationIgnored let documentOperationGate = DocumentOperationGate()
+    #endif
     @ObservationIgnored let snapshotSyncV2DocumentGate: ProductionDocumentGate
     @ObservationIgnored var snapshotSyncV2Application: SyncV2Application?
     @ObservationIgnored var snapshotSyncV2ConfigurationTask: Task<Void, Never>?
@@ -402,13 +308,14 @@ final class IOSDocumentStore {
     /// may remain suspended on an offline device, while the local shelf and
     /// editor continue to work.  The task is resumed from the vault on the
     /// next launch (and is never allowed to gate document operations).
-    @ObservationIgnored var authRevokeRetryTask: Task<Void, Never>?
+    @ObservationIgnored lazy var accountTransitionCoordinator = AccountTransitionCoordinator(host: self)
+    var authRevokeRetryTask: Task<Void, Never>? {
+        accountTransitionCoordinator.revokeTask
+    }
+
     @ObservationIgnored var bootstrapTask: Task<Void, Never>?
     @ObservationIgnored var hasCompletedBootstrap = false
     @ObservationIgnored var pendingExportRootURL: URL?
-    /// Attachment bytes are owned by the Snapshot Sync v2 SQLite/CAS record.
-    @ObservationIgnored var syncV2AttachmentPayloads: [String: Data] = [:]
-    @ObservationIgnored var syncV2AttachmentIDs: [String: UUID] = [:]
     /// Opaque portable-package remainder retained by the shared SQLite v2
     /// store. It is only populated by explicit import/open and is never read
     /// from a package during ordinary document lifecycle operations.
@@ -422,23 +329,27 @@ final class IOSDocumentStore {
     @ObservationIgnored var remoteCatalogRefreshGeneration: UInt64 = 0
     @ObservationIgnored var historyRefreshGeneration: UInt64 = 0
 
+    #if FUMINIWA_TEST_COMPOSITION
+    @ObservationIgnored var workspaceCheckpointOverride: (@MainActor (WorkspaceCheckpointRequest) async throws -> SyncV2OperationResult)?
+    #endif
+
     @ObservationIgnored
     lazy var saveCoordinator: V2DocumentSaveCoordinator = .init(
         timing: timing,
         currentDocument: { [weak self] in
             guard let self, startupState == .ready else { return nil }
-            return document
+            return workspaceModel.document
         },
         saveOperation: { [weak self] document in
             guard let self else { throw CancellationError() }
             try await performCoordinatedDocumentSave(document)
         },
-        saveEventHandler: { [weak self] event in
+        saveEventHandler: WorkspaceSaveEventProjection.handler(host: self) { [weak self] event in
             switch event {
-            case .dirty: self?.saveState = .dirty
-            case .saving: self?.saveState = .saving
-            case .saved: self?.saveState = .saved
-            case .failed: self?.saveState = .failed
+            case .dirty: self?.workspaceModel.saveState = .dirty
+            case .saving: self?.workspaceModel.saveState = .saving
+            case .saved: self?.workspaceModel.saveState = .saved
+            case .failed: self?.workspaceModel.saveState = .failed
             }
         }
     )
@@ -454,10 +365,15 @@ final class IOSDocumentStore {
         libraryRoot: URL? = nil,
         runtimeComposition: IOSRuntimeComposition = .currentBuild()
     ) {
+        let placeholder = NovelDocument.newDocument()
+        workspaceModel = WorkspaceModel(
+            document: placeholder,
+            session: WorkspaceSessionToken(generation: 0, documentID: placeholder.id, workID: WorkID(UUID())),
+            saveState: .saved
+        )
         let timing = FuminiwaTiming(defaults: userDefaults)
         self.timing = timing
         writingSyncScheduler = WritingSyncScheduler(timing: timing)
-        textCheck = TextCheckSession(defaults: userDefaults)
         writingProgress = WritingProgressTracker(defaults: userDefaults, timing: timing)
         self.portableBridge = portableBridge
         self.fileManager = fileManager
@@ -467,11 +383,11 @@ final class IOSDocumentStore {
         self.backgroundTaskController = backgroundTaskController
         self.runtimeComposition = runtimeComposition
         let auth = IOSDocumentStoreComposition.makeAuth(userDefaults: userDefaults)
+        browserAuthorization = auth.browserAuthorization
         authSessionVault = auth.sessionVault
         authSessionCoordinator = auth.sessionCoordinator
         appleSignInCoordinator = auth.appleSignInCoordinator
         appleAuthenticationOrchestrator = auth.appleAuthenticationOrchestrator
-        authUIState = auth.uiState
         let workingCopy = IOSDocumentStoreComposition.makeWorkingCopy(
             runtimeComposition: runtimeComposition,
             privateWorkingCopyLocation: privateWorkingCopyLocation,
@@ -481,15 +397,12 @@ final class IOSDocumentStore {
         self.privateWorkingCopyLocation = workingCopy.location
         self.libraryRoot = workingCopy.root
         snapshotSyncV2DocumentGate = SnapshotSyncV2Runtime.makeProductionDocumentGate()
-        let placeholder = NovelDocument.newDocument()
-        document = placeholder
         documentCreatedAt = Date()
         // URL is retained only for the explicit package import/export bridge.
         // A normal v2 work has no filesystem identity; WorkID + SQLite is the
         // sole durable identity and no per-work directory is created here.
         documentURL = workingCopy.root.standardizedFileURL
-        selectedChapterID = placeholder.chapters.first?.id
-        selectedEpisodeID = placeholder.chapters.first?.episodes.first?.id
+        workspaceModel.authUIState = auth.uiState
         if workingCopy.location == nil {
             failStartupForDeviceSyncSafety()
         }

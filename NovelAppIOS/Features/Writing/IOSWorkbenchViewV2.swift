@@ -2,6 +2,8 @@ import EditorKit
 import NovelCore
 import NovelSyncV2
 import NovelUI
+import NovelWorkspace
+import NovelWorkspaceUI
 import SwiftUI
 
 @MainActor
@@ -15,8 +17,8 @@ struct IOSWritingEditorIdentityBoundary {
         }
         let departure = IOSWorkspaceEditorDeparture(
             session: session,
-            chapterID: store.selectedChapterID,
-            episodeID: store.selectedEpisodeID
+            chapterID: store.workspaceModel.selectedChapterID,
+            episodeID: store.workspaceModel.selectedEpisodeID
         )
         guard IOSWorkspaceEditorSynchronizer.synchronize(store: store, departure: departure) else {
             return false
@@ -44,7 +46,7 @@ enum IOSAdaptiveWritingLayoutTransition {
 struct IOSAdaptiveWritingView: View {
     let store: IOSDocumentStore
     let openEpisode: (ChapterID, EpisodeID) -> Void
-    let expectedSession: IOSDocumentSessionToken?
+    let expectedSession: WorkspaceSessionToken?
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var toolDestination: IOSWritingTool?
     @State private var regularProjectSection: IOSRegularProjectSection? = .writing
@@ -238,22 +240,20 @@ struct IOSAdaptiveWritingView: View {
         let scope = store.workSearchScope
         Task {
             guard await store.prepareForEditorSurfaceDeparture(), store.workSearchScope == scope else { return }
-            if destination == .textCheck {
-                store.synchronizeTextCheck()
-            }
             toolDestination = destination
         }
     }
 }
 
 private struct IOSWritingOutlineList: View {
+    @Environment(WorkspaceModel.self) private var workspace
     let store: IOSDocumentStore
     let openEpisode: (ChapterID, EpisodeID) -> Void
     let presentTool: (IOSWritingTool) -> Void
 
     var body: some View {
         List {
-            ForEach(store.document.chapters) { chapter in
+            ForEach(workspace.document.chapters) { chapter in
                 IOSWritingChapterSection(
                     store: store,
                     chapter: chapter,
@@ -271,7 +271,7 @@ private struct IOSWritingOutlineList: View {
         }
         .navigationTitle("執筆")
         .overlay {
-            if store.document.chapters.isEmpty {
+            if workspace.document.chapters.isEmpty {
                 ContentUnavailableView {
                     Label("章がありません", systemImage: "list.bullet.rectangle")
                 } description: {
@@ -301,9 +301,7 @@ private struct IOSWritingOutlineList: View {
                     Button("作品全体を検索", systemImage: "text.magnifyingglass") {
                         presentTool(.workSearch)
                     }
-                    Button("表記をチェック", systemImage: "text.badge.checkmark") {
-                        presentTool(.textCheck)
-                    }
+
                 } label: { Label("執筆のメニュー", systemImage: "ellipsis.circle") }
             }
             ToolbarItem(placement: .topBarTrailing) {
@@ -315,6 +313,7 @@ private struct IOSWritingOutlineList: View {
 }
 
 private struct IOSWritingChapterSection: View {
+    @Environment(WorkspaceModel.self) private var workspace
     let store: IOSDocumentStore
     let chapter: Chapter
     let openEpisode: (ChapterID, EpisodeID) -> Void
@@ -375,7 +374,7 @@ private struct IOSWritingChapterSection: View {
     private var chapterTitle: Binding<String> {
         Binding(
             get: {
-                store.document.chapters.first(where: { $0.id == chapter.id })?.title ?? ""
+                workspace.document.chapters.first(where: { $0.id == chapter.id })?.title ?? ""
             },
             set: { store.updateChapterTitle($0, chapterID: chapter.id) }
         )
@@ -439,6 +438,7 @@ private struct IOSEpisodeOutlineRow: View {
 }
 
 struct IOSWorkbenchView: View {
+    @Environment(WorkspaceModel.self) private var workspace
     @Bindable var store: IOSDocumentStore
     @Bindable var navigation: IOSWorkspaceNavigationCoordinator
 
@@ -474,7 +474,17 @@ struct IOSWorkbenchView: View {
         Binding(
             get: { navigation.path },
             set: { value in
-                if let departure = navigation.editorDeparture(for: value) {
+                if value.isEmpty, workspace.keepBothPendingWorkID != nil {
+                    let originalPath = navigation.path
+                    let session = store.currentDocumentSessionToken
+                    let account = store.snapshotSyncV2AccountScope
+                    Task {
+                        guard navigation.path == originalPath,
+                              store.currentDocumentSessionToken == session,
+                              store.snapshotSyncV2AccountScope == account else { return }
+                        await navigation.returnToLibrary(using: store)
+                    }
+                } else if let departure = navigation.editorDeparture(for: value) {
                     let originalPath = navigation.path
                     let session = store.currentDocumentSessionToken
                     let account = store.snapshotSyncV2AccountScope
@@ -547,7 +557,9 @@ struct IOSWorkbenchView: View {
 }
 
 struct IOSEditorPane: View {
+    @Environment(WorkspaceModel.self) private var workspace
     @State private var showingAssistant = false
+    @State private var showingEpisodeHistory = false
     let store: IOSDocumentStore
     let userDefaults: UserDefaults
     @AppStorage(IOSEditorFontPreference.preferenceKey)
@@ -568,7 +580,7 @@ struct IOSEditorPane: View {
            let episode = store.selectedEpisode,
            let editingToken = store.currentEpisodeEditingToken {
             VStack(spacing: 0) {
-                if store.syncV2KeepBothPendingWorkID != nil {
+                if workspace.keepBothPendingWorkID != nil {
                     Label(
                         "両方を残す処理中です。作品の切替が完了するまで本文を編集できません。",
                         systemImage: "arrow.triangle.2.circlepath"
@@ -605,10 +617,10 @@ struct IOSEditorPane: View {
                         )
                     }
                 )
-                .disabled(store.syncV2KeepBothPendingWorkID != nil)
+                .disabled(workspace.keepBothPendingWorkID != nil)
                 IOSEditorAccessoryBar(
                     commandSession: store.editorCommandSession,
-                    isEnabled: store.syncV2KeepBothPendingWorkID == nil
+                    isEnabled: workspace.keepBothPendingWorkID == nil
                 )
                 .id(editingToken)
             }
@@ -626,11 +638,17 @@ struct IOSEditorPane: View {
                 .accessibilityLabel("AI支援")
                 .accessibilityValue(showingAssistant ? "開いています" : "閉じています")
                 .accessibilityIdentifier("ios.editor.assistant")
-                Menu("コピー", systemImage: "doc.on.clipboard") {
+                Menu("話の操作", systemImage: "ellipsis") {
+                    Button("この話の履歴") { showingEpisodeHistory = true }
                     Button("この話をコピー") { store.copyEpisodeManuscript(expectedEpisodeID: episode.id) }
                     Button("この章をコピー") { store.copyChapterManuscript(expectedChapterID: chapter.id) }
                 }
             }
+            .sheet(isPresented: $showingEpisodeHistory) {
+                IOSEpisodeHistorySheet(store: store)
+            }
+            .onChange(of: store.workSearchScope) { _, _ in showingEpisodeHistory = false }
+            .onChange(of: workspace.selectedEpisodeID) { _, _ in showingEpisodeHistory = false }
             .inspector(isPresented: $showingAssistant) {
                 let account = store.snapshotSyncV2AccountScope
                 let session = store.currentDocumentSessionToken
@@ -642,9 +660,9 @@ struct IOSEditorPane: View {
                     capture: {
                         guard store.currentEpisodeEditingToken == editingToken,
                               store.snapshotSyncV2AccountScope == account,
-                              !store.isDocumentTransitionInProgress,
+                              !workspace.isDocumentTransitionInProgress,
                               !store.syncV2AccountTransitionInProgress,
-                              store.syncV2KeepBothPendingWorkID == nil else { throw AssistantError.emptyContent }
+                              workspace.keepBothPendingWorkID == nil else { throw AssistantError.emptyContent }
                         switch store.editorCommandSession.captureActiveCommittedText() {
                         case let .captured(text): return AssistantManuscript(title: episode.title, content: text)
                         case .compositionInProgress: throw AssistantError.composing
@@ -663,14 +681,15 @@ struct IOSEditorPane: View {
                                                                  account: account)
                     },
                     writingHost: store.writingAssistantHost,
-                    chapters: store.document.chapters,
+                    chapters: workspace.document.chapters,
+                    document: workspace.document,
                     captureScope: { scope in
                         guard store.currentEpisodeEditingToken == editingToken,
                               store.snapshotSyncV2AccountScope == account,
-                              !store.isDocumentTransitionInProgress,
+                              !workspace.isDocumentTransitionInProgress,
                               !store.syncV2AccountTransitionInProgress,
-                              store.syncV2KeepBothPendingWorkID == nil else { throw AssistantError.emptyContent }
-                        return try scope.capture(chapters: store.document.chapters, currentID: episode.id) {
+                              workspace.keepBothPendingWorkID == nil else { throw AssistantError.emptyContent }
+                        return try scope.capture(chapters: workspace.document.chapters, currentID: episode.id) {
                             guard let selected = store.selectedEpisode else { throw AssistantError.emptyContent }
                             switch store.editorCommandSession.captureActiveCommittedText() {
                             case let .captured(text): return AssistantManuscript(title: selected.title, content: text)

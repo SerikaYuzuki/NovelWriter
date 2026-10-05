@@ -1,9 +1,12 @@
 import NovelSyncV2
 import NovelSyncV2Application
 import NovelUI
+import NovelWorkspace
+import NovelWorkspaceUI
 import SwiftUI
 
 struct IOSLibraryView: View {
+    @Environment(WorkspaceModel.self) private var workspace
     let store: IOSDocumentStore
     let openWork: (WorkID) -> Void
     let makeNewDocument: () -> Void
@@ -18,15 +21,15 @@ struct IOSLibraryView: View {
     @State private var searchText = ""
     @State private var pendingImportOpen: WorkID?
     @State private var pendingRename: SyncV2LibraryItem?
-    @State private var renameSession: IOSDocumentSessionToken?
-    @State private var renameAccountScope: IOSSnapshotSyncV2AccountScope?
+    @State private var renameSession: WorkspaceSessionToken?
+    @State private var renameAccountScope: WorkspaceAccountScope?
     @State private var renameTitle = ""
     @State private var renamingIDs: Set<WorkID> = []
     @State private var renameFailed = false
 
     @State private var pendingDeletion: SyncV2LibraryItem?
-    @State private var deletionSession: IOSDocumentSessionToken?
-    @State private var deletionAccountScope: IOSSnapshotSyncV2AccountScope?
+    @State private var deletionSession: WorkspaceSessionToken?
+    @State private var deletionAccountScope: WorkspaceAccountScope?
 
     @State private var showingProtection = false
 
@@ -45,7 +48,7 @@ struct IOSLibraryView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
                         Button("新規作品", systemImage: "plus", action: makeNewDocument)
-                        Button("作品を取り込む…", systemImage: "square.and.arrow.down") { store.isImporterPresented = true }
+                        Button(LibraryText.importWork, systemImage: "square.and.arrow.down") { store.isImporterPresented = true }
                         Button("復元", systemImage: "archivebox") { showingProtection = true }
                     } label: { Label("作品の操作", systemImage: "plus") }
                 }
@@ -53,23 +56,23 @@ struct IOSLibraryView: View {
             .scrollContentBackground(.hidden)
             .background(FuminiwaColor.paper.color)
             .navigationTitle("作品一覧")
-            .alert("作品を完全に削除しますか？", isPresented: Binding(
+            .alert(LibraryText.deleteConfirmation, isPresented: Binding(
                 get: { pendingDeletion != nil }, set: {
                     if !$0 {
                         pendingDeletion = nil
                     }
                 }
             )) {
-                Button("削除", role: .destructive) {
+                Button(LibraryText.delete, role: .destructive) {
                     guard let item = pendingDeletion, let scope = deletionAccountScope else { return }
                     let session = deletionSession
                     Task { _ = await store.deleteLibraryWork(item, expectedSession: session, accountScope: scope) }
                 }
-                Button("キャンセル", role: .cancel) {}
+                Button(LibraryText.cancel, role: .cancel) {}
             } message: {
-                Text("「\(pendingDeletion?.title ?? "")」を一覧から削除します。同期した作品のサーバー受領済みデータは1年間保管されます。この端末だけの作品は元に戻せません。")
+                Text(LibraryText.deletionMessage(title: pendingDeletion?.title ?? ""))
             }
-            .alert("作品名を変更", isPresented: Binding(
+            .alert(LibraryText.rename, isPresented: Binding(
                 get: { pendingRename != nil },
                 set: {
                     if !$0 {
@@ -77,8 +80,8 @@ struct IOSLibraryView: View {
                     }
                 }
             )) {
-                TextField("作品名", text: $renameTitle)
-                Button("変更") {
+                TextField(LibraryText.title, text: $renameTitle)
+                Button(LibraryText.change) {
                     guard let item = pendingRename, let scope = renameAccountScope else { return }
                     let session = renameSession
                     let title = renameTitle
@@ -91,17 +94,17 @@ struct IOSLibraryView: View {
                     }
                 }
                 .disabled(renameTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                Button("キャンセル", role: .cancel) {}
+                Button(LibraryText.cancel, role: .cancel) {}
             }
-            .alert("作品名を変更できませんでした", isPresented: $renameFailed) {
+            .alert(LibraryText.renameFailed, isPresented: $renameFailed) {
                 Button("OK", role: .cancel) {}
             } message: {
-                Text("作品やアカウントが切り替わっていないか、接続状態を確認して再試行してください。")
+                Text(LibraryText.renameRetry)
             }
         #if FUMINIWA_TEST_COMPOSITION
             .task {
                 if ProcessInfo.processInfo.arguments.contains("--library-preview=import-cancel") {
-                    pendingImportOpen = store.syncV2LibraryItems.last?.workID
+                    pendingImportOpen = workspace.libraryRows.last?.workID
                 }
             }
         #endif
@@ -117,7 +120,7 @@ struct IOSLibraryView: View {
                     await store.observeLibraryImports()
                 }
             }
-            .confirmationDialog("取り込みを中止して開きますか？", isPresented: Binding(
+            .confirmationDialog(LibraryText.cancelImportConfirmation, isPresented: Binding(
                 get: { pendingImportOpen != nil }, set: {
                     if !$0 {
                         pendingImportOpen = nil
@@ -125,14 +128,14 @@ struct IOSLibraryView: View {
                 }
             ), titleVisibility: .visible) {
                 if let id = pendingImportOpen {
-                    Button("取り込みを中止して開く") {
+                    Button(LibraryText.cancelImportAndOpen) {
                         pendingImportOpen = nil
                         Task { await store.cancelLibraryImport(); openWork(id) }
                     }
                 }
-                Button("キャンセル", role: .cancel) { pendingImportOpen = nil }
+                Button(LibraryText.cancel, role: .cancel) { pendingImportOpen = nil }
             }
-            .searchable(text: $searchText, prompt: "作品を検索")
+            .searchable(text: $searchText, prompt: LibraryText.search)
             .refreshable {
                 _ = await store.refreshLibrary()
             }
@@ -196,34 +199,34 @@ struct IOSLibraryView: View {
     }
 
     @ViewBuilder private var libraryNotices: some View {
-        if let failure = store.syncV2RemoteCatalogError ?? store.libraryFailure {
+        if let failure = store.syncV2RemoteCatalogError ?? workspace.libraryFailure {
             StatusLabel(SyncV2LibraryPresentation.isOffline(failure)
                 ? SyncV2LibraryPresentation.offlineNotice : remoteOnlyOpenErrorMessage(failure),
                 systemImage: SyncV2LibraryPresentation.isOffline(failure) ? "wifi.slash" : "exclamationmark.circle",
                 tone: SyncV2LibraryPresentation.isOffline(failure) ? .offline : .danger)
                 .font(FuminiwaType.rowSecondary)
         }
-        if store.syncV2LibraryItems.isEmpty {
-            if store.libraryIsLoading || store.syncV2RemoteCatalogIsLoading {
-                ContentUnavailableView("作品一覧を読み込み中…", systemImage: "arrow.clockwise")
-            } else if let failure = store.syncV2RemoteCatalogError ?? store.libraryFailure {
-                ContentUnavailableView(SyncV2LibraryPresentation.isOffline(failure) ? "オフラインです" : "作品一覧を読み込めませんでした",
+        if workspace.libraryRows.isEmpty {
+            if workspace.libraryIsLoading || store.syncV2RemoteCatalogIsLoading {
+                ContentUnavailableView(LibraryText.loading, systemImage: "arrow.clockwise")
+            } else if let failure = store.syncV2RemoteCatalogError ?? workspace.libraryFailure {
+                ContentUnavailableView(SyncV2LibraryPresentation.isOffline(failure) ? LibraryText.offline : LibraryText.loadFailed,
                                        systemImage: SyncV2LibraryPresentation.isOffline(failure) ? "wifi.slash" : "exclamationmark.circle",
-                                       description: Text("下に引いて再読み込みできます。「新規作品」から端末内で書き始められます。"))
+                                       description: Text(LibraryText.retryIOS))
             } else {
-                ContentUnavailableView("最初の作品を書きましょう", systemImage: "book.closed",
-                                       description: Text("「新規作品」から、サインインせずに書き始められます。"))
+                ContentUnavailableView(LibraryText.empty, systemImage: "book.closed",
+                                       description: Text(LibraryText.emptyIOS))
             }
         }
-        if !searchText.isEmpty, !store.syncV2LibraryItems.contains(where: { $0.title.localizedStandardContains(searchText) }) {
-            Text("作品が見つかりません。検索する言葉を変えてください。")
+        if !searchText.isEmpty, !workspace.libraryRows.contains(where: { $0.title.localizedStandardContains(searchText) }) {
+            Text(LibraryText.noSearchResultsNotice)
                 .foregroundStyle(.secondary)
         }
     }
 
     @ViewBuilder private var loadMoreButton: some View {
-        if store.syncV2RemoteCatalogCursor != nil {
-            Button("サーバーの作品をさらに読み込む") {
+        if workspace.remoteCatalogCursor != nil {
+            Button(LibraryText.loadMore) {
                 Task { _ = await store.loadMoreRemoteCatalog() }
             }
             .disabled(store.syncV2RemoteCatalogIsLoading)
@@ -231,20 +234,20 @@ struct IOSLibraryView: View {
     }
 
     @ViewBuilder private var accountRows: some View {
-        if store.authUIState == .signedOut {
+        if workspace.authUIState == .signedOut {
             Button("Appleでサインイン") {
                 Task { await store.signInWithApple() }
             }
             Button("Googleでサインイン") { Task { await store.signInWithGoogle() } }
-        } else if case .signedIn = store.authUIState {
+        } else if case .signedIn = workspace.authUIState {
             Label("サインイン済み", systemImage: "person.crop.circle.badge.checkmark")
             Button("サインアウト") { Task { await store.signOutFromFuminiwa() } }
-        } else if store.authUIState == .signingIn {
+        } else if workspace.authUIState == .signingIn {
             ProgressView("サインイン中…")
-        } else if store.authUIState == .unavailable {
+        } else if workspace.authUIState == .unavailable {
             Label("アカウント同期は未設定", systemImage: "person.crop.circle.badge.exclamationmark")
                 .foregroundStyle(.secondary)
-        } else if case .failed = store.authUIState {
+        } else if case .failed = workspace.authUIState {
             Button("Appleで再試行") {
                 Task { await store.signInWithApple() }
             }
@@ -253,7 +256,7 @@ struct IOSLibraryView: View {
     }
 
     private var workRows: some View {
-        ForEach(store.syncV2LibraryItems.filter { searchText.isEmpty || $0.title.localizedStandardContains(searchText) }, id: \.workID) { item in
+        ForEach(workspace.libraryRows.filter { searchText.isEmpty || $0.title.localizedStandardContains(searchText) }, id: \.workID) { item in
             VStack(alignment: .leading, spacing: Spacing.small) {
                 IOSLibraryImportRow(store: store, item: item, isRenaming: renamingIDs.contains(item.workID),
                                     open: { requestOpen(item.workID) }, rename: {
@@ -262,8 +265,8 @@ struct IOSLibraryView: View {
                                         renameAccountScope = store.snapshotSyncV2AccountScope
                                         pendingRename = item
                                     }, isGrid: usesGrid, delete: { requestDeletion(item) })
-                if case .signedIn = store.authUIState, item.accountState == .unbound,
-                   item.workID == store.syncV2ActiveWorkID {
+                if case .signedIn = workspace.authUIState, item.accountState == .unbound,
+                   item.workID == workspace.activeWorkID {
                     Button("この作品をこのアカウントへ追加して同期") {
                         Task { _ = await store.cloneActiveWorkIntoSignedInAccount() }
                     }

@@ -1,12 +1,13 @@
 import Foundation
 import NovelCore
 import NovelUI
+import NovelWorkspace
 import SwiftUI
 
 struct EpisodeDeletionRequest: Identifiable {
     let episode: Episode
     let chapterID: ChapterID
-    let session: DocumentSessionToken
+    let session: WorkspaceSessionToken
 
     var id: EpisodeID {
         episode.id
@@ -97,7 +98,6 @@ enum OutlineSaveStateVisibility {
 
 struct OutlineChapterRow: View {
     let chapter: Chapter
-    let expectedSession: DocumentSessionToken
     let showsSaveState: Bool
 
     var body: some View {
@@ -114,12 +114,6 @@ struct OutlineChapterRow: View {
                     .monospacedDigit()
                 Text("\(presentation.characterCount)字")
                     .monospacedDigit()
-                ManuscriptCopyMenu(
-                    target: .chapter(
-                        chapterID: chapter.id,
-                        session: expectedSession
-                    )
-                )
             }
             .font(.caption)
             .foregroundStyle(.secondary)
@@ -139,7 +133,6 @@ struct OutlineEpisodeRow: View {
 
     let episode: Episode
     let chapterID: ChapterID
-    let expectedSession: DocumentSessionToken
     let showsSaveState: Bool
 
     var body: some View {
@@ -165,14 +158,6 @@ struct OutlineEpisodeRow: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             }
-
-            ManuscriptCopyMenu(
-                target: .episode(
-                    episodeID: episode.id,
-                    chapterID: chapterID,
-                    session: expectedSession
-                )
-            )
         }
         .padding(.vertical, 4)
     }
@@ -183,6 +168,7 @@ struct OutlineEpisodeRow: View {
 }
 
 struct EpisodeOutlineContextMenu: View {
+    @Environment(WorkspaceModel.self) private var workspace
     @Environment(AppState.self) private var appState
 
     let request: EpisodeDeletionRequest
@@ -241,15 +227,16 @@ struct EpisodeOutlineContextMenu: View {
 
     private var otherChapters: [Chapter] {
         guard isCurrentSession else { return [] }
-        return appState.document.chapters.filter { $0.id != request.chapterID }
+        return workspace.document.chapters.filter { $0.id != request.chapterID }
     }
 
     private var isCurrentSession: Bool {
-        request.session == appState.documentSessionToken
+        request.session == workspace.documentSessionToken
     }
 }
 
 struct ChapterOutlineContextMenu: View {
+    @Environment(WorkspaceModel.self) private var workspace
     @Environment(AppState.self) private var appState
 
     let chapterItem: SessionBoundValue<Chapter>
@@ -311,7 +298,7 @@ struct ChapterOutlineContextMenu: View {
         .disabled(!isCurrentSession)
 
         Button("章を削除", systemImage: "trash", role: .destructive, action: onDelete)
-            .disabled(!isCurrentSession || appState.document.chapters.count <= 1)
+            .disabled(!isCurrentSession || workspace.document.chapters.count <= 1)
     }
 
     private var chapter: Chapter {
@@ -319,7 +306,7 @@ struct ChapterOutlineContextMenu: View {
     }
 
     private var isCurrentSession: Bool {
-        chapterItem.session == appState.documentSessionToken
+        chapterItem.session == workspace.documentSessionToken
     }
 }
 

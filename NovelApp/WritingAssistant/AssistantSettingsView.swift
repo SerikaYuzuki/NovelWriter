@@ -1,3 +1,4 @@
+import NovelWorkspaceUI
 import SwiftUI
 
 struct AssistantSettingsView: View {
@@ -8,21 +9,22 @@ struct AssistantSettingsView: View {
     @State private var catalog: [String] = []
     @State private var loadingModels = false
     @State private var apiKey = ""
-    @State private var purpose = AssistantPurpose.proofreading
-    @State private var prompts: [String: String] = [:]
+    #if os(macOS)
+    var mcpController: WritingMCPController?
+    #endif
     @State private var notice: String?
 
     var body: some View {
         Form {
-            Section("OpenAI対応API") {
-                TextField("API URL（/responses または /chat/completions）", text: $endpoint)
+            Section {
+                TextField("API URL", text: $endpoint, prompt: Text("/responses または /chat/completions"))
                     .assistantCredentialInputStyle()
                 ForEach(AssistantPurpose.allCases) { item in
-                    TextField("\(item.rawValue)のモデル", text: Binding(
+                    TextField("\(item.label)", text: Binding(
                         get: { models[item.id] ?? "" }, set: { models[item.id] = $0 }
                     )).assistantCredentialInputStyle()
                     if !catalog.isEmpty {
-                        Picker("\(item.rawValue)のモデルを一覧から選択", selection: Binding(
+                        Picker("候補", selection: Binding(
                             get: { models[item.id] ?? "" }, set: { models[item.id] = $0 }
                         )) {
                             Text(models[item.id] ?? "未選択").tag(models[item.id] ?? "")
@@ -30,27 +32,29 @@ struct AssistantSettingsView: View {
                         }
                     }
                 }
-                Button(loadingModels ? "取得中…" : "OpenAIの最新モデル一覧を取得") {
+                Button(loadingModels ? "取得中…" : "モデル一覧を取得") {
                     Task { await refreshModels() }
                 }.disabled(loadingModels)
-                Text("一覧は新しい順です。用途に対応したテキスト生成モデルを選択してください。")
-                    .font(.caption)
-                SecureField("APIキー（変更時のみ入力）", text: $apiKey)
+                SecureField("APIキー", text: $apiKey, prompt: Text("変更時のみ入力"))
                     .assistantCredentialInputStyle()
-                Text("設定した送信先へ本文を送ります。利用料金・保存方針は各サービスに従います。キーはこの端末のKeychainに保存します。")
-                    .font(.caption).foregroundStyle(.secondary)
+            } header: {
+                Text("OpenAI対応API")
+            } footer: {
+                Text("API URLは /responses または /chat/completions を指定します。モデル一覧は新しい順です。用途に合うテキスト生成モデルを選んでください。設定した送信先へ本文を送ります。利用料金・保存方針は各サービスに従います。キーはこの端末のKeychainに保存します。")
             }
             if let writingHost {
                 NavigationLink("同期するプロンプト") { WritingPromptsView(host: writingHost, defaults: defaults) }
             } else {
                 Section("プロンプト") {
-                    Picker("用途", selection: $purpose) {
-                        ForEach(AssistantPurpose.allCases) { Text($0.rawValue).tag($0) }
-                    }
-                    promptEditor(for: purpose)
-                    Button("この用途の初期値に戻す") { prompts[purpose.id] = purpose.defaultPrompt }
+                    Text("作品を開くと、共通設定と作品別の指示を編集できます。AI支援の「チャット」から「指示」も開けます。")
+                        .foregroundStyle(.secondary)
                 }
             }
+            #if os(macOS)
+            if let mcpController {
+                WritingMCPSettingsSections(controller: mcpController)
+            }
+            #endif
             Section {
                 Button("設定を保存", action: save)
                 Button("この送信先のAPIキーを削除", role: .destructive) {
@@ -72,18 +76,7 @@ struct AssistantSettingsView: View {
             let preferences = AssistantPreferences(defaults: defaults)
             endpoint = preferences.endpoint
             models = Dictionary(uniqueKeysWithValues: AssistantPurpose.allCases.map { ($0.id, preferences.model($0)) })
-            prompts = Dictionary(uniqueKeysWithValues: AssistantPurpose.allCases.map { ($0.id, preferences.prompt($0)) })
         }
-    }
-
-    private func promptEditor(for selectedPurpose: AssistantPurpose) -> some View {
-        TextEditor(text: Binding(
-            get: { prompts[selectedPurpose.id] ?? selectedPurpose.defaultPrompt },
-            set: { prompts[selectedPurpose.id] = $0 }
-        ))
-        .id(selectedPurpose)
-        .frame(minHeight: 140)
-        .accessibilityLabel("\(selectedPurpose.rawValue)用プロンプト")
     }
 
     @MainActor
@@ -114,7 +107,6 @@ struct AssistantSettingsView: View {
 
             for purpose in AssistantPurpose.allCases {
                 defaults.set(models[purpose.id] ?? "", forKey: "assistant.model.\(purpose.id)")
-                defaults.set(prompts[purpose.id] ?? purpose.defaultPrompt, forKey: "assistant.prompt.\(purpose.id)")
             }
             apiKey = ""
             notice = "設定を保存しました。"

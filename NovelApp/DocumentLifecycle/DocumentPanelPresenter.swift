@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import NovelWorkspace
 import Observation
 
 /// File メニューの作品作成・明示的な `.novelpkg` 取り込みを担う薄い層。
@@ -17,25 +18,25 @@ final class DocumentPanelPresenter {
         self.appState = appState
     }
 
-    func presentNewDocument(expectedSession: DocumentSessionToken? = nil) {
+    func presentNewDocument(expectedSession: WorkspaceSessionToken? = nil) {
         guard appState.permitsNewDocument else { return }
-        let session = expectedSession ?? appState.documentSessionToken
+        let session = expectedSession ?? appState.workspaceModel.documentSessionToken
         Task {
             let success = await appState.createNewDocument(expectedSession: session)
             if success {
                 completedDocumentOperation = UUID()
             } else {
-                alertMessage = appState.documentSessionToken != session
+                alertMessage = appState.workspaceModel.documentSessionToken != session
                     ? "作品が切り替わったため、新規作品は作成しませんでした。"
                     : "新規作品を作成できませんでした。保存先の空き容量やアクセス権限を確認してください。"
             }
         }
     }
 
-    func presentOpenPanel(expectedSession: DocumentSessionToken? = nil) {
+    func presentOpenPanel(expectedSession: WorkspaceSessionToken? = nil) {
         guard appState.permitsDocumentImport else { return }
-        let session = expectedSession ?? appState.documentSessionToken
-        guard session == appState.documentSessionToken else { return }
+        let session = expectedSession ?? appState.workspaceModel.documentSessionToken
+        guard session == appState.workspaceModel.documentSessionToken else { return }
 
         let panel = NSOpenPanel()
         panel.title = "作品を取り込む"
@@ -56,7 +57,7 @@ final class DocumentPanelPresenter {
             if success {
                 completedDocumentOperation = UUID()
             } else {
-                alertMessage = appState.documentSessionToken != session
+                alertMessage = appState.workspaceModel.documentSessionToken != session
                     ? "作品が切り替わったため、選択した作品は開きませんでした。"
                     : "作品を取り込めませんでした。原本は変更していません。形式、空き容量、アクセス権限を確認してください。"
             }

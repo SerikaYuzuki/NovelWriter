@@ -4,6 +4,7 @@ import ImageIO
 import NovelCore
 import NovelSyncV2
 import NovelThumbnail
+import NovelWorkspaceUI
 import NovelWritingSupport
 import Testing
 
@@ -47,7 +48,7 @@ struct MCPThumbnailBoundaryTests {
         }
         let fixture = try await MCPThumbnailHarness.make(dependencies: dependencies), owner = fixture.owner()
         let image = try ThumbnailEncoder.encode(MCPThumbnailHarness.source(), owner: owner)
-        #expect(await fixture.state.setThumbnail(image, owner: owner, session: fixture.state.documentSessionToken,
+        #expect(await fixture.state.setThumbnail(image, owner: owner, session: fixture.state.workspaceModel.documentSessionToken,
                                                  account: fixture.state.snapshotSyncV2AccountScopeToken))
         let before = fixture.state.snapshotSyncV2Attachments, id = UUID()
         var args = try fixture.arguments(owner, requestID: id, image: MCPThumbnailHarness.source())
@@ -94,7 +95,7 @@ struct MCPThumbnailBoundaryTests {
         } else if change == "work" {
             fixture.state.installV2Document(.newDocument(title: "別の合成作品"), workID: WorkID(UUID()), createdAt: Date())
         } else {
-            #expect(fixture.state.deleteCharacter(id: fixture.state.document.characters[0].id))
+            #expect(fixture.state.deleteCharacter(id: fixture.state.workspaceModel.document.characters[0].id))
         }
         continuation.resume()
         #expect(try await task.value)

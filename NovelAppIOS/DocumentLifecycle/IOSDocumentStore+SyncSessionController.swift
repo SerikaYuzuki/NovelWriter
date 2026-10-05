@@ -1,6 +1,7 @@
 import Foundation
 import NovelSyncV2
 import NovelSyncV2Application
+import NovelWorkspace
 
 extension IOSDocumentStore {
     var snapshotSyncV2RemoteOnlyOpenTask: Task<Void, Never>? {
@@ -44,49 +45,47 @@ extension IOSDocumentStore {
     }
 
     var syncV2AccountTransitionRequestOwner: UUID? {
-        get { syncSessionController.accountOwner }
-        set { syncSessionController.accountOwner = newValue }
+        get { accountTransitionCoordinator.requestOwner }
+        set { accountTransitionCoordinator.requestOwner = newValue }
     }
 
     var syncV2AccountTransitionRequested: Bool {
-        get { syncSessionController.accountTransitionRequested }
-        set { syncSessionController.accountTransitionRequested = newValue }
+        get { accountTransitionCoordinator.requested }
+        set { accountTransitionCoordinator.requested = newValue }
     }
 
     var syncV2AccountTransitionInProgress: Bool {
-        get { syncSessionController.accountTransitionInProgress }
-        set { syncSessionController.accountTransitionInProgress = newValue }
+        get { accountTransitionCoordinator.inProgress }
+        set { accountTransitionCoordinator.inProgress = newValue }
     }
 
     var syncV2RemoteSuspensionToken: SyncV2AccountTransitionRemoteSuspensionToken? {
-        get { syncSessionController.remoteSuspension }
-        set { syncSessionController.remoteSuspension = newValue }
+        get { accountTransitionCoordinator.remoteSuspension }
+        set { accountTransitionCoordinator.remoteSuspension = newValue }
     }
 
-    func matchesSyncAccount(_ expected: IOSSnapshotSyncV2AccountScope?) -> Bool {
+    func matchesSyncAccount(_ expected: WorkspaceAccountScope?) -> Bool {
         guard let expected else { return false }
         return syncSessionController.matchesAccount(expected, current: snapshotSyncV2AccountScope)
     }
 
-    func matchesRemoteSyncAccount(_ expected: IOSSnapshotSyncV2AccountScope) -> Bool {
+    func matchesRemoteSyncAccount(_ expected: WorkspaceAccountScope) -> Bool {
         syncSessionController.matchesAccount(expected, current: snapshotSyncV2AccountScope,
                                              transitionActive: isSyncV2RemoteAccountTransitionActive)
     }
 
-    func matchesLocalSyncAccount(_ expected: IOSSnapshotSyncV2AccountScope) -> Bool {
+    func matchesLocalSyncAccount(_ expected: WorkspaceAccountScope) -> Bool {
         syncSessionController.matchesAccount(expected, current: snapshotSyncV2AccountScope,
                                              transitionActive: isSyncV2AccountTransitionActive)
     }
 }
 
 extension IOSDocumentStore {
-    typealias SyncOperationContext = SyncSessionController<IOSDocumentSessionToken?, IOSSnapshotSyncV2AccountScope, Void>.OperationContext
-
-    func matchesSyncOperation(_ expected: SyncOperationContext) -> Bool {
-        expected.isCurrent(SyncOperationContext(
+    func matchesSyncOperation(_ expected: WorkspaceOperationContext) -> Bool {
+        expected.isCurrent(WorkspaceOperationContext(
             workID: currentDocumentSessionToken?.workID, session: currentDocumentSessionToken,
             account: snapshotSyncV2AccountScope,
-            editGeneration: expected.editGeneration == nil ? nil : localEditGeneration
+            editGeneration: expected.editGeneration == nil ? nil : workspaceModel.editGeneration
         ))
     }
 }

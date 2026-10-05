@@ -16,9 +16,9 @@ struct AppStateSaveStateTests {
         state.updateSelectedEpisodeContent("今すぐ保存")
 
         #expect(await state.saveNow())
-        #expect(state.saveState == .saved)
-        #expect(state.snapshotSyncV2Session?.workID == state.snapshotSyncV2ActiveWorkID)
-        #expect(state.snapshotSyncV2Session?.workID.rawValue != state.document.id)
+        #expect(state.workspaceModel.saveState == .saved)
+        #expect(state.snapshotSyncV2Session?.workID == state.workspaceModel.activeWorkID)
+        #expect(state.snapshotSyncV2Session?.workID.rawValue != state.workspaceModel.document.id)
     }
 
     @Test("保存失敗は状態に反映され、次の保存で再試行できる")
@@ -26,17 +26,17 @@ struct AppStateSaveStateTests {
         let state = try makeState()
 
         state.updateSelectedEpisodeContent("保存対象")
-        #expect(state.saveState == .unsaved)
+        #expect(state.workspaceModel.saveState == .unsaved)
 
         let firstResult = await state.saveBeforeTermination()
         #expect(firstResult == false)
-        #expect(state.saveState == .failed)
+        #expect(state.workspaceModel.saveState == .failed)
 
         #expect(await state.configureSnapshotSyncV2(using: state.snapshotSyncV2Factory))
         await state.bootstrap()
         let retryResult = await state.saveBeforeTermination()
         #expect(retryResult == true)
-        #expect(state.saveState == .saved)
+        #expect(state.workspaceModel.saveState == .saved)
     }
 
     private func makeUserDefaults() -> UserDefaults {

@@ -7,6 +7,7 @@ import NovelStorage
 import NovelSyncV2
 import NovelSyncV2Application
 import NovelSyncV2PortableBridge
+import NovelWorkspace
 
 #if FUMINIWA_TEST_COMPOSITION
 /// Test-only replacement for the local checkpoint boundary. This symbol is
@@ -35,6 +36,11 @@ typealias SnapshotSyncV2OpenLocalOverride = @MainActor @Sendable (
     SyncV2Application,
     WorkID
 ) async throws -> SyncV2OpenedWork
+
+/// Test-only suspension point for a library read racing with document installation.
+typealias SnapshotSyncV2LibraryOverride = @MainActor @Sendable (
+    SyncV2Application
+) async throws -> SyncV2LibraryProjection
 
 /// Test-only suspension point for verifying that a catalog response cannot
 /// cross an AccountID/fence generation change.
@@ -83,6 +89,7 @@ struct AppDependencies {
 
     /// Sign in with Apple is an optional account layer. Local editing remains
     /// available when the auth server is unreachable or not configured.
+    let browserAuthorization: @MainActor @Sendable (URL) async throws -> Void
     let authSessionCoordinator: AuthSessionCoordinator?
     let appleSignInCoordinator: AppleSignInCoordinator?
     let appleAuthenticationOrchestrator: AppleAuthenticationOrchestrator?
@@ -95,6 +102,7 @@ struct AppDependencies {
     var snapshotSyncV2CheckpointOverride: SnapshotSyncV2CheckpointOverride?
     var snapshotSyncV2OpenOverride: SnapshotSyncV2OpenOverride?
     var snapshotSyncV2OpenLocalOverride: SnapshotSyncV2OpenLocalOverride?
+    var snapshotSyncV2LibraryOverride: SnapshotSyncV2LibraryOverride?
     var snapshotSyncV2CatalogOverride: SnapshotSyncV2CatalogOverride?
     var snapshotSyncV2AfterStagedRemoteOverride: SnapshotSyncV2AfterStagedRemoteOverride?
     #endif
@@ -109,6 +117,7 @@ struct AppDependencies {
         editorCommandSession: EditorCommandSession = EditorCommandSession(),
         clipboardWriter: any PlainTextClipboardWriting = SystemPlainTextClipboardWriter(),
         activeCommittedTextCapture: (@MainActor () -> EditorCommittedTextCaptureResult)? = nil,
+        browserAuthorization: (@MainActor @Sendable (URL) async throws -> Void)? = nil,
         authSessionCoordinator: AuthSessionCoordinator? = nil,
         appleSignInCoordinator: AppleSignInCoordinator? = nil,
         appleAuthenticationOrchestrator: AppleAuthenticationOrchestrator? = nil,
@@ -128,6 +137,7 @@ struct AppDependencies {
         self.activeCommittedTextCapture = activeCommittedTextCapture ?? {
             editorCommandSession.captureActiveCommittedText()
         }
+        self.browserAuthorization = browserAuthorization ?? { try await AuthComposition.authorizeBrowser(url: $0) }
         self.authSessionCoordinator = authSessionCoordinator
         self.appleSignInCoordinator = appleSignInCoordinator
         self.appleAuthenticationOrchestrator = appleAuthenticationOrchestrator
@@ -137,6 +147,7 @@ struct AppDependencies {
         snapshotSyncV2CheckpointOverride = nil
         snapshotSyncV2OpenOverride = nil
         snapshotSyncV2OpenLocalOverride = nil
+        snapshotSyncV2LibraryOverride = nil
         snapshotSyncV2CatalogOverride = nil
         snapshotSyncV2AfterStagedRemoteOverride = nil
         #endif

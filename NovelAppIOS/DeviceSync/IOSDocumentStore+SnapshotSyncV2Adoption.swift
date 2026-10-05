@@ -5,38 +5,39 @@ import NovelSyncV2
 import NovelSyncV2Application
 import NovelSyncV2PortableBridge
 import NovelSyncV2Runtime
+import NovelWorkspace
 
-typealias AutoAdoptionExpectation = IOSDocumentStore.SyncOperationContext
+typealias AutoAdoptionExpectation = WorkspaceOperationContext
 
 extension IOSDocumentStore {
     /// Adopt a verified remote resolution only after the iOS document gate,
     /// IME boundary, editor generation, and local pending intent are safe.
     @discardableResult
     func adoptPendingSnapshotSyncV2(
-        expectedSession: IOSDocumentSessionToken? = nil,
+        expectedSession: WorkspaceSessionToken? = nil,
         expectedEditGeneration: UInt64? = nil,
-        expectedAccountScope: IOSSnapshotSyncV2AccountScope? = nil,
+        expectedAccountScope: WorkspaceAccountScope? = nil,
         automatically: Bool = false
     ) async -> Bool {
         guard !isSyncV2RemoteAccountTransitionActive,
               let application = snapshotSyncV2Application,
               startupState == .ready,
-              let activeWorkID = syncV2ActiveWorkID,
-              syncV2LibraryItems.first(where: { $0.workID == activeWorkID })?.accountState
+              let activeWorkID = workspaceModel.activeWorkID,
+              workspaceModel.libraryRows.first(where: { $0.workID == activeWorkID })?.accountState
               != .parkedDifferentAccount,
               let expectedSession = expectedSession ?? currentDocumentSessionToken else {
             return false
         }
-        let expectedEditGeneration = expectedEditGeneration ?? localEditGeneration
+        let expectedEditGeneration = expectedEditGeneration ?? workspaceModel.editGeneration
         let expectedAccountScope = expectedAccountScope ?? snapshotSyncV2AccountScope
-        let operation = SyncOperationContext(workID: expectedSession.workID, session: expectedSession,
-                                             account: expectedAccountScope, editGeneration: expectedEditGeneration)
+        let operation = WorkspaceOperationContext(workID: expectedSession.workID, session: expectedSession,
+                                                  account: expectedAccountScope, editGeneration: expectedEditGeneration)
         return await documentOperationGate.perform { [weak self] in
             guard let self else { return false }
             guard matchesRemoteSyncAccount(expectedAccountScope) else { return false }
             guard currentDocumentSessionToken == expectedSession,
-                  localEditGeneration == expectedEditGeneration,
-                  saveState == .saved else {
+                  workspaceModel.editGeneration == expectedEditGeneration,
+                  workspaceModel.saveState == .saved else {
                 operationErrorMessage = "未保存の変更があります。端末へ適用する前に保存してください。"
                 return false
             }
@@ -46,83 +47,37 @@ extension IOSDocumentStore {
             isRemoteAdoptionInProgress = true
             defer { isRemoteAdoptionInProgress = false }
             var adopted = false
-            var adoptionSession: NovelSyncV2Application.DocumentSessionToken?
             let transitioned = await performDocumentTransition {
                 do {
-                    // `prepareForDocumentTransition` can commit marked text
-                    // and advance the edit generation.  Revalidate after that
-                    // commit/save boundary so a just-finished IME composition
-                    // is never replaced by the staged remote snapshot.
-                    guard syncV2ActiveWorkID == activeWorkID,
-                          !isSyncV2RemoteAccountTransitionActive,
-                          matchesSyncOperation(operation),
-                          saveState == .saved else { return }
-                    // The worker already projected the receipt into the durable
-                    // application state. Reading uiState/pendingAdoption is
-                    // local; adoption never performs a second network round trip.
-                    guard let projected = await application.uiState(workID: activeWorkID),
-                          projected.lastTypedResult == .adoptionPending,
-                          case let .readyForSafeAdoption(inboxID) = projected.remoteProgress,
-                          !isSyncV2RemoteAccountTransitionActive,
-                          matchesSyncOperation(operation) else { return }
-                    guard let pending = try await application.pendingAdoption(workID: activeWorkID),
-                          pending.workID == activeWorkID,
-                          pending.inboxID == inboxID,
-                          !isSyncV2RemoteAccountTransitionActive,
-                          matchesSyncOperation(operation) else { return }
-                    guard !automatically || claimAutomaticAdoption(pending, account: expectedAccountScope) else { return }
-                    applySnapshotSyncV2State(projected)
-
-                    let session = await application.beginSession(workID: pending.workID)
-                    adoptionSession = session
-                    guard !isSyncV2RemoteAccountTransitionActive,
-                          matchesSyncOperation(operation) else { return }
-                    #if !FUMINIWA_TEST_COMPOSITION
-                    // ProductionRuntimeConfiguration receives this exact
-                    // platform gate. The compile-time test runtime owns an
-                    // isolated in-memory gate instead; the iOS checks above
-                    // prove its IME/save/session boundary before asking that
-                    // application-owned gate for a one-shot token.
-                    try await snapshotSyncV2DocumentGate.arm(
-                        session: session,
-                        expectedLocalVersion: pending.expectedLocalVersion,
-                        proof: SyncV2SafeBoundaryProof(
-                            editorGeneration: editorContentGeneration,
-                            hasMarkedText: editorCommandSession.captureActiveCommittedText() == .compositionInProgress,
-                            hasUnsavedChanges: saveState != .saved,
-                            pendingIntentCleared: projected.lastTypedResult == .adoptionPending
-                        )
+                    let port = WorkspaceAdoptionPort(
+                        isCurrent: {
+                            !self.isSyncV2RemoteAccountTransitionActive && self.matchesSyncOperation(operation)
+                                && self.workspaceModel.saveState == .saved
+                        }, session: { pending in await application.beginSession(workID: pending.workID) },
+                        arm: { session, pending, projected in
+                            #if !FUMINIWA_TEST_COMPOSITION
+                            try await self.snapshotSyncV2DocumentGate.arm(
+                                session: session, expectedLocalVersion: pending.expectedLocalVersion,
+                                proof: SyncV2SafeBoundaryProof(
+                                    editorGeneration: self.workspaceModel.editorContentGeneration,
+                                    hasMarkedText: self.editorCommandSession.captureActiveCommittedText() == .compositionInProgress,
+                                    hasUnsavedChanges: self.workspaceModel.saveState != .saved,
+                                    pendingIntentCleared: projected.lastTypedResult == .adoptionPending
+                                )
+                            )
+                            #endif
+                        }, disarm: { await self.snapshotSyncV2DocumentGate.disarm(session: $0) },
+                        claim: { !automatically || self.claimAutomaticAdoption($0, account: expectedAccountScope) },
+                        install: { opened in
+                            guard self.matchesSyncOperation(operation), let value = opened.document else { return false }
+                            return self.installSnapshotSyncV2Opened(opened, value: value, preservingSelection: true)
+                        }, project: { self.applySnapshotSyncV2State($0) }
                     )
-                    #endif
-                    let token = try await application.documentGateToken(for: session)
-                    guard !isSyncV2RemoteAccountTransitionActive,
-                          matchesSyncOperation(operation) else {
-                        await snapshotSyncV2DocumentGate.disarm(session: session)
-                        return
-                    }
-                    let boundary = SafeAdoptionBoundary(
-                        workID: pending.workID,
-                        inboxID: pending.inboxID,
-                        session: session,
-                        gate: token
+                    adopted = try await AdoptionCoordinator(application: application).adoptAtPreparedBoundary(
+                        host: self, workID: activeWorkID, port: port
                     )
-                    let opened = try await application.applyStagedRemote(at: boundary)
-                    guard !isSyncV2RemoteAccountTransitionActive,
-                          opened.workID == activeWorkID,
-                          matchesSyncOperation(operation) else { return }
-                    guard let value = opened.document else { return }
-                    guard !isSyncV2RemoteAccountTransitionActive,
-                          matchesSyncOperation(operation),
-                          installSnapshotSyncV2Opened(opened, value: value, preservingSelection: true) else { return }
-                    let adoptedState = await application.uiState(workID: opened.workID)
-                    guard matchesRemoteSyncAccount(expectedAccountScope) else { return }
-                    applySnapshotSyncV2State(adoptedState)
-                    adopted = true
                 } catch {
-                    if let adoptionSession {
-                        await snapshotSyncV2DocumentGate.disarm(session: adoptionSession)
-                    }
-                    guard matchesSyncAccount(expectedAccountScope) else { return }
+                    guard !Task.isCancelled, matchesSyncOperation(operation) else { return }
                     snapshotSyncOutcome = .failure(.fatal(.invalidLocalState))
                     snapshotSyncV2RemoteOnlyOpenFailure = syncV2FailureKind(error)
                     logSyncV2PresentationFailure(error)
@@ -133,10 +88,10 @@ extension IOSDocumentStore {
         }
     }
 
-    func claimAutomaticAdoption(_ pending: SyncV2PendingAdoption, account: IOSSnapshotSyncV2AccountScope) -> Bool {
+    func claimAutomaticAdoption(_ pending: SyncV2PendingAdoption, account: WorkspaceAccountScope) -> Bool {
         guard !pending.requiresExplicitConfirmation,
-              automaticAdoptionAttempts[account]?[pending.workID]?.contains(pending.inboxID) != true else { return false }
-        automaticAdoptionAttempts[account, default: [:]][pending.workID, default: []].insert(pending.inboxID)
+              workspaceModel.automaticAdoptionAttempts[account]?[pending.workID]?.contains(pending.inboxID) != true else { return false }
+        workspaceModel.automaticAdoptionAttempts[account, default: [:]][pending.workID, default: []].insert(pending.inboxID)
         return true
     }
 
@@ -146,19 +101,19 @@ extension IOSDocumentStore {
     ) -> AutoAdoptionExpectation? {
         guard !isSyncV2RemoteAccountTransitionActive,
               startupState == .ready,
-              syncV2ActiveWorkID == workID,
+              workspaceModel.activeWorkID == workID,
               let session = currentDocumentSessionToken,
-              saveState == .saved,
-              !isDocumentTransitionInProgress,
-              syncV2KeepBothPendingWorkID == nil else { return nil }
-        let editGeneration = localEditGeneration
+              workspaceModel.saveState == .saved,
+              !workspaceModel.isDocumentTransitionInProgress,
+              workspaceModel.keepBothPendingWorkID == nil else { return nil }
+        let editGeneration = workspaceModel.editGeneration
         let accountScope = snapshotSyncV2AccountScope
 
         if validatingEditorSurface {
             switch editorCommandSession.captureActiveCommittedText() {
             case let .captured(text):
-                guard let episodeID = selectedEpisodeID,
-                      document.episode(episodeID)?.episode.content == text else { return nil }
+                guard let episodeID = workspaceModel.selectedEpisodeID,
+                      workspaceModel.document.episode(episodeID)?.episode.content == text else { return nil }
             case .compositionInProgress:
                 return nil
             case .notActive:
@@ -166,12 +121,12 @@ extension IOSDocumentStore {
             }
         }
 
-        guard syncV2ActiveWorkID == workID,
+        guard workspaceModel.activeWorkID == workID,
               !isSyncV2RemoteAccountTransitionActive,
               currentDocumentSessionToken == session,
-              localEditGeneration == editGeneration,
+              workspaceModel.editGeneration == editGeneration,
               matchesSyncAccount(accountScope),
-              saveState == .saved else { return nil }
+              workspaceModel.saveState == .saved else { return nil }
         return AutoAdoptionExpectation(workID: workID, session: session, account: accountScope, editGeneration: editGeneration)
     }
 
@@ -179,7 +134,7 @@ extension IOSDocumentStore {
         _ application: SyncV2Application,
         workID: WorkID
     ) {
-        guard let projected = snapshotSyncState,
+        guard let projected = workspaceModel.syncUIState,
               projected.workID == workID,
               case .readyForSafeAdoption = projected.remoteProgress,
               let expectation = automaticAdoptionExpectation(

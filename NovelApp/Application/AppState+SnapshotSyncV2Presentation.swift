@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import NovelSyncV2Application
+import NovelWorkspace
 
 /// macOSの明示Import/Exportパネルとv2履歴表示の薄いUI境界。
 extension AppState {
@@ -15,49 +16,66 @@ extension AppState {
     func presentExportPanel() async {
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.fuminiwaNovelPackage]
-        panel.nameFieldStringValue = "\(document.title).novelpkg"
+        panel.nameFieldStringValue = "\(workspaceModel.document.title).novelpkg"
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do {
             // Export is the only ordinary path allowed to call the package
             // codec. The v2 SQLite checkpoint remains the live authority.
-            try await exportDocumentPackage(to: url, expectedSession: documentSessionToken)
+            try await exportDocumentPackage(to: url, expectedSession: workspaceModel.documentSessionToken)
             operationMessage = "作品を書き出しました。"
         } catch {
             operationMessage = "作品を書き出せませんでした。"
         }
     }
 
-    func refreshSnapshotHistory() async {
+    func presentWholeWorkHistory() {
+        NotificationCenter.default.post(name: .presentWorkHistory, object: workspaceModel.documentSessionToken)
+    }
+
+    func refreshSnapshotHistory(publish: () -> Void = {}) async {
         guard let application = snapshotSyncV2Application else { return }
         guard let workID = currentSnapshotSyncV2WorkID else {
-            snapshotSyncHistory = []
+            workspaceModel.historyItems = []
+            snapshotSyncHistoryLoading = false
+            snapshotSyncHistoryFailure = nil
+            publish()
             return
         }
         let accountScope = snapshotSyncV2AccountScopeToken
-        let documentSession = documentSessionToken
-        do {
-            var cursor: String?
-            var items: [SyncV2HistoryItem] = []
-            repeat {
-                guard matchesSnapshotSyncV2AccountScope(accountScope),
-                      currentSnapshotSyncV2WorkID == workID,
-                      documentSessionToken == documentSession else { return }
-                let page = try await application.historyPage(
-                    workID: workID,
-                    cursor: cursor,
-                    pageSize: 100
-                )
-                items.append(contentsOf: page.items)
-                cursor = page.nextCursor
-            } while cursor != nil
-            guard matchesSnapshotSyncV2AccountScope(accountScope),
-                  currentSnapshotSyncV2WorkID == workID,
-                  documentSessionToken == documentSession else {
-                return
+        let documentSession = workspaceModel.documentSessionToken
+        let revision = UUID()
+        snapshotSyncHistoryRevision = revision
+        func isCurrent() -> Bool {
+            !Task.isCancelled && snapshotSyncHistoryRevision == revision &&
+                matchesSnapshotSyncV2AccountScope(accountScope) && currentSnapshotSyncV2WorkID == workID &&
+                workspaceModel.documentSessionToken == documentSession
+        }
+        workspaceModel.historyItems = []
+        snapshotSyncHistoryLoading = true
+        snapshotSyncHistoryFailure = nil
+        defer {
+            if snapshotSyncHistoryRevision == revision {
+                snapshotSyncHistoryLoading = false
             }
-            snapshotSyncHistory = items
+        }
+        do {
+            var page = try await application.firstHistoryPage(workID: workID)
+            while true {
+                guard isCurrent() else { return }
+                if page.replacesItems {
+                    workspaceModel.historyItems = page.items
+                } else {
+                    workspaceModel.historyItems.append(contentsOf: page.items)
+                }
+                snapshotSyncHistoryFailure = page.onlineFailure == nil ? nil : "オンラインの履歴を取得できません。この端末の履歴を表示しています。"
+                publish()
+                guard let next = page.next else { break }
+                await Task.yield()
+                page = try await application.olderHistoryPage(next)
+            }
         } catch {
-            snapshotSyncHistory = []
+            guard isCurrent() else { return }
+            snapshotSyncHistoryFailure = "履歴を読み込めませんでした。"
         }
     }
 
@@ -73,10 +91,10 @@ extension AppState {
 }
 
 extension AppState {
-    func claimAutomaticAdoption(_ pending: SyncV2PendingAdoption, account: SnapshotSyncV2AccountScopeToken) -> Bool {
+    func claimAutomaticAdoption(_ pending: SyncV2PendingAdoption, account: WorkspaceAccountScope) -> Bool {
         guard !pending.requiresExplicitConfirmation,
-              automaticAdoptionAttempts[account]?[pending.workID]?.contains(pending.inboxID) != true else { return false }
-        automaticAdoptionAttempts[account, default: [:]][pending.workID, default: []].insert(pending.inboxID)
+              workspaceModel.automaticAdoptionAttempts[account]?[pending.workID]?.contains(pending.inboxID) != true else { return false }
+        workspaceModel.automaticAdoptionAttempts[account, default: [:]][pending.workID, default: []].insert(pending.inboxID)
         return true
     }
 }

@@ -1,7 +1,10 @@
 import NovelUI
+import NovelWorkspace
+import NovelWorkspaceUI
 import SwiftUI
 
 struct IOSSettingsView: View {
+    @Environment(WorkspaceModel.self) private var workspace
     let store: IOSDocumentStore
     let userDefaults: UserDefaults
     private let appearanceSections: IOSAppearanceSettingsSections
@@ -24,8 +27,8 @@ struct IOSSettingsView: View {
             }
             Section {
                 DeviceLabelSettingsView(defaults: userDefaults)
-                Text(store.authUIState.label).foregroundStyle(.secondary)
-                switch store.authUIState {
+                Text(workspace.authUIState.label).foregroundStyle(.secondary)
+                switch workspace.authUIState {
                 case .signedOut, .failed:
                     Button("Appleでサインイン") { Task { await store.signInWithApple() } }
                     Button("Googleでサインイン") { Task { await store.signInWithGoogle() } }

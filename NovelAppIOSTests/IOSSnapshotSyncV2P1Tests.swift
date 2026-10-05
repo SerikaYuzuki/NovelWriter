@@ -1,6 +1,7 @@
 import Foundation
 @testable import FUMINIWAIOS
 import NovelCore
+import NovelSyncV2
 import NovelSyncV2Application
 import NovelSyncV2Runtime
 import Testing
@@ -20,13 +21,13 @@ struct IOSSnapshotSyncV2P1Tests {
         store.updateDocumentTitle("Work A")
         #expect(await store.saveNow())
 
-        let oldDocument = store.document
+        let oldDocument = store.workspaceModel.document
         let oldCreatedAt = store.documentCreatedAt
         let oldURL = store.documentURL
-        let oldChapterID = store.selectedChapterID
-        let oldEpisodeID = store.selectedEpisodeID
+        let oldChapterID = store.workspaceModel.selectedChapterID
+        let oldEpisodeID = store.workspaceModel.selectedEpisodeID
         let oldSession = store.currentDocumentSessionToken
-        let oldWorkID = store.syncV2ActiveWorkID
+        let oldWorkID = store.workspaceModel.activeWorkID
         let oldRecentWorkID = environment.defaults.string(forKey: IOSDocumentStore.lastWorkIDKey)
 
         // Preview deterministically rejects checkpoint writes at the
@@ -36,13 +37,13 @@ struct IOSSnapshotSyncV2P1Tests {
         )
         #expect(await !store.makeNewDocument())
 
-        #expect(store.document == oldDocument)
+        #expect(store.workspaceModel.document == oldDocument)
         #expect(store.documentCreatedAt == oldCreatedAt)
         #expect(store.documentURL == oldURL)
-        #expect(store.selectedChapterID == oldChapterID)
-        #expect(store.selectedEpisodeID == oldEpisodeID)
+        #expect(store.workspaceModel.selectedChapterID == oldChapterID)
+        #expect(store.workspaceModel.selectedEpisodeID == oldEpisodeID)
         #expect(store.currentDocumentSessionToken == oldSession)
-        #expect(store.syncV2ActiveWorkID == oldWorkID)
+        #expect(store.workspaceModel.activeWorkID == oldWorkID)
         #expect(environment.defaults.string(forKey: IOSDocumentStore.lastWorkIDKey) == oldRecentWorkID)
     }
 
@@ -59,8 +60,8 @@ struct IOSSnapshotSyncV2P1Tests {
         store.updateDocumentTitle("共有projection")
         #expect(await store.saveNow())
 
-        let state = store.snapshotSyncState
-        #expect(state?.workID == store.syncV2ActiveWorkID)
+        let state = store.workspaceModel.syncUIState
+        #expect(state?.workID == store.workspaceModel.activeWorkID)
         guard case .saved = state?.localDurability else {
             Issue.record("checkpoint did not project a durable local save")
             return
@@ -72,6 +73,36 @@ struct IOSSnapshotSyncV2P1Tests {
         case .pending, .syncing, .offline: break
         default: Issue.record("unexpected post-checkpoint state: \(String(describing: state?.remoteProgress))")
         }
+    }
+
+    @Test("未保存の本文をgate内で保存して履歴に残してから作品全体を復元する")
+    func wholeWorkRestorePreservesUnsavedTextInHistory() async throws {
+        let environment = makeEnvironment()
+        defer { environment.cleanup() }
+        let store = IOSDocumentStore(userDefaults: environment.defaults, libraryRoot: environment.root)
+        await store.bootstrap()
+        #expect(await store.makeNewDocument())
+        let app = try #require(store.snapshotSyncV2Application)
+        let workID = try #require(store.workspaceModel.activeWorkID)
+        let snapshot = try #require(try await app.currentSnapshotID(workID: workID))
+        let original = store.workspaceModel.document
+        store.updateEpisodeContent("復元直前の未保存本文", chapterID: original.chapters[0].id,
+                                   episodeID: original.chapters[0].episodes[0].id)
+        let unsaved = store.workspaceModel.document
+        #expect(store.workspaceModel.saveState == .unsaved)
+        #expect(await store.restoreSnapshotSyncV2(snapshotID: snapshot.rawValue))
+        #expect(store.workspaceModel.document == original)
+        #expect(store.workspaceModel.saveState == .saved)
+        let page = try await app.historyPage(workID: workID, cursor: nil, pageSize: 100)
+        var preserved = false
+        for entry in page.items where entry.source == .local {
+            let body = try await app.snapshotEpisodePreview(workID: workID, snapshotID: entry.snapshotID,
+                                                            episodeID: original.chapters[0].episodes[0].id.rawValue.uuidString.lowercased())
+            if body == unsaved.chapters[0].episodes[0].content {
+                preserved = true
+            }
+        }
+        #expect(preserved)
     }
 
     private func makeEnvironment() -> TestEnvironment {

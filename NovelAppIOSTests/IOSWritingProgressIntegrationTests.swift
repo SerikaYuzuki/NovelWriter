@@ -17,12 +17,12 @@ struct IOSWritingProgressIntegrationTests {
         let store = IOSDocumentStore(userDefaults: defaults, libraryRoot: root)
         await store.bootstrap()
         #expect(await store.makeNewDocument())
-        let chapter = try #require(store.selectedChapterID), episode = try #require(store.selectedEpisodeID)
-        store.document.chapters[0].episodes.append(Episode(title: "別の話", content: "別"))
+        let chapter = try #require(store.workspaceModel.selectedChapterID), episode = try #require(store.workspaceModel.selectedEpisodeID)
+        store.workspaceModel.document.chapters[0].episodes.append(Episode(title: "別の話", content: "別"))
         store.markDocumentChanged()
-        let other = store.document.chapters[0].episodes[1].id
+        let other = store.workspaceModel.document.chapters[0].episodes[1].id
         // A changed, unreported second episode is a sentinel for an all-episode scan.
-        store.document.updateEpisodeContent("別の変更", for: other, in: chapter)
+        store.workspaceModel.document.updateEpisodeContent("別の変更", for: other, in: chapter)
         store.updateEpisodeContent("文", chapterID: chapter, episodeID: episode)
         #expect(store.writingProgress.episodeCount(other) == 1)
         #expect(store.writingProgress.total == 1)
@@ -41,8 +41,8 @@ struct IOSWritingProgressIntegrationTests {
         let store = IOSDocumentStore(userDefaults: defaults, libraryRoot: root)
         await store.bootstrap()
         #expect(await store.makeNewDocument())
-        let work = try #require(store.syncV2ActiveWorkID)
-        let chapter = try #require(store.selectedChapterID), episode = try #require(store.selectedEpisodeID)
+        let work = try #require(store.workspaceModel.activeWorkID)
+        let chapter = try #require(store.workspaceModel.selectedChapterID), episode = try #require(store.workspaceModel.selectedEpisodeID)
         let token = try #require(store.currentEpisodeEditingToken)
         store.updateEpisodeContent("三文字", chapterID: chapter, episodeID: episode, expectedEditingToken: token)
         store.updateEpisodeContent("三文字", chapterID: chapter, episodeID: episode)
@@ -50,14 +50,14 @@ struct IOSWritingProgressIntegrationTests {
         store.updateEpisodeContent("古い入力", chapterID: chapter, episodeID: episode, expectedEditingToken: token)
         store.writingProgress.publishSnapshot()
         #expect(store.writingProgress.days(for: work.rawValue).values.first?.added == 3)
-        store.document.updateEpisodeContent(String(repeating: "文", count: 10000), for: episode, in: chapter)
+        store.workspaceModel.document.updateEpisodeContent(String(repeating: "文", count: 10000), for: episode, in: chapter)
         store.markDocumentChanged()
         store.writingProgress.publishSnapshot()
         #expect(store.writingProgress.days(for: work.rawValue).values.first?.added == 3)
         #expect(store.writingProgress.notice == nil)
         #expect(store.writingProgress.milestones(for: work.rawValue).first?.reachedAt == nil)
         // Reinstalling the same work keeps its stored creation time, the checkpoint anchor.
-        #expect(store.install(store.document, at: root, attachments: [], workID: work,
+        #expect(store.install(store.workspaceModel.document, at: root, attachments: [], workID: work,
                               createdAt: store.documentCreatedAt))
         #expect(store.writingProgress.days(for: work.rawValue).values.first?.added == 3)
         #expect(await store.saveNow())
@@ -71,9 +71,9 @@ struct IOSWritingProgressIntegrationTests {
         let store = IOSDocumentStore(userDefaults: defaults, libraryRoot: root)
         await store.bootstrap()
         #expect(await store.makeNewDocument())
-        let work = try #require(store.syncV2ActiveWorkID)
-        let chapter = try #require(store.selectedChapterID), episode = try #require(store.selectedEpisodeID)
-        var document = store.document
+        let work = try #require(store.workspaceModel.activeWorkID)
+        let chapter = try #require(store.workspaceModel.selectedChapterID), episode = try #require(store.workspaceModel.selectedEpisodeID)
+        var document = store.workspaceModel.document
         let remoteContent = String(repeating: "文", count: 10000)
         document.updateEpisodeContent(remoteContent, for: episode, in: chapter)
         if notifyInstall {
@@ -84,11 +84,12 @@ struct IOSWritingProgressIntegrationTests {
             #expect(store.installSnapshotSyncV2Opened(opened, value: document, preservingSelection: true))
             store.writingProgress.publishSnapshot()
             #expect(store.writingProgress.total == 10000)
-            #expect(store.selectedChapterID == chapter)
-            #expect(store.selectedEpisodeID == episode)
+            #expect(store.workspaceModel.selectedChapterID == chapter)
+            #expect(store.workspaceModel.selectedEpisodeID == episode)
             #expect(store.writingProgress.days(for: work.rawValue).isEmpty)
         } else {
-            store.document = document
+            store.workspaceModel.document = document
+            store.workspaceModel.documentSessionToken.documentID = store.workspaceModel.document.id
         }
         #expect(store.writingProgress.notice == nil)
         let token = try #require(store.currentEpisodeEditingToken)
@@ -109,8 +110,8 @@ struct IOSWritingProgressIntegrationTests {
         let store = IOSDocumentStore(userDefaults: defaults, libraryRoot: root)
         await store.bootstrap()
         #expect(await store.makeNewDocument())
-        let work = try #require(store.syncV2ActiveWorkID), chapter = try #require(store.selectedChapterID),
-            episode = try #require(store.selectedEpisodeID)
+        let work = try #require(store.workspaceModel.activeWorkID), chapter = try #require(store.workspaceModel.selectedChapterID),
+            episode = try #require(store.workspaceModel.selectedEpisodeID)
         let path = [
             "chapters",
             chapter.rawValue.uuidString.lowercased(),
@@ -120,14 +121,14 @@ struct IOSWritingProgressIntegrationTests {
         ]
         let edit = WritingEdit(
             workId: work.rawValue,
-            documentId: store.document.id,
+            documentId: store.workspaceModel.document.id,
             changes: [WritingChange(
                 path: path,
                 before: .string(""),
                 after: .string(String(repeating: "文", count: 10000))
             )]
         )
-        let editorHost = UIHostingController(rootView: IOSEditorPane(store: store, userDefaults: defaults))
+        let editorHost = UIHostingController(rootView: IOSEditorPane(store: store, userDefaults: defaults).environment(store.workspaceModel))
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 430, height: 932))
         window.rootViewController = editorHost
         editorHost.view.frame = window.bounds

@@ -45,7 +45,7 @@ extension LibraryImportPresentationTests {
         #expect(await state.configureSnapshotSyncV2(using: state.snapshotSyncV2Factory))
         await state.bootstrap()
         let originalWork = state.currentSnapshotSyncV2WorkID
-        let originalDocument = state.document.id
+        let originalDocument = state.workspaceModel.document.id
         let application = try #require(state.snapshotSyncV2Application)
         let target = WorkID(UUID())
         _ = try await application.checkpoint(workID: target, document: .newDocument(title: "取得した作品"),
@@ -56,7 +56,7 @@ extension LibraryImportPresentationTests {
         let task = try #require(state.libraryPrefetchTask)
         await task.value
         #expect(state.currentSnapshotSyncV2WorkID == originalWork)
-        #expect(state.document.id == originalDocument)
+        #expect(state.workspaceModel.document.id == originalDocument)
         #expect(state.libraryPrefetchTask == nil)
         #expect(state.snapshotSyncLibraryWorks.contains { $0.workID == target && $0.availability != .remoteOnly })
     }
@@ -85,14 +85,14 @@ extension LibraryImportPresentationTests {
         _ = try await application.checkpoint(workID: goodID, document: .newDocument(title: "開ける作品"),
                                              reason: .migration, documentCreatedAt: Date())
         #expect(await state.returnToSnapshotLibrary())
-        let original = state.document
+        let original = state.workspaceModel.document
         let failed = StartupLibraryWork(id: failedID.rawValue, title: "失敗する作品", availability: .cached,
                                         workID: failedID, remoteProgress: .readyForSafeAdoption(inboxID: UUID()), accountState: .active)
         #expect(await !state.openLibraryWork(failed))
         #expect(state.snapshotSyncLibraryOpenFailure != nil)
         #expect(state.operationMessage?.isEmpty == false)
         #expect(!state.startupState.isReady)
-        #expect(state.document == original)
+        #expect(state.workspaceModel.document == original)
         let good = StartupLibraryWork(id: goodID.rawValue, title: "開ける作品", availability: .local, workID: goodID,
                                       remoteProgress: .idle, accountState: .unbound)
         #expect(await state.openLibraryWork(good))

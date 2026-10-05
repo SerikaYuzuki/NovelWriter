@@ -1,5 +1,6 @@
 import NovelCore
 import NovelUI
+import NovelWorkspace
 import SwiftUI
 
 /// プロットdetail下段の伏線領域。選択状態はAppStateに集約したまま一覧と詳細を分ける。
@@ -16,7 +17,7 @@ struct FlagSectionView: View {
                 .frame(minWidth: 240, idealWidth: 280, maxHeight: .infinity)
 
             FlagDetailView(onChapterJump: onChapterJump)
-                .frame(minWidth: 280, idealWidth: 360, maxHeight: .infinity)
+                .frame(minWidth: 320, idealWidth: 360, maxHeight: .infinity)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .confirmationDialog(
@@ -55,6 +56,7 @@ struct FlagTrackerView: View {
 }
 
 private struct FlagListView: View {
+    @Environment(WorkspaceModel.self) private var workspace
     @Environment(AppState.self) private var appState
 
     @Binding var flagPendingDeletion: SessionBoundValue<Flag>?
@@ -64,7 +66,7 @@ private struct FlagListView: View {
         VStack(spacing: 0) {
             flagContent
 
-            if !appState.document.flags.isEmpty {
+            if !workspace.document.flags.isEmpty {
                 Divider()
 
                 HStack {
@@ -76,7 +78,7 @@ private struct FlagListView: View {
 
                     Button(role: .destructive) {
                         flagPendingDeletion = appState.selectedFlag.map {
-                            SessionBoundValue(value: $0, session: appState.documentSessionToken)
+                            SessionBoundValue(value: $0, session: workspace.documentSessionToken)
                         }
                     } label: {
                         Label("削除", systemImage: "trash")
@@ -92,7 +94,7 @@ private struct FlagListView: View {
 
     @ViewBuilder
     private var flagContent: some View {
-        if appState.document.flags.isEmpty {
+        if workspace.document.flags.isEmpty {
             ContentUnavailableView {
                 Label("伏線がありません", systemImage: "flag")
             } actions: {
@@ -133,11 +135,11 @@ private struct FlagListView: View {
     }
 
     private var unresolvedFlags: [Flag] {
-        appState.document.flags.filter { !$0.isResolved }
+        workspace.document.flags.filter { !$0.isResolved }
     }
 
     private var resolvedFlags: [Flag] {
-        appState.document.flags.filter(\.isResolved)
+        workspace.document.flags.filter(\.isResolved)
     }
 
     private var sessionBoundUnresolvedFlags: [SessionBoundValue<Flag>] {
@@ -164,17 +166,18 @@ private struct FlagListView: View {
     }
 
     private func sessionBound(_ flags: [Flag]) -> [SessionBoundValue<Flag>] {
-        let session = appState.documentSessionToken
+        let session = workspace.documentSessionToken
         return flags.map { SessionBoundValue(value: $0, session: session) }
     }
 
     private func chapterTitle(for chapterID: ChapterID?) -> String? {
         guard let chapterID else { return nil }
-        return appState.document.chapters.first { $0.id == chapterID }?.title
+        return workspace.document.chapters.first { $0.id == chapterID }?.title
     }
 }
 
 private struct FlagDetailView: View {
+    @Environment(WorkspaceModel.self) private var workspace
     @Environment(AppState.self) private var appState
 
     let onChapterJump: (ChapterID) -> Void
@@ -184,7 +187,7 @@ private struct FlagDetailView: View {
             ContentUnavailableView {
                 Label("伏線が選択されていません", systemImage: "flag")
             } description: {
-                if !appState.document.flags.isEmpty {
+                if !workspace.document.flags.isEmpty {
                     Text("左の一覧から伏線を選択してください。")
                 }
             }
@@ -195,7 +198,7 @@ private struct FlagDetailView: View {
                 plantedChapterID: selectedFlagPlantedChapterBinding,
                 resolvedChapterID: selectedFlagResolvedChapterBinding,
                 isResolved: appState.selectedFlag?.isResolved == true,
-                chapters: appState.document.chapters,
+                chapters: workspace.document.chapters,
                 showsOrderWarning: selectedFlagHasOrderWarning,
                 onToggleResolved: {
                     appState.toggleSelectedFlagResolved()
@@ -248,7 +251,7 @@ private struct FlagDetailView: View {
 
     private func chapterIndex(for chapterID: ChapterID?) -> Int? {
         guard let chapterID else { return nil }
-        return appState.document.chapters.firstIndex { $0.id == chapterID }
+        return workspace.document.chapters.firstIndex { $0.id == chapterID }
     }
 }
 
@@ -266,66 +269,59 @@ private struct FlagEditor: View {
     let onCommit: () -> Void
 
     var body: some View {
-        ViewThatFits(in: .vertical) {
-            editorContent
-            ScrollView { editorContent }
+        Form {
+            Section("伏線") {
+                TextField("タイトル", text: $title, axis: .vertical)
+                    .lineLimit(1 ... 3)
+                    .onSubmit(onCommit)
+
+                Button {
+                    onToggleResolved()
+                } label: {
+                    Label(isResolved ? "未回収に戻す" : "現在章で回収", systemImage: isResolved ? "arrow.uturn.backward" : "checkmark")
+                }
+
+                Picker("張った章", selection: $plantedChapterID) {
+                    chapterPickerOptions()
+                }
+
+                Picker("回収章", selection: $resolvedChapterID) {
+                    chapterPickerOptions()
+                }
+
+                HStack {
+                    Button {
+                        if let plantedChapterID {
+                            onJump(plantedChapterID)
+                        }
+                    } label: {
+                        Label("張った章へ", systemImage: "arrowshape.turn.up.right")
+                    }
+                    .disabled(plantedChapterID == nil)
+
+                    Button {
+                        if let resolvedChapterID {
+                            onJump(resolvedChapterID)
+                        }
+                    } label: {
+                        Label("回収章へ", systemImage: "arrowshape.turn.up.right")
+                    }
+                    .disabled(resolvedChapterID == nil)
+                }
+
+                if showsOrderWarning {
+                    Label("回収章が張った章より前です", systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(StyleToken.warning)
+                }
+            }
+            Section("メモ") {
+                TextEditor(text: $note).japaneseTextEditorStyle()
+                    .frame(minHeight: 120, idealHeight: 200)
+                    .accessibilityLabel("伏線のメモ")
+            }
         }
+        .formStyle(.grouped)
         .onDisappear(perform: onCommit)
-    }
-
-    private var editorContent: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            TextField("タイトル", text: $title)
-                .onSubmit(onCommit)
-
-            Button {
-                onToggleResolved()
-            } label: {
-                Label(isResolved ? "未回収に戻す" : "現在章で回収", systemImage: isResolved ? "arrow.uturn.backward" : "checkmark")
-            }
-
-            Picker("張った章", selection: $plantedChapterID) {
-                chapterPickerOptions()
-            }
-
-            Picker("回収章", selection: $resolvedChapterID) {
-                chapterPickerOptions()
-            }
-
-            HStack {
-                Button {
-                    if let plantedChapterID {
-                        onJump(plantedChapterID)
-                    }
-                } label: {
-                    Label("張った章へ", systemImage: "arrowshape.turn.up.right")
-                }
-                .disabled(plantedChapterID == nil)
-
-                Button {
-                    if let resolvedChapterID {
-                        onJump(resolvedChapterID)
-                    }
-                } label: {
-                    Label("回収章へ", systemImage: "arrowshape.turn.up.right")
-                }
-                .disabled(resolvedChapterID == nil)
-            }
-
-            if showsOrderWarning {
-                Label("回収章が張った章より前です", systemImage: "exclamationmark.triangle")
-                    .foregroundStyle(StyleToken.warning)
-            }
-
-            VStack(alignment: .leading, spacing: 8) {
-                Text("メモ")
-                    .foregroundStyle(.secondary)
-                TextEditor(text: $note)
-                    .frame(minHeight: 100, maxHeight: .infinity)
-            }
-        }
-        .padding(16)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     @ViewBuilder

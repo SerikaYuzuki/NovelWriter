@@ -2,6 +2,7 @@ import AppKit
 import CoreTransferable
 import NovelCore
 import NovelUI
+import NovelWorkspace
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -12,6 +13,7 @@ extension PlotCardID: @retroactive Transferable {
 }
 
 struct PlotBoardView: View {
+    @Environment(WorkspaceModel.self) private var workspace
     @Environment(AppState.self) private var appState
 
     let onChapterJump: (ChapterID) -> Void
@@ -42,7 +44,7 @@ struct PlotBoardView: View {
                         editingCardRequest = nil
                     }
                 )
-                .frame(width: 420, height: 420)
+                .frame(minWidth: 420, idealWidth: 520, minHeight: 420, idealHeight: 560)
             }
             .confirmationDialog(
                 "プロットカードを削除しますか？",
@@ -61,12 +63,12 @@ struct PlotBoardView: View {
             }
             .onDeleteCommand {
                 guard let selectedPlotCardID = appState.selectedPlotCardID,
-                      let card = appState.document.plotCards.first(where: { $0.id == selectedPlotCardID }) else {
+                      let card = workspace.document.plotCards.first(where: { $0.id == selectedPlotCardID }) else {
                     return
                 }
                 cardPendingDeletion = SessionBoundValue(
                     value: card,
-                    session: appState.documentSessionToken
+                    session: workspace.documentSessionToken
                 )
             }
     }
@@ -77,7 +79,7 @@ struct PlotBoardView: View {
         case .unassigned:
             cardBoard(chapterID: nil, cards: cards(in: nil))
         case let .chapter(focusedChapterID):
-            if let chapter = appState.document.chapters.first(where: { $0.id == focusedChapterID }) {
+            if let chapter = workspace.document.chapters.first(where: { $0.id == focusedChapterID }) {
                 cardBoard(chapterID: chapter.id, cards: cards(in: chapter.id))
             } else {
                 ContentUnavailableView {
@@ -130,8 +132,8 @@ struct PlotBoardView: View {
     }
 
     private func cards(in chapterID: ChapterID?) -> [SessionBoundValue<PlotCard>] {
-        let session = appState.documentSessionToken
-        return appState.document.plotCards
+        let session = workspace.documentSessionToken
+        return workspace.document.plotCards
             .filter { $0.chapterID == chapterID }
             .map { SessionBoundValue(value: $0, session: session) }
     }
@@ -140,12 +142,12 @@ struct PlotBoardView: View {
         Binding(
             get: {
                 guard let editingCardRequest,
-                      editingCardRequest.session == appState.documentSessionToken else { return nil }
-                return appState.document.plotCards.first { $0.id == editingCardRequest.value.id }
+                      editingCardRequest.session == workspace.documentSessionToken else { return nil }
+                return workspace.document.plotCards.first { $0.id == editingCardRequest.value.id }
             },
             set: { card in
                 editingCardRequest = card.map {
-                    SessionBoundValue(value: $0, session: appState.documentSessionToken)
+                    SessionBoundValue(value: $0, session: workspace.documentSessionToken)
                 }
             }
         )
@@ -174,6 +176,7 @@ struct PlotModeView: View {
 
 /// プロット画面のcontent列。執筆Outlineと同じsidebar list規約で章を選択する。
 struct PlotChapterOutlineView: View {
+    @Environment(WorkspaceModel.self) private var workspace
     @Environment(AppState.self) private var appState
 
     @State private var dropTarget: PlotOutlineSelection?
@@ -183,15 +186,15 @@ struct PlotChapterOutlineView: View {
             List(selection: plotOutlineSelectionBinding) {
                 Section("章") {
                     PlotUnassignedOutlineRow(
-                        cardCount: appState.document.plotCards.count { $0.chapterID == nil }
+                        cardCount: workspace.document.plotCards.count { $0.chapterID == nil }
                     )
                     .plotOutlineDropTarget(.unassigned, targetedSelection: $dropTarget)
                     .tag(PlotOutlineSelection.unassigned)
 
-                    ForEach(appState.document.chapters) { chapter in
+                    ForEach(workspace.document.chapters) { chapter in
                         PlotChapterOutlineRow(
                             chapter: chapter,
-                            cardCount: appState.document.plotCards.count { $0.chapterID == chapter.id },
+                            cardCount: workspace.document.plotCards.count { $0.chapterID == chapter.id },
                             flagCount: flagCount(for: chapter.id)
                         )
                         .plotOutlineDropTarget(.chapter(chapter.id), targetedSelection: $dropTarget)
@@ -201,8 +204,8 @@ struct PlotChapterOutlineView: View {
             }
             .workbenchGlassOutlineStyle()
             .overlay {
-                if appState.document.chapters.isEmpty,
-                   appState.document.plotCards.allSatisfy({ $0.chapterID != nil }) {
+                if workspace.document.chapters.isEmpty,
+                   workspace.document.plotCards.allSatisfy({ $0.chapterID != nil }) {
                     ContentUnavailableView {
                         Label("章がありません", systemImage: "doc.text")
                     } actions: {
@@ -227,7 +230,7 @@ struct PlotChapterOutlineView: View {
     }
 
     private func flagCount(for chapterID: ChapterID) -> Int {
-        appState.document.flags.reduce(into: 0) { count, flag in
+        workspace.document.flags.reduce(into: 0) { count, flag in
             if flag.plantedChapterID == chapterID || flag.resolvedChapterID == chapterID {
                 count += 1
             }
@@ -344,8 +347,8 @@ struct PlotAndFlagSplitView: View {
                     minWidth: nil,
                     idealWidth: nil,
                     maxWidth: .infinity,
-                    minHeight: 220,
-                    idealHeight: 240,
+                    minHeight: 300,
+                    idealHeight: 360,
                     maxHeight: .infinity
                 )
         }
@@ -453,6 +456,7 @@ private struct PlotBoardCard: View {
 }
 
 private struct PlotCardDetailSheet: View {
+    @Environment(WorkspaceModel.self) private var workspace
     @Environment(AppState.self) private var appState
 
     let card: PlotCard
@@ -488,19 +492,19 @@ private struct PlotCardDetailSheet: View {
                 Picker("章", selection: $chapterDraft) {
                     Text("未割り当て")
                         .tag(nil as ChapterID?)
-                    ForEach(appState.document.chapters) { chapter in
+                    ForEach(workspace.document.chapters) { chapter in
                         Text(chapter.title)
                             .tag(chapter.id as ChapterID?)
                     }
                 }
 
-                WorkbenchLabeledEditor("メモ") {
+                Section("メモ") {
                     PlotCardMemoEditor(
                         editorID: card.id,
                         initialText: memoDraft,
                         text: $memoDraft
                     )
-                    .frame(minHeight: 180)
+                    .frame(minHeight: 160, idealHeight: 280)
                 }
             }
             .formStyle(.grouped)

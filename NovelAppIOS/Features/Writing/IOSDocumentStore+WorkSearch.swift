@@ -2,67 +2,67 @@ import EditorKit
 import Foundation
 import NovelCore
 import NovelTextAnalysis
+import NovelWorkspace
 
-extension IOSDocumentStore {
+extension IOSDocumentStore: WorkspaceReplacementHost {
     var workSearchScope: String {
-        "\(String(describing: currentDocumentSessionToken))-\(snapshotSyncV2AccountScope)-\(String(describing: syncV2ActiveWorkID))-\(syncSessionController.accountGeneration)"
+        "\(String(describing: currentDocumentSessionToken))-\(snapshotSyncV2AccountScope)-\(String(describing: workspaceModel.activeWorkID))"
+    }
+
+    var episodeHistoryCurrentBody: String? {
+        guard let episode = selectedEpisode else { return nil }
+        switch captureCommittedText() {
+        case let .captured(text): return text
+        case .compositionInProgress: return nil
+        case .notActive: return episode.content
+        }
+    }
+
+    func episodeRestoreHost(episodeID: EpisodeID) -> WorkReplacementHost {
+        let host = workReplacementHost
+        let allowed = { [self] in
+            guard workspaceModel.selectedEpisodeID == episodeID, workspaceModel.document.episode(episodeID) != nil else { return false }
+            return host.validate() && workspaceModel.syncConflict == nil
+                && captureCommittedText() != .compositionInProgress
+        }
+        return WorkReplacementHost(scope: host.scope, validate: allowed, document: host.document,
+                                   boundary: host.boundary, snapshot: host.snapshot, apply: host.apply)
     }
 
     var workReplacementHost: WorkReplacementHost {
-        let session = currentDocumentSessionToken, account = snapshotSyncV2AccountScope, work = syncV2ActiveWorkID
-        let accountGeneration = syncSessionController.accountGeneration
-        let validate = { [self] in currentDocumentSessionToken == session && snapshotSyncV2AccountScope == account
-            && syncSessionController.accountGeneration == accountGeneration
-            && syncV2ActiveWorkID == work && work != nil && !isDocumentTransitionInProgress
-            && !syncV2AccountTransitionInProgress && syncV2KeepBothPendingWorkID == nil && !Task.isCancelled
+        WorkReplacementHostFactory.make(host: self, scope: workSearchScope)
+    }
+
+    func checkpointBeforeReplacement() async -> Bool {
+        await checkpointSnapshotSyncV2(workspaceModel.document, reason: .explicit)
+    }
+
+    var replacementInteractionAllowed: Bool {
+        !workspaceModel.isDocumentTransitionInProgress && !syncV2AccountTransitionInProgress && workspaceModel.keepBothPendingWorkID == nil
+    }
+
+    var selectedEpisodeEditorActive: Bool {
+        true
+    }
+
+    func replacementBoundary(context: WorkspaceOperationContext, operation: @MainActor () async -> Bool) async -> Bool {
+        let validate = {
+            self.operationContext.workID == context.workID && self.operationContext.session == context.session
+                && self.operationContext.account == context.account && self.replacementInteractionAllowed && !Task.isCancelled
         }
-        return WorkReplacementHost(
-            scope: workSearchScope,
-            validate: validate,
-            document: { self.document },
-            boundary: { operation in
-                await self.documentOperationGate.perform {
-                    guard validate(), self.editorCommandSession.prepareForDocumentTransition() else { return false }
-                    defer { self.editorCommandSession.resumeAfterDocumentTransition() }
-                    let result = await self.saveCoordinator.performExclusiveAfterFlushing(flushAfter: true) {
-                        guard validate() else { return false }
-                        return await operation()
-                    }
-                    guard validate() else { return false }
-                    if case let .completed(value, saved) = result {
-                        return value && saved
-                    }
-                    return false
-                }
-            },
-            snapshot: {
+        return await documentOperationGate.perform {
+            guard validate(), self.editorCommandSession.prepareForDocumentTransition() else { return false }
+            defer { self.editorCommandSession.resumeAfterDocumentTransition() }
+            let result = await self.saveCoordinator.performExclusiveAfterFlushing(flushAfter: true) {
                 guard validate() else { return false }
-                return await self.checkpointSnapshotSyncV2(self.document, reason: .explicit)
-            },
-            apply: { changes in
-                guard validate(), changes.allSatisfy({ $0.matches(self.document) }) else { return false }
-                if let active = changes.first(where: { $0.episodeID == self.selectedEpisodeID }) {
-                    if case .captured = self.editorCommandSession.captureActiveCommittedText() {
-                        self.editorCommandSession.resumeAfterDocumentTransition()
-                        let applied = self.writingProgress.withUncountedEditorChange {
-                            self.editorCommandSession.applyProofreading(
-                                expectedText: active.before,
-                                replacement: active.after
-                            )
-                        }
-                        let prepared = self.editorCommandSession.prepareForDocumentTransition()
-                        guard applied, prepared else { return false }
-                    } else {
-                        self.editorContentGeneration &+= 1
-                    }
-                }
-                for change in changes {
-                    self.document.updateEpisodeContent(change.after, for: change.episodeID, in: change.chapterID)
-                }
-                self.markDocumentChanged()
-                return true
+                return await operation()
             }
-        )
+            guard validate() else { return false }
+            if case let .completed(value, saved) = result {
+                return value && saved
+            }
+            return false
+        }
     }
 
     var currentWorkTextSelectionRequest: EditorSelectionRequest? {
@@ -73,7 +73,7 @@ extension IOSDocumentStore {
                              expectedScope: String) async -> Bool {
         guard workSearchScope == expectedScope,
               await selectEpisodeAfterDeviceSyncDeparture(chapterID: chapterID, episodeID: episodeID),
-              workSearchScope == expectedScope, let current = document.episode(episodeID)?.episode.content,
+              workSearchScope == expectedScope, let current = workspaceModel.document.episode(episodeID)?.episode.content,
               WorkTextSearch.sameText(current, source) else { return false }
         workTextSelectionRequest = EditorSelectionRequest(range: range)
         workTextSelectionToken = currentEpisodeEditingToken

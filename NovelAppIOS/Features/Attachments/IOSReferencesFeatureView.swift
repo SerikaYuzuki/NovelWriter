@@ -1,4 +1,5 @@
 import NovelCore
+import NovelWorkspace
 import QuickLook
 import SwiftUI
 import UniformTypeIdentifiers
@@ -6,7 +7,7 @@ import UniformTypeIdentifiers
 @MainActor
 struct IOSReferencesFeatureView: View {
     let store: IOSDocumentStore
-    let expectedSession: IOSDocumentSessionToken?
+    let expectedSession: WorkspaceSessionToken?
 
     @State private var selection: String?
 
@@ -28,7 +29,7 @@ struct IOSReferencesFeatureView: View {
 struct IOSReferencesOutlineView: View {
     let store: IOSDocumentStore
     @Binding var selection: String?
-    let expectedSession: IOSDocumentSessionToken?
+    let expectedSession: WorkspaceSessionToken?
     let usesNavigationLinks: Bool
 
     @State private var isFileImporterPresented = false
@@ -178,7 +179,7 @@ struct IOSReferencesOutlineView: View {
 struct IOSReferenceDetailView: View {
     let store: IOSDocumentStore
     let fileName: String?
-    let expectedSession: IOSDocumentSessionToken?
+    let expectedSession: WorkspaceSessionToken?
     var dismissAfterDeletion = false
     var onDeletion: () -> Void = {}
 
@@ -322,6 +323,6 @@ private struct IOSAttachmentRow: View {
 
 private struct IOSAttachmentDeletionRequest: Identifiable {
     let id = UUID()
-    let expectedSession: IOSDocumentSessionToken
+    let expectedSession: WorkspaceSessionToken
     let attachment: Attachment
 }

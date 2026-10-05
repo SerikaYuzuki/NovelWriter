@@ -6,13 +6,15 @@ import NovelAuthApple
 import NovelSyncV2Application
 import NovelSyncV2Runtime
 import NovelTiming
+import NovelWorkspace
+import NovelWorkspaceUI
 import SwiftUI
 
 @main
 struct FuminiwaApp: App {
     @NSApplicationDelegateAdaptor(ApplicationDelegate.self) private var applicationDelegate
     @State private var didBootstrap = false
-    @State private var connectivityRecovery = ConnectivityRecovery()
+    @State private var connectivityRecovery: ConnectivityRecovery
     @State private var appState: AppState
     @State private var editorSettings: EditorSettings
     @State private var documentPanelPresenter: DocumentPanelPresenter
@@ -24,6 +26,7 @@ struct FuminiwaApp: App {
     init() {
         let editorCommandSession = EditorCommandSession()
         #if FUMINIWA_TEST_COMPOSITION
+        _connectivityRecovery = State(initialValue: ConnectivityRecovery(monitorFactory: { nil }))
         let configuration: TestRuntimeConfiguration
         do {
             configuration = try ProcessInfo.processInfo.arguments.contains("--local-ui-test")
@@ -46,6 +49,7 @@ struct FuminiwaApp: App {
             editorCommandSession: editorCommandSession
         )
         #else
+        _connectivityRecovery = State(initialValue: ConnectivityRecovery())
         let defaults = UserDefaults.standard
         let dependencies = Self.makeProductionDependencies(
             userDefaults: defaults,
@@ -104,41 +108,16 @@ struct FuminiwaApp: App {
         let platformGate = MacSyncV2DocumentGate()
         let explicitOrigin = environment.syncServerURL.flatMap { try? ProductionHTTPSOrigin(url: $0) }
 
-        #if canImport(Security)
-        let authVault: (any AuthSessionVault)? = KeychainAuthSessionVault(
-            service: "dev.serikayuzuki.fuminiwa.sync"
+        let auth = AuthComposition(
+            origin: explicitOrigin?.url,
+            keychainService: "dev.serikayuzuki.fuminiwa.sync",
+            clientPlatform: .macos,
+            appleFlow: .browser
         )
-        #else
-        let authVault: (any AuthSessionVault)? = nil
-        #endif
-
-        let authCoordinator: AuthSessionCoordinator? = if let authVault,
-                                                          let explicitOrigin,
-                                                          let configuration = try? AuthClientConfiguration(
-                                                              origin: explicitOrigin.url,
-                                                              clientVersion: "0.1.0",
-                                                              clientPlatform: .macos
-                                                          ),
-                                                          let limits = try? AuthLimits(
-                                                              accessTokenLifetimeSeconds: 900,
-                                                              authReceiptLifetimeSeconds: 86400,
-                                                              challengeLifetimeSeconds: 300,
-                                                              maxCanonicalCommandBytes: 65536,
-                                                              maxProviderClockSkewSeconds: 300,
-                                                              refreshTokenLifetimeSeconds: 86400
-                                                          ),
-                                                          let transport = try? FuminiwaHTTPAuthTransport(configuration: configuration) {
-            AuthSessionCoordinator(
-                transport: transport,
-                vault: authVault,
-                authLimits: limits
-            )
-        } else {
-            nil
-        }
-
-        let appleSignInCoordinator = AppleSignInCoordinator()
-        let orchestrator: AppleAuthenticationOrchestrator? = nil
+        let authVault = auth.sessionVault
+        let authCoordinator = auth.sessionCoordinator
+        let appleSignInCoordinator = auth.appleSignInCoordinator
+        let orchestrator = auth.appleAuthenticationOrchestrator
 
         let runtimeConfiguration = try? ProductionRuntimeConfiguration(
             origin: explicitOrigin, vault: authVault, authSessionCoordinator: authCoordinator,
@@ -158,6 +137,7 @@ struct FuminiwaApp: App {
             userDefaults: userDefaults,
             defaultDocumentDirectoryName: AppBuildFlavor.defaultDocumentDirectoryName,
             editorCommandSession: editorCommandSession,
+            browserAuthorization: auth.browserAuthorization,
             authSessionCoordinator: authCoordinator,
             appleSignInCoordinator: appleSignInCoordinator,
             appleAuthenticationOrchestrator: orchestrator,
@@ -172,7 +152,7 @@ struct FuminiwaApp: App {
         Window("ふみにわ", id: "workbench") {
             ContentView()
                 .defaultAppStorage(appState.userDefaults)
-                .environment(appState)
+                .environment(appState).environment(appState.workspaceModel)
                 .environment(editorSettings)
                 .environment(documentPanelPresenter)
                 .environment(snapshotMenuPresenter)
@@ -187,7 +167,7 @@ struct FuminiwaApp: App {
         .windowToolbarStyle(.unified)
         .commands {
             CommandGroup(replacing: .newItem) {
-                LibraryCommand().environment(appState)
+                LibraryCommand().environment(appState).environment(appState.workspaceModel)
                 Divider()
                 Button("新しい作品") {
                     documentPanelPresenter.presentNewDocument()
@@ -225,6 +205,9 @@ struct FuminiwaApp: App {
                 .keyboardShortcut("s", modifiers: [.command, .option])
                 .disabled(!appState.permitsDocumentInteraction)
 
+                Button("スナップショット…") { appState.presentWholeWorkHistory() }
+                    .disabled(!appState.permitsDocumentInteraction)
+
                 SnapshotRestoreCommands(
                     appState: appState,
                     presenter: snapshotMenuPresenter
@@ -239,7 +222,7 @@ struct FuminiwaApp: App {
                 .disabled(!appState.permitsDocumentInteraction || appState.workspaceSelection.section != .structure)
             }
             CommandMenu("アカウント") {
-                switch appState.authUIState {
+                switch appState.workspaceModel.authUIState {
                 case .signedIn:
                     Button("サインアウト") { Task { await appState.signOutFromFuminiwa() } }
                 case .signingIn:
@@ -287,6 +270,7 @@ struct FuminiwaApp: App {
                             Task { await appState.selectProjectSectionAfterTransition(.plot) }
                         }
                     )
+                    .environment(appState.workspaceModel)
                 }
                 .disabled(!appState.permitsDocumentInteraction || appState.selectedChapter == nil)
             }
@@ -352,17 +336,10 @@ struct FuminiwaApp: App {
         }
 
         Settings {
-            TabView {
-                EditorSettingsView().environment(editorSettings)
-                    .tabItem { Label("執筆", systemImage: "textformat") }
-                AssistantSettingsView(defaults: appState.userDefaults)
-                    .tabItem { Label("AI支援", systemImage: "sparkles") }
-                VStack {
-                    DeviceLabelSettingsView(defaults: appState.userDefaults)
-                    AccountAccessView().environment(appState)
-                }.padding(24)
-                    .tabItem { Label("アカウント", systemImage: "person.crop.circle") }
-            }.frame(width: 520, height: 620)
+            AppSettingsView()
+                .environment(editorSettings)
+                .environment(appState).environment(appState.workspaceModel)
+                .frame(width: 520, height: 620)
         }
     }
 }
@@ -447,12 +424,6 @@ private struct WorkbenchFindCommands: View {
             Task { await appState.presentWorkSearch() }
         }
         .keyboardShortcut("f", modifiers: [.command, .shift])
-        .disabled(!appState.permitsDocumentInteraction)
-
-        Button("表記をチェック…") {
-            Task { await appState.presentTextCheck() }
-        }
-        .keyboardShortcut("k", modifiers: [.command, .option])
         .disabled(!appState.permitsDocumentInteraction)
 
         Button("次を検索") {

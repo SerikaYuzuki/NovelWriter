@@ -80,6 +80,12 @@ for defaults_boundary in \
   fi
 done
 
+# Shared services receive defaults from the app composition root too.
+if rg -n 'UserDefaults\.standard' NovelKit/Sources/NovelWorkspace NovelKit/Sources/NovelWorkspaceUI --glob '*.swift'; then
+  echo "error: workspace modules must receive an explicit UserDefaults domain" >&2
+  exit 1
+fi
+
 if rg -n 'userDefaults:[[:space:]]*UserDefaults[[:space:]]*=' \
   NovelApp/Application/AppDependencies.swift \
   NovelAppIOS/DocumentLifecycle/IOSDocumentStore.swift; then
@@ -92,6 +98,13 @@ fi
 # false branch, so the hosted test executable cannot open Keychain, production
 # SQLite roots, or a production HTTP origin through an app-level constructor.
 while IFS= read -r source; do
+  # P10b owns Keychain/HTTP construction in this one shared factory. SPM
+  # products do not inherit the app's Test compilation condition, so enforce
+  # the boundary at its app call sites (AuthComposition below), not by hiding
+  # the public factory from the independently compiled package.
+  if [[ "$source" == "NovelKit/Sources/NovelWorkspace/Authentication/AuthComposition.swift" ]]; then
+    continue
+  fi
   if awk '
     function test_build_active(    level) {
       for (level = 1; level <= depth; level += 1) {
@@ -132,7 +145,7 @@ while IFS= read -r source; do
       next
     }
     test_build_active() &&
-      $0 ~ /(ProductionRuntimeConfiguration|ProductionHTTPSOrigin|FuminiwaHTTPAuthTransport|FuminiwaRuntimeEnvironment|Keychain[A-Za-z0-9_]*)[[:space:]]*\(/ {
+      $0 ~ /(^|[^A-Za-z0-9_])(AuthComposition|ProductionRuntimeConfiguration|ProductionHTTPSOrigin|FuminiwaHTTPAuthTransport|FuminiwaRuntimeEnvironment|Keychain[A-Za-z0-9_]*)[[:space:]]*\(/ {
       print FNR ":" $0
       invalid = 1
     }
@@ -144,7 +157,7 @@ while IFS= read -r source; do
     exit 1
   fi
 done < <(
-  rg --files NovelApp NovelAppIOS NovelAppTests NovelAppIOSTests \
+  rg --files NovelApp NovelAppIOS NovelAppTests NovelAppIOSTests NovelKit/Sources/NovelWorkspace NovelKit/Sources/NovelWorkspaceUI NovelKit/Tests/NovelWorkspaceUITests \
     --glob '*.swift'
 )
 
@@ -207,7 +220,7 @@ done < <(
 
 # The LAN development endpoint belongs only to the runtime resolver. App
 # composition must never embed a fallback URL that bypasses the test gate.
-if rg -n '192\.168\.11\.5:18080' NovelApp NovelAppIOS; then
+if rg -n '192\.168\.11\.5:18080' NovelApp NovelAppIOS NovelKit/Sources/NovelWorkspaceUI; then
   echo "error: app target embeds the development sync endpoint" >&2
   exit 1
 fi

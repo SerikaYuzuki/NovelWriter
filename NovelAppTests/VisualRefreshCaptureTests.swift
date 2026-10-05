@@ -50,34 +50,34 @@ struct VisualRefreshCaptureTests {
                 let settings = EditorSettings(userDefaults: defaults, appearanceApplier: { _ in })
                 let character = NovelCore.Character(name: "白石 しおり", kana: "しらいし しおり", memo: "古い手紙を集めている。", colorHex: "#5077B0", role: "主人公")
                 let note = WorldNote(title: "海辺の図書室", content: "波の音が聞こえる、小さな図書室。\n閉館後も窓辺には明かりが残る。")
-                state.document.characters = [character, .init(name: "風間 蓮", kana: "かざま れん", colorHex: "#5B9160", role: "司書")]
-                state.document.worldNotes = [note, .init(title: "潮風祭", content: "夏の終わりに開かれる祭り。")]
-                state.document.plotCards = [.init(title: "届いた手紙", memo: "差出人のない手紙が届く。しおりは図書室へ向かう。", chapterID: chapter.id),
-                                            .init(title: "雨の図書室", memo: "窓辺で見覚えのある筆跡を見つける。", chapterID: chapter.id)]
-                state.document.flags = [.init(title: "青い封筒", note: "引き出しの奥に残された封筒。", plantedChapterID: chapter.id),
-                                        .init(title: "窓辺の合図", isResolved: true, plantedChapterID: chapter.id)]
+                state.workspaceModel.document.characters = [character, .init(name: "風間 蓮", kana: "かざま れん", colorHex: "#5B9160", role: "司書")]
+                state.workspaceModel.document.worldNotes = [note, .init(title: "潮風祭", content: "夏の終わりに開かれる祭り。")]
+                state.workspaceModel.document.plotCards = [.init(title: "届いた手紙", memo: "差出人のない手紙が届く。しおりは図書室へ向かう。", chapterID: chapter.id),
+                                                           .init(title: "雨の図書室", memo: "窓辺で見覚えのある筆跡を見つける。", chapterID: chapter.id)]
+                state.workspaceModel.document.flags = [.init(title: "青い封筒", note: "引き出しの奥に残された封筒。", plantedChapterID: chapter.id),
+                                                       .init(title: "窓辺の合図", isResolved: true, plantedChapterID: chapter.id)]
                 state.selectedCharacterID = character.id
                 state.selectedWorldNoteID = note.id
-                state.selectedFlagID = state.document.flags.first?.id
-                state.selectedPlotCardID = state.document.plotCards.first?.id
+                state.selectedFlagID = state.workspaceModel.document.flags.first?.id
+                state.selectedPlotCardID = state.workspaceModel.document.plotCards.first?.id
                 let image = try #require(NSImage(named: "FuminiwaBookSprout"))
                 let tiff = try #require(image.tiffRepresentation)
                 let bitmap = try #require(NSBitmapImageRep(data: tiff))
                 let bytes = try #require(bitmap.representation(using: .jpeg, properties: [:]))
-                for owner in [ThumbnailOwner(.work, state.document.id), ThumbnailOwner(.character, character.id.rawValue), ThumbnailOwner(.worldNote, note.id.rawValue)] {
+                for owner in [ThumbnailOwner(.work, state.workspaceModel.document.id), ThumbnailOwner(.character, character.id.rawValue), ThumbnailOwner(.worldNote, note.id.rawValue)] {
                     let encoded = try ThumbnailEncoder.encode(bytes, owner: owner)
                     state.snapshotSyncV2Attachments.append(SyncAttachment(attachmentId: UUID(), fileName: owner.fileName, bytes: encoded))
                 }
-                state.document.title = "雨あがりの書斎"
-                state.document.chapters = [chapter]
+                state.workspaceModel.document.title = "雨あがりの書斎"
+                state.workspaceModel.document.chapters = [chapter]
                 state.plotOutlineSelection = .chapter(chapter.id)
-                state.selectedChapterID = chapter.id
-                state.selectedEpisodeID = episode.id
-                state.document.synopsis = "古い家に届いた一通の手紙から、忘れていた季節の記憶が動き始める。"
+                state.workspaceModel.selectedChapterID = chapter.id
+                state.workspaceModel.selectedEpisodeID = episode.id
+                state.workspaceModel.document.synopsis = "古い家に届いた一通の手紙から、忘れていた季節の記憶が動き始める。"
                 state.workspaceSelection = WorkspaceSelection(section: section)
                 let name = "\(section.rawValue)-list-detail"
                 let root = NovelWorkbenchView()
-                    .environment(state)
+                    .environment(state).environment(state.workspaceModel)
                     .environment(settings)
                     .environment(EditorSearchSession())
                     .environment(state.editorCommandSession)
@@ -105,7 +105,7 @@ struct VisualRefreshCaptureTests {
 
     private func captureShelf(state: AppState, defaults: UserDefaults, directory: URL, dark: Bool) async throws {
         let work = try #require(state.currentSnapshotSyncV2WorkID)
-        #expect(await state.checkpointSnapshotSyncV2(state.document, reason: .explicit, attachments: state.snapshotSyncV2Attachments))
+        #expect(await state.checkpointSnapshotSyncV2(state.workspaceModel.document, reason: .explicit, attachments: state.snapshotSyncV2Attachments))
         let importing = WorkID(UUID())
         let failed = WorkID(UUID())
         state.snapshotSyncLibraryWorks = [
@@ -116,15 +116,15 @@ struct VisualRefreshCaptureTests {
         ]
         state.snapshotSyncV2RemoteOnlyOpeningWorkID = importing
         state.snapshotSyncV2RemoteOnlyOpenStartedAt = Date().addingTimeInterval(-16)
-        state.libraryImportPhases[importing] = ImportPhase(receivedBytes: 8_200_000, totalBytes: 19_000_000)
-        state.libraryImportFailures[failed] = .retryable(.lostResponse)
+        state.workspaceModel.libraryImportPhases[importing] = ImportPhase(receivedBytes: 8_200_000, totalBytes: 19_000_000)
+        state.workspaceModel.libraryImportFailures[failed] = .retryable(.lostResponse)
         for mode in [ShelfDisplay.grid, .list] {
             defaults.set(mode.rawValue, forKey: "library.display")
-            try await capture(LibraryView(observesLibrary: false).environment(state).environment(DocumentPanelPresenter(appState: state))
+            try await capture(LibraryView(observesLibrary: false).environment(state).environment(state.workspaceModel).environment(DocumentPanelPresenter(appState: state))
                 .defaultAppStorage(defaults).preferredColorScheme(dark ? .dark : .light),
                 size: NSSize(width: 1100, height: 850), dark: dark,
                 url: directory.appendingPathComponent("macos-shelf-\(mode.rawValue)-\(dark ? "dark" : "light").png"))
-            try await capture(LibraryView(observesLibrary: false).environment(state).environment(DocumentPanelPresenter(appState: state))
+            try await capture(LibraryView(observesLibrary: false).environment(state).environment(state.workspaceModel).environment(DocumentPanelPresenter(appState: state))
                 .defaultAppStorage(defaults).preferredColorScheme(dark ? .dark : .light),
                 size: NSSize(width: 700, height: 850), dark: dark,
                 url: directory.appendingPathComponent("macos-shelf-\(mode.rawValue)-narrow-\(dark ? "dark" : "light").png"))
@@ -132,7 +132,7 @@ struct VisualRefreshCaptureTests {
         state.snapshotSyncV2RemoteOnlyOpeningWorkID = nil
         for mode in [ShelfDisplay.grid, .list] {
             defaults.set(mode.rawValue, forKey: "library.display")
-            try await capture(LibraryView(observesLibrary: false).environment(state).environment(DocumentPanelPresenter(appState: state))
+            try await capture(LibraryView(observesLibrary: false).environment(state).environment(state.workspaceModel).environment(DocumentPanelPresenter(appState: state))
                 .defaultAppStorage(defaults).preferredColorScheme(dark ? .dark : .light),
                 size: NSSize(width: 700, height: 850), dark: dark,
                 url: directory.appendingPathComponent("macos-shelf-\(mode.rawValue)-retry-enabled-\(dark ? "dark" : "light").png"))

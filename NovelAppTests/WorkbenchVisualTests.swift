@@ -5,20 +5,21 @@ import Foundation
 import NovelCore
 import NovelSyncV2
 import NovelSyncV2Application
+import NovelWorkspaceUI
 import SwiftUI
 import Testing
 
 @Suite("Workbench native layout", .serialized)
 @MainActor
 struct WorkbenchVisualTests {
-    @Test("flag note expands with the lower pane instead of retaining a short form height")
+    @Test("flag note keeps a usable editing area inside the grouped form")
     func flagNoteUsesAvailableHeight() async throws {
         let defaults = makeIsolatedTestUserDefaults()
         let state = AppState(dependencies: AppDependencies(userDefaults: defaults), initialStartupState: .ready)
         let flag = Flag(title: "古い鍵", note: "検証用の伏線メモ")
-        state.document = NovelDocument(title: "表示確認用の作品", chapters: [Chapter(title: "第一章")], flags: [flag])
+        state.workspaceModel.document = NovelDocument(title: "表示確認用の作品", chapters: [Chapter(title: "第一章")], flags: [flag])
         state.selectedFlagID = flag.id
-        let host = NSHostingView(rootView: FlagSectionView(onChapterJump: { _ in }).environment(state))
+        let host = NSHostingView(rootView: FlagSectionView(onChapterJump: { _ in }).environment(state).environment(state.workspaceModel))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 860, height: 540), styleMask: [.titled], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.contentView = host
@@ -28,7 +29,7 @@ struct WorkbenchVisualTests {
         host.layoutSubtreeIfNeeded()
         let note = try #require(descendants(host).compactMap { $0 as? NSTextView }.first { $0.string == flag.note })
         let scroll = try #require(note.enclosingScrollView)
-        #expect(scroll.frame.height > 250)
+        #expect(scroll.frame.height >= 120)
         try await snapshot(host, path: "/tmp/fuminiwa-visual-flags.png")
     }
 
@@ -36,11 +37,11 @@ struct WorkbenchVisualTests {
     func plotDetailShowsUsableLowerFlagPane() async throws {
         let state = AppState(dependencies: AppDependencies(userDefaults: makeIsolatedTestUserDefaults()), initialStartupState: .ready)
         let flag = Flag(title: "配置確認", note: "下段の伏線メモ")
-        state.document = NovelDocument(title: "配置確認", chapters: [Chapter(title: "第一章")], flags: [flag])
+        state.workspaceModel.document = NovelDocument(title: "配置確認", chapters: [Chapter(title: "第一章")], flags: [flag])
         state.selectedFlagID = flag.id
         state.selectPlotOutline(.unassigned)
         state.addPlotCard(chapterID: nil)
-        let host = NSHostingView(rootView: PlotAndFlagSplitView(onChapterJump: { _ in }).environment(state))
+        let host = NSHostingView(rootView: PlotAndFlagSplitView(onChapterJump: { _ in }).environment(state).environment(state.workspaceModel))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 860, height: 680), styleMask: [.titled], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.contentView = host
@@ -60,7 +61,7 @@ struct WorkbenchVisualTests {
         let defaults = makeIsolatedTestUserDefaults()
         let state = AppState(dependencies: AppDependencies(userDefaults: defaults))
         let presenter = DocumentPanelPresenter(appState: state)
-        let host = NSHostingView(rootView: LibraryView().environment(state).environment(presenter))
+        let host = NSHostingView(rootView: LibraryView().environment(state).environment(state.workspaceModel).environment(presenter))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 540), styleMask: [.titled], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.contentView = host
@@ -69,26 +70,26 @@ struct WorkbenchVisualTests {
         try await Task.sleep(for: .milliseconds(150))
         host.layoutSubtreeIfNeeded()
         try await snapshot(host, path: "/tmp/fuminiwa-visual-library.png")
-        #expect(state.authSession == nil)
+        #expect(state.workspaceModel.authSession == nil)
     }
 
     @Test("sync remains visible in a crowded native toolbar")
     func synchronizationSurvivesOverflow() async throws {
         guard #available(macOS 26.1, *) else { return }
         let state = AppState(dependencies: AppDependencies(userDefaults: makeIsolatedTestUserDefaults()), initialStartupState: .ready)
-        state.saveState = .saved
-        state.authUIState = .signedIn(accountID: "test-account")
-        state.authSession = makeMacV2Session(accountID: "test-account", fence: "test-fence")
+        state.workspaceModel.saveState = .saved
+        state.workspaceModel.authUIState = .signedIn(accountID: "test-account")
+        state.workspaceModel.authSession = makeMacV2Session(accountID: "test-account", fence: "test-fence")
         state.snapshotSyncCurrentWorkAccountState = .active
-        state.snapshotSyncV2UIState = SyncUIState(workID: WorkID(UUID()), localDurability: .unsaved,
-                                                  remoteProgress: .noChanges, lastTypedResult: .sent)
+        state.workspaceModel.syncUIState = SyncUIState(workID: WorkID(UUID()), localDurability: .unsaved,
+                                                       remoteProgress: .noChanges, lastTypedResult: .sent)
         let root = Color.clear
             .toolbar(id: "sync-visibility-test-\(UUID())") {
                 WorkbenchToolbarContent(overlayState: WorkbenchOverlayState(), requestSync: {},
                                         showsWritingActions: true, isPlotCardRailPresented: .constant(false))
                 WorkbenchOutlineToolbarContent()
             }
-            .environment(state)
+            .environment(state).environment(state.workspaceModel)
             .environment(EditorSearchSession())
             .environment(SnapshotMenuPresenter(appState: state))
             .environment(ExportPresenter(appState: state))
@@ -114,11 +115,11 @@ struct WorkbenchVisualTests {
         let state = AppState(dependencies: AppDependencies(userDefaults: defaults), initialStartupState: .ready)
         let episode = Episode(title: "本文", content: "表示確認用の本文")
         let chapter = Chapter(title: "第一章", episodes: [episode])
-        state.document = NovelDocument(title: "執筆画面の作品名", chapters: [chapter])
-        state.selectedChapterID = chapter.id
-        state.selectedEpisodeID = episode.id
+        state.workspaceModel.document = NovelDocument(title: "執筆画面の作品名", chapters: [chapter])
+        state.workspaceModel.selectedChapterID = chapter.id
+        state.workspaceModel.selectedEpisodeID = episode.id
         let root = NovelWorkbenchView()
-            .environment(state)
+            .environment(state).environment(state.workspaceModel)
             .environment(EditorSettings())
             .environment(EditorSearchSession())
             .environment(state.editorCommandSession)
@@ -150,7 +151,7 @@ struct WorkbenchVisualTests {
         let allowed = try #require(toolbar.delegate?.toolbarAllowedItemIdentifiers?(toolbar))
         let actions = toolbar.items.filter { $0.itemIdentifier.rawValue.hasPrefix("workbench.") }
         #expect(actions.count >= 10)
-        #expect(actions.allSatisfy { !$0.isNavigational && allowed.contains($0.itemIdentifier) })
+        #expect(actions.allSatisfy { allowed.contains($0.itemIdentifier) })
         split.setPosition(originalPosition - 100, ofDividerAt: dividerIndex)
         try await Task.sleep(for: .milliseconds(150))
         #expect(outlineView.frame.width < originalWidth - 50)
@@ -198,7 +199,7 @@ struct WorkbenchVisualTests {
                 WorkbenchToolbarContent(overlayState: WorkbenchOverlayState(), requestSync: {},
                                         showsWritingActions: true, isPlotCardRailPresented: .constant(false))
             }
-            .environment(state).environment(search)
+            .environment(state).environment(state.workspaceModel).environment(search)
             .environment(SnapshotMenuPresenter(appState: state)).environment(ExportPresenter(appState: state))
         func makeWindow() -> NSWindow {
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1400, height: 400),

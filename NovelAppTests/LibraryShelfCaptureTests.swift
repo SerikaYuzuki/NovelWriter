@@ -11,11 +11,11 @@ struct LibraryShelfCaptureTests {
     func captureEmptyStates() async throws {
         for mode in ["offline", "empty"] {
             let state = AppState(dependencies: AppDependencies(userDefaults: makeIsolatedTestUserDefaults()))
-            state.snapshotSyncLibraryFailure = mode == "offline" ? .offline : nil
+            state.workspaceModel.libraryFailure = mode == "offline" ? .offline : nil
             state.startupState = .documentSelection(.init(works: [], presentation: .localAndRemote,
                                                           connection: mode == "offline" ? .offline : .accountRequired))
             state.lastStartupLibraryConnection = mode == "offline" ? .offline : .accountRequired
-            let view = LibraryView().environment(state)
+            let view = LibraryView().environment(state).environment(state.workspaceModel)
                 .environment(DocumentPanelPresenter(appState: state)).preferredColorScheme(.light)
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 760, height: 520),
                                   styleMask: [.titled, .closable], backing: .buffered, defer: false)

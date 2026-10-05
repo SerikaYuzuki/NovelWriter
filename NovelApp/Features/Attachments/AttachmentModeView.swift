@@ -1,9 +1,10 @@
 import NovelCore
+import NovelWorkspace
 import SwiftUI
 
 private struct SessionBoundAttachment: Identifiable {
     var attachment: Attachment
-    var session: DocumentSessionToken
+    var session: WorkspaceSessionToken
 
     var id: String {
         attachment.id
@@ -11,6 +12,7 @@ private struct SessionBoundAttachment: Identifiable {
 }
 
 struct AttachmentListView: View {
+    @Environment(WorkspaceModel.self) private var workspace
     @Environment(AppState.self) private var appState
 
     @Binding var selection: String?
@@ -58,7 +60,7 @@ struct AttachmentListView: View {
             guard let attachment = selectedAttachment else { return }
             attachmentPendingDeletion = SessionBoundAttachment(
                 attachment: attachment,
-                session: appState.documentSessionToken
+                session: workspace.documentSessionToken
             )
         }
         .task {
@@ -87,7 +89,7 @@ struct AttachmentListView: View {
     }
 
     private var sessionBoundAttachments: [SessionBoundAttachment] {
-        let session = appState.documentSessionToken
+        let session = workspace.documentSessionToken
         return appState.referenceAttachments.map {
             SessionBoundAttachment(attachment: $0, session: session)
         }
@@ -108,7 +110,7 @@ struct AttachmentListView: View {
     private func delete(_ request: SessionBoundAttachment) async {
         let attachment = request.attachment
         let didDelete = await appState.deleteAttachment(attachment, expectedSession: request.session)
-        guard appState.documentSessionToken == request.session else {
+        guard workspace.documentSessionToken == request.session else {
             operationMessage = OperationMessage(
                 title: didDelete ? "元の作品から削除しました" : "削除できませんでした",
                 body: "操作中に別の作品へ切り替わりました。現在の資料は変更していません。"

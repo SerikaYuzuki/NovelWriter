@@ -3,6 +3,7 @@ import CryptoKit
 import Foundation
 import Network
 import NovelCore
+import NovelWorkspaceUI
 import NovelWritingSupport
 import Observation
 import Security

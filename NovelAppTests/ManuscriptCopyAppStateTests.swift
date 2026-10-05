@@ -10,12 +10,12 @@ struct ManuscriptCopyAppStateTests {
     func selectionCopiesExactTextWithoutDocumentMutation() throws {
         let harness = makeHarness(capture: .captured("Editor確定全文"))
         let state = harness.state
-        let chapterID = try #require(state.selectedChapterID)
-        let episodeID = try #require(state.selectedEpisodeID)
-        let session = state.documentSessionToken
+        let chapterID = try #require(state.workspaceModel.selectedChapterID)
+        let episodeID = try #require(state.workspaceModel.selectedEpisodeID)
+        let session = state.workspaceModel.documentSessionToken
         let exactSelection = "  e\u{301}😀\r\n選択本文  "
-        let documentBefore = state.document
-        let saveStateBefore = state.saveState
+        let documentBefore = state.workspaceModel.document
+        let saveStateBefore = state.workspaceModel.saveState
 
         let didCopy = state.copySelectionManuscript(
             selectedText: exactSelection,
@@ -33,9 +33,9 @@ struct ManuscriptCopyAppStateTests {
             state.manuscriptCopyNotice?.message ==
                 "クリップボードへコピーしました。"
         )
-        #expect(state.document == documentBefore)
-        #expect(state.saveState == saveStateBefore)
-        #expect(state.documentSessionToken == session)
+        #expect(state.workspaceModel.document == documentBefore)
+        #expect(state.workspaceModel.saveState == saveStateBefore)
+        #expect(state.workspaceModel.documentSessionToken == session)
 
         state.dismissManuscriptCopyNotice()
         #expect(state.manuscriptCopyNotice == nil)
@@ -45,19 +45,19 @@ struct ManuscriptCopyAppStateTests {
     func currentEpisodeUsesEditorTextAndExcludesPrivateFields() throws {
         let harness = makeHarness(capture: .captured("Editor側の確定本文\n"))
         let state = harness.state
-        let chapterID = try #require(state.selectedChapterID)
-        let episodeID = try #require(state.selectedEpisodeID)
+        let chapterID = try #require(state.workspaceModel.selectedChapterID)
+        let episodeID = try #require(state.workspaceModel.selectedEpisodeID)
         state.updateChapterTitle("章SECRET", for: chapterID)
         state.updateEpisodeTitle("公開する話題", for: episodeID, in: chapterID)
         state.updateSelectedEpisodeContent("モデル側の古い本文")
         state.updateSelectedEpisodeMemo("MEMO_FORBIDDEN_57A9")
         state.updateDocumentSynopsis("SYNOPSIS_FORBIDDEN_57A9")
-        let documentBefore = state.document
+        let documentBefore = state.workspaceModel.document
 
         #expect(state.copyEpisodeManuscript(
             episodeID: episodeID,
             in: chapterID,
-            expectedSession: state.documentSessionToken
+            expectedSession: state.workspaceModel.documentSessionToken
         ))
 
         let prompt = try #require(harness.clipboard.receivedTexts.first)
@@ -68,22 +68,22 @@ struct ManuscriptCopyAppStateTests {
         #expect(!prompt.contains("SYNOPSIS_FORBIDDEN_57A9"))
         #expect(!prompt.contains(chapterID.rawValue.uuidString))
         #expect(!prompt.contains(episodeID.rawValue.uuidString))
-        #expect(state.document == documentBefore)
+        #expect(state.workspaceModel.document == documentBefore)
     }
 
     @Test("Editorが非activeなら話promptはモデル本文へ安全にfallbackする")
     func inactiveEditorFallsBackToEpisodeModel() throws {
         let harness = makeHarness(capture: .notActive)
         let state = harness.state
-        let chapterID = try #require(state.selectedChapterID)
-        let episodeID = try #require(state.selectedEpisodeID)
+        let chapterID = try #require(state.workspaceModel.selectedChapterID)
+        let episodeID = try #require(state.workspaceModel.selectedEpisodeID)
         state.updateEpisodeTitle("対象話", for: episodeID, in: chapterID)
         state.updateSelectedEpisodeContent("モデル確定本文")
 
         #expect(state.copyEpisodeManuscript(
             episodeID: episodeID,
             in: chapterID,
-            expectedSession: state.documentSessionToken
+            expectedSession: state.workspaceModel.documentSessionToken
         ))
 
         let prompt = try #require(harness.clipboard.receivedTexts.first)
@@ -94,11 +94,11 @@ struct ManuscriptCopyAppStateTests {
     func worldbuildingCaptureCannotEnterManuscriptPrompt() throws {
         let harness = makeHarness(capture: .captured("WORLD_EDITOR_FORBIDDEN_57A9"))
         let state = harness.state
-        let chapterID = try #require(state.selectedChapterID)
-        let episodeID = try #require(state.selectedEpisodeID)
+        let chapterID = try #require(state.workspaceModel.selectedChapterID)
+        let episodeID = try #require(state.workspaceModel.selectedEpisodeID)
         state.updateSelectedEpisodeContent("本文モデル")
         state.selectProjectSection(.worldbuilding)
-        let session = state.documentSessionToken
+        let session = state.workspaceModel.documentSessionToken
 
         #expect(!state.copySelectionManuscript(
             selectedText: "世界観の選択範囲",
@@ -115,7 +115,7 @@ struct ManuscriptCopyAppStateTests {
         ))
 
         let prompt = try #require(harness.clipboard.receivedTexts.first)
-        #expect(prompt == state.document.episode(episodeID)?.episode.title.appending("\n\n本文モデル"))
+        #expect(prompt == state.workspaceModel.document.episode(episodeID)?.episode.title.appending("\n\n本文モデル"))
         #expect(!prompt.contains("WORLD_EDITOR_FORBIDDEN_57A9"))
         #expect(!prompt.contains("世界観の選択範囲"))
     }
@@ -124,24 +124,24 @@ struct ManuscriptCopyAppStateTests {
     func chapterKeepsEpisodeOrderAndUsesCurrentEditorText() throws {
         let harness = makeHarness(capture: .captured("二話のEditor確定本文"))
         let state = harness.state
-        let chapterID = try #require(state.selectedChapterID)
-        let firstEpisodeID = try #require(state.selectedEpisodeID)
+        let chapterID = try #require(state.workspaceModel.selectedChapterID)
+        let firstEpisodeID = try #require(state.workspaceModel.selectedEpisodeID)
         state.updateChapterTitle("対象章", for: chapterID)
         state.updateEpisodeTitle("第一話", for: firstEpisodeID, in: chapterID)
         state.updateSelectedEpisodeContent("一話のモデル本文")
         state.addEpisode(to: chapterID, title: "第二話")
-        let secondEpisodeID = try #require(state.selectedEpisodeID)
+        let secondEpisodeID = try #require(state.workspaceModel.selectedEpisodeID)
         state.updateSelectedEpisodeContent("二話の古いモデル本文")
 
         #expect(state.copyChapterManuscript(
             chapterID: chapterID,
-            expectedSession: state.documentSessionToken
+            expectedSession: state.workspaceModel.documentSessionToken
         ))
 
         let prompt = try #require(harness.clipboard.receivedTexts.first)
         #expect(prompt == "対象章\n\n第一話\n\n一話のモデル本文\n\n第二話\n\n二話のEditor確定本文")
         #expect(!prompt.contains("二話の古いモデル本文"))
-        #expect(secondEpisodeID == state.selectedEpisodeID)
+        #expect(secondEpisodeID == state.workspaceModel.selectedEpisodeID)
     }
 }
 
@@ -151,10 +151,10 @@ struct ManuscriptCopyAppStateFailureTests {
     func compositionInProgressRejectsEveryScope() throws {
         let harness = makeHarness(capture: .compositionInProgress)
         let state = harness.state
-        let chapterID = try #require(state.selectedChapterID)
-        let episodeID = try #require(state.selectedEpisodeID)
+        let chapterID = try #require(state.workspaceModel.selectedChapterID)
+        let episodeID = try #require(state.workspaceModel.selectedEpisodeID)
         state.updateSelectedEpisodeContent("確定済みモデル本文")
-        let session = state.documentSessionToken
+        let session = state.workspaceModel.documentSessionToken
 
         #expect(!state.copySelectionManuscript(
             selectedText: "選択本文",
@@ -180,9 +180,9 @@ struct ManuscriptCopyAppStateFailureTests {
     func staleSessionAndSelectionAreRejectedBeforeClipboardWrite() throws {
         let harness = makeHarness(capture: .captured("Editor本文"))
         let state = harness.state
-        let chapterID = try #require(state.selectedChapterID)
-        let oldEpisodeID = try #require(state.selectedEpisodeID)
-        let session = state.documentSessionToken
+        let chapterID = try #require(state.workspaceModel.selectedChapterID)
+        let oldEpisodeID = try #require(state.workspaceModel.selectedEpisodeID)
+        let session = state.workspaceModel.documentSessionToken
         var staleSession = session
         staleSession.generation &+= 1
 
@@ -193,7 +193,7 @@ struct ManuscriptCopyAppStateFailureTests {
         ))
 
         state.addEpisode(to: chapterID, title: "切替先")
-        #expect(state.selectedEpisodeID != oldEpisodeID)
+        #expect(state.workspaceModel.selectedEpisodeID != oldEpisodeID)
         #expect(!state.copySelectionManuscript(
             selectedText: "古いmenuの選択",
             episodeID: oldEpisodeID,
@@ -209,10 +209,10 @@ struct ManuscriptCopyAppStateFailureTests {
     func missingChapterAndEpisodeAreRejectedBeforeClipboardWrite() throws {
         let harness = makeHarness(capture: .captured("Editor本文"))
         let state = harness.state
-        let chapterID = try #require(state.selectedChapterID)
+        let chapterID = try #require(state.workspaceModel.selectedChapterID)
         let missingEpisodeID = EpisodeID()
         let missingChapterID = ChapterID()
-        let session = state.documentSessionToken
+        let session = state.workspaceModel.documentSessionToken
 
         #expect(!state.copyEpisodeManuscript(
             episodeID: missingEpisodeID,
@@ -232,15 +232,15 @@ struct ManuscriptCopyAppStateFailureTests {
     func emptyContentFailsBeforeClipboardWrite() throws {
         let harness = makeHarness(capture: .notActive)
         let state = harness.state
-        let chapterID = try #require(state.selectedChapterID)
-        let episodeID = try #require(state.selectedEpisodeID)
+        let chapterID = try #require(state.workspaceModel.selectedChapterID)
+        let episodeID = try #require(state.workspaceModel.selectedEpisodeID)
         state.updateEpisodeTitle("タイトルだけ", for: episodeID, in: chapterID)
         state.updateSelectedEpisodeContent(" \n　")
 
         #expect(!state.copyEpisodeManuscript(
             episodeID: episodeID,
             in: chapterID,
-            expectedSession: state.documentSessionToken
+            expectedSession: state.workspaceModel.documentSessionToken
         ))
 
         #expect(harness.clipboard.receivedTexts.isEmpty)
@@ -253,21 +253,21 @@ struct ManuscriptCopyAppStateFailureTests {
     func clipboardFailureLeavesDocumentUntouched() throws {
         let harness = makeHarness(capture: .captured("Editor確定本文"), clipboardSucceeds: false)
         let state = harness.state
-        let chapterID = try #require(state.selectedChapterID)
-        let episodeID = try #require(state.selectedEpisodeID)
-        let documentBefore = state.document
-        let saveStateBefore = state.saveState
+        let chapterID = try #require(state.workspaceModel.selectedChapterID)
+        let episodeID = try #require(state.workspaceModel.selectedEpisodeID)
+        let documentBefore = state.workspaceModel.document
+        let saveStateBefore = state.workspaceModel.saveState
 
         #expect(!state.copyEpisodeManuscript(
             episodeID: episodeID,
             in: chapterID,
-            expectedSession: state.documentSessionToken
+            expectedSession: state.workspaceModel.documentSessionToken
         ))
 
         #expect(harness.clipboard.receivedTexts.count == 1)
         #expect(state.manuscriptCopyNotice?.outcome == .failure(.clipboardWriteFailed))
-        #expect(state.document == documentBefore)
-        #expect(state.saveState == saveStateBefore)
+        #expect(state.workspaceModel.document == documentBefore)
+        #expect(state.workspaceModel.saveState == saveStateBefore)
     }
 }
 

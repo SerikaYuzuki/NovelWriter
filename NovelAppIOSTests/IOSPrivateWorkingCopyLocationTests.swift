@@ -91,7 +91,7 @@ struct IOSPrivateWorkingCopyLocationTests {
         #expect(store.deviceSyncStartupFailedSafely)
         await store.bootstrap()
         #expect(await !(store.makeNewDocument()))
-        #expect(store.syncV2ActiveWorkID == nil)
+        #expect(store.workspaceModel.activeWorkID == nil)
         #expect(try fileManager.contentsOfDirectory(atPath: target.path).isEmpty)
     }
 
@@ -111,7 +111,7 @@ struct IOSPrivateWorkingCopyLocationTests {
 
         #expect(!store.install(document, at: externalPackage, attachments: []))
         #expect(!store.deviceSyncStartupFailedSafely)
-        #expect(store.syncV2ActiveWorkID == nil)
+        #expect(store.workspaceModel.activeWorkID == nil)
         #expect(environment.defaults.string(forKey: IOSDocumentStore.lastDocumentNameKey) == nil)
         #expect(environment.defaults.string(forKey: IOSDocumentStore.lastWorkIDKey) == nil)
         let privateItems = try FileManager.default.contentsOfDirectory(
@@ -200,8 +200,8 @@ struct IOSPrivateWorkingCopyLocationTests {
 
         #expect(await !store.importPackage(from: linkedSource))
         #expect(store.startupState == .library)
-        #expect(store.syncV2ActiveWorkID == nil)
-        #expect(store.syncV2LibraryItems.isEmpty)
+        #expect(store.workspaceModel.activeWorkID == nil)
+        #expect(store.workspaceModel.libraryRows.isEmpty)
         #expect(environment.defaults.string(forKey: IOSDocumentStore.lastDocumentNameKey) == nil)
         #expect(environment.defaults.string(forKey: IOSDocumentStore.lastWorkIDKey) == nil)
         #expect(fileManager.fileExists(atPath: externalPackage.path))
@@ -296,8 +296,8 @@ struct IOSPrivateWorkingCopyLocationTests {
 
         #expect(await !store.importPackage(from: source))
         #expect(fileManager.didReplaceSource)
-        #expect(store.syncV2ActiveWorkID == nil)
-        #expect(store.syncV2LibraryItems.isEmpty)
+        #expect(store.workspaceModel.activeWorkID == nil)
+        #expect(store.workspaceModel.libraryRows.isEmpty)
         #expect(baseFileManager.fileExists(atPath: source.path))
         #expect(baseFileManager.fileExists(atPath: preservedOriginal.path))
         let preservedAttestation = try IOSPrivateWorkingCopyLocation

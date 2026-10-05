@@ -3,6 +3,8 @@ import NovelCore
 import NovelSyncV2Application
 import NovelTextAnalysis
 import NovelUI
+import NovelWorkspace
+import NovelWorkspaceUI
 import Observation
 import SwiftUI
 
@@ -42,109 +44,94 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
 
     var body: some CustomizableToolbarContent {
         if appState.startupState.isReady {
-            ToolbarItem(id: WorkbenchToolbarItemID.library) {
+            ToolbarItem(id: WorkbenchToolbarItemID.library, placement: .navigation) {
                 Button {
-                    Task {
-                        await appState.returnToSnapshotLibrary()
-                    }
+                    Task { await appState.returnToSnapshotLibrary() }
                 } label: {
                     Label("作品一覧", systemImage: "books.vertical")
                 }
                 .help("保存して作品一覧に戻る")
-                .disabled(!appState.permitsDocumentTransitionOperation)
-                .accessibilityIdentifier("workbench.library")
+                .disabled(!appState.permitsDocumentDeparture)
+                .accessibilityIdentifier(WorkbenchToolbarItemID.library)
             }
             .customizationBehavior(.default)
             .defaultCustomization(.visible)
         }
-
         if #available(macOS 26.0, *) {
             ToolbarSpacer(.flexible)
         }
 
         if showsWritingActions {
             ToolbarItem(id: WorkbenchToolbarItemID.chapterMemo) {
-                Button {
-                    overlayState.toggle(.memo)
-                } label: {
+                Button { overlayState.toggle(.memo) } label: {
                     Label("話メモ", systemImage: "note.text")
                 }
                 .help("話メモ")
                 .disabled(appState.selectedEpisode == nil)
                 .popover(isPresented: isPresented(.memo), arrowEdge: .bottom) {
                     ChapterMemoPopover()
-                        .frame(width: 320, height: 260)
+                        .frame(minWidth: 320, idealWidth: 400, minHeight: 240, idealHeight: 360)
                 }
             }
             .customizationBehavior(.default)
             .defaultCustomization(.visible)
-
-            ToolbarItem(id: WorkbenchToolbarItemID.snapshotSave) {
-                Button {
-                    overlayState.toggle(.snapshots)
-                } label: {
-                    Label("スナップショット", systemImage: "clock.arrow.circlepath")
-                }
-                .help("スナップショットの保存・一覧")
-                .popover(isPresented: isPresented(.snapshots), arrowEdge: .bottom) {
-                    SnapshotPopover(overlayState: overlayState)
-                        .frame(width: 420, height: 420)
-                }
-            }
-            .customizationBehavior(.default)
-            .defaultCustomization(.visible)
-
-            synchronizationItem
-
-            ToolbarItem(id: WorkbenchToolbarItemID.export) {
-                Button {
-                    exportPresenter.present()
-                } label: {
-                    Label("書き出す…", systemImage: "square.and.arrow.up")
-                }
-                .help("原稿を書き出す…")
-                .disabled(exportPresenter.state.isExporting)
-            }
-            .customizationBehavior(.default)
-            .defaultCustomization(.visible)
-
             ToolbarItem(id: WorkbenchToolbarItemID.plotCardRail) {
-                Button {
-                    isPlotCardRailPresented.toggle()
-                } label: {
+                Toggle(isOn: $isPlotCardRailPresented) {
                     Label("プロットカード", systemImage: "rectangle.bottomthird.inset.filled")
-                        .labelStyle(.iconOnly)
                 }
                 .help("執筆中の章のプロットカードを表示")
-                .buttonStyle(.bordered)
-                .controlSize(.large)
-                .accessibilityValue(isPlotCardRailPresented ? "表示中" : "非表示")
             }
             .customizationBehavior(.default)
             .defaultCustomization(.visible)
         }
 
-        if #available(macOS 26.0, *) {
-            ToolbarSpacer(.fixed)
-        }
-        ToolbarItem(id: "workbench.search") {
-            WorkbenchSearchField(query: Bindable(editorSearchSession).query,
-                                 focusRequest: editorSearchSession.focusRequest) {
-                editorSearchSession.jump(direction: .forward, in: appState.selectedEpisode)
+        ToolbarItem(id: WorkbenchToolbarItemID.snapshotSave) {
+            Button { overlayState.toggle(.snapshots) } label: {
+                Label("スナップショット", systemImage: "clock.arrow.circlepath")
             }
-            .frame(minWidth: 160, idealWidth: 260, maxWidth: 320)
+            .help("スナップショットの保存・一覧")
+            .popover(isPresented: isPresented(.snapshots), arrowEdge: .bottom) {
+                SnapshotPopover(overlayState: overlayState).frame(width: 420, height: 420)
+            }
+        }
+        .customizationBehavior(.default)
+        .defaultCustomization(.visible)
+        ToolbarItem(id: WorkbenchToolbarItemID.export) {
+            Button { exportPresenter.present() } label: {
+                Label("書き出す…", systemImage: "square.and.arrow.up")
+            }
+            .help("原稿を書き出す…")
+            .disabled(exportPresenter.state.isExporting)
+        }
+        .customizationBehavior(.default)
+        .defaultCustomization(.visible)
+        ToolbarItem(id: WorkbenchToolbarItemID.manuscriptCopy) {
+            ManuscriptCopyToolbarMenu()
+                .disabled(!showsWritingActions)
         }
         .customizationBehavior(.default)
         .defaultCustomization(.visible)
 
+        if showsWritingActions {
+            if #available(macOS 26.0, *) {
+                ToolbarSpacer(.fixed)
+            }
+            ToolbarItem(id: WorkbenchToolbarItemID.search) {
+                WorkbenchSearchField(query: Bindable(editorSearchSession).query,
+                                     focusRequest: editorSearchSession.focusRequest) {
+                    editorSearchSession.jump(direction: .forward, in: appState.selectedEpisode)
+                }
+                .frame(minWidth: 160, idealWidth: 260, maxWidth: 320)
+            }
+            .customizationBehavior(.default)
+            .defaultCustomization(.visible)
+        }
         if #available(macOS 26.0, *) {
             ToolbarSpacer(.fixed)
         }
-        if !showsWritingActions {
-            synchronizationItem
-        }
+        synchronizationItem
         if showsWritingActions {
-            ToolbarItem(id: "workbench.writing.assistant") {
+            ToolbarItem(id: WorkbenchToolbarItemID.writingAssistant) {
                 Button("AI支援", systemImage: "sidebar.right") {
                     NotificationCenter.default.post(name: .toggleWritingAssistant, object: nil)
                 }
@@ -153,28 +140,6 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
             .customizationBehavior(.default)
             .defaultCustomization(.visible)
         }
-
-        if showsPlotActions {
-            ToolbarItem(id: WorkbenchToolbarItemID.plotCardAdd) {
-                Button {
-                    appState.addPlotCard(chapterID: selectedPlotChapterID)
-                } label: {
-                    Label("プロットカードを追加", systemImage: "rectangle.stack.badge.plus")
-                }
-                .help("プロットカードを追加")
-            }
-            .customizationBehavior(.default)
-            .defaultCustomization(.visible)
-        }
-    }
-
-    private var showsPlotActions: Bool {
-        appState.workspaceSelection.section == .plot
-    }
-
-    private var selectedPlotChapterID: ChapterID? {
-        guard case let .chapter(chapterID) = appState.plotOutlineSelection else { return nil }
-        return chapterID
     }
 
     private func isPresented(_ overlay: WorkbenchOverlay) -> Binding<Bool> {
@@ -195,7 +160,6 @@ enum WorkbenchToolbarItemID {
     static let library = "workbench.library"
     static let episodeAdd = "workbench.episode.add"
     static let plotCardRail = "workbench.plot.card.rail"
-    static let syncStatus = "workbench.snapshot.sync.status"
     static let snapshotSync = "workbench.snapshot.sync"
     static let chapterAdd = "workbench.chapter.add"
     static let chapterMemo = "workbench.chapter.memo"
@@ -204,6 +168,10 @@ enum WorkbenchToolbarItemID {
     static let worldNoteAdd = "workbench.world.note.add"
     static let plotCardAdd = "workbench.plot.card.add"
     static let attachmentAdd = "workbench.attachment.add"
+    static let manuscriptCopy = "workbench.manuscript.copy"
+    static let search = "workbench.search"
+    static let writingAssistant = "workbench.writing.assistant"
+    static let episodeRename = "workbench.episode.rename"
     static let export = "workbench.export"
 }
 
@@ -229,7 +197,7 @@ struct ChapterMemoPopover: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("話メモ")
                 .font(.headline)
-            TextEditor(text: memoBinding)
+            TextEditor(text: memoBinding).japaneseTextEditorStyle()
         }
         .padding(12)
     }
@@ -243,12 +211,38 @@ struct ChapterMemoPopover: View {
 }
 
 struct SnapshotPopover: View {
+    @Environment(WorkspaceModel.self) private var workspace
+    @Environment(AppState.self) private var appState
+    let overlayState: WorkbenchOverlayState
+
+    var body: some View {
+        if appState.workspaceSelection.section == .structure,
+           let context = EpisodeHistoryContext(document: workspace.document, episodeID: workspace.selectedEpisodeID),
+           let application = appState.snapshotSyncV2Application,
+           let workID = appState.currentSnapshotSyncV2WorkID {
+            EpisodeHistoryList(application: application, workID: workID, chapterID: context.chapterID,
+                               episodeID: context.episodeID, heading: context.heading, scope: appState.workSearchScope,
+                               userDefaults: appState.userDefaults, currentBody: { appState.episodeHistoryCurrentBody },
+                               host: { appState.episodeRestoreHost(episodeID: context.episodeID) }, wholeWorkHistory: {
+                                   overlayState.presented = nil
+                                   appState.presentWholeWorkHistory()
+                               })
+                               .id(appState.workSearchScope + context.episodeID.description)
+        } else {
+            WholeWorkSnapshotPopover(overlayState: overlayState)
+        }
+    }
+}
+
+struct WholeWorkSnapshotPopover: View {
+    @State private var refreshRevision = UUID()
     @Environment(AppState.self) private var appState
     @Environment(SnapshotMenuPresenter.self) private var presenter
 
     let overlayState: WorkbenchOverlayState
 
     var body: some View {
+        let requests = Dictionary(presenter.snapshots.map { ($0.id, $0) }, uniquingKeysWith: { current, _ in current })
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text("スナップショット")
@@ -257,7 +251,7 @@ struct SnapshotPopover: View {
                 Button {
                     Task {
                         _ = await appState.saveExplicitSnapshot()
-                        await presenter.refresh()
+                        refreshRevision = UUID()
                     }
                 } label: {
                     Label("保存", systemImage: "plus")
@@ -268,7 +262,8 @@ struct SnapshotPopover: View {
 
             Divider()
 
-            if presenter.snapshots.isEmpty {
+            if presenter.snapshots.isEmpty, !appState.snapshotSyncHistoryLoading,
+               appState.snapshotSyncHistoryFailure == nil {
                 ContentUnavailableView(
                     "スナップショットがありません",
                     systemImage: "clock.arrow.circlepath",
@@ -278,7 +273,7 @@ struct SnapshotPopover: View {
             } else {
                 List {
                     SnapshotHistorySections(items: presenter.snapshots.map(\.entry), application: appState.snapshotSyncV2Application, workID: appState.currentSnapshotSyncV2WorkID) { entry in
-                        if let request = presenter.snapshots.first(where: { $0.id == entry.occurrenceID }) {
+                        if let request = requests[entry.occurrenceID] {
                             if let application = appState.snapshotSyncV2Application,
                                let workID = appState.currentSnapshotSyncV2WorkID {
                                 let scope = appState.snapshotSyncV2AccountScopeToken
@@ -308,6 +303,12 @@ struct SnapshotPopover: View {
                 }
                 .listStyle(.plain)
             }
+            if appState.snapshotSyncHistoryLoading {
+                ProgressView("古い履歴を読み込み中…")
+            }
+            if let failure = appState.snapshotSyncHistoryFailure {
+                Text(failure).font(.caption).foregroundStyle(.secondary)
+            }
         }
         .padding(12)
         .confirmationDialog("この版を復元しますか？", isPresented: Binding(
@@ -323,13 +324,14 @@ struct SnapshotPopover: View {
         } message: { request in
             Text(HistoryPresentation().label(request.entry) + "\n現在の内容を履歴に残してから、選んだ版へ戻します。")
         }
-        .task {
+        .task(id: appState.workSearchScope + refreshRevision.uuidString) {
             await presenter.refresh()
         }
     }
 }
 
 struct ChapterContextMenuContent: View {
+    @Environment(WorkspaceModel.self) private var workspace
     @State private var characterSession = ChapterCharacterSession()
     @Bindable var appState: AppState
 
@@ -366,38 +368,38 @@ struct ChapterContextMenuContent: View {
         }
         .onAppear { refreshCharacters() }
         .onChange(of: targetChapter) { _, _ in refreshCharacters() }
-        .onChange(of: appState.document.characters) { _, _ in refreshCharacters() }
+        .onChange(of: workspace.document.characters) { _, _ in refreshCharacters() }
         .onChange(of: appState.workSearchScope) { _, _ in refreshCharacters() }
         .onDisappear { characterSession.cancel() }
     }
 
     private var targetChapterID: ChapterID? {
-        chapterID ?? appState.selectedChapterID
+        chapterID ?? workspace.selectedChapterID
     }
 
     private var targetChapter: Chapter? {
         guard let targetChapterID else { return nil }
-        return appState.document.chapters.first { $0.id == targetChapterID }
+        return workspace.document.chapters.first { $0.id == targetChapterID }
     }
 
     private var chapterPlotCards: [PlotCard] {
         guard let targetChapterID else { return [] }
-        return appState.document.plotCards.filter { $0.chapterID == targetChapterID }
+        return workspace.document.plotCards.filter { $0.chapterID == targetChapterID }
     }
 
     private var appearingCharacters: [NovelCore.Character] {
-        appState.document.characters.filter { characterSession.characterIDs.contains($0.id) }
+        workspace.document.characters.filter { characterSession.characterIDs.contains($0.id) }
     }
 
     private func refreshCharacters() {
-        characterSession.refresh(chapter: targetChapter, characters: appState.document.characters)
+        characterSession.refresh(chapter: targetChapter, characters: workspace.document.characters)
     }
 }
 
 /// File メニューからスナップショット一覧・復元へ到達するための薄い状態。
 struct SnapshotRestoreRequest: Identifiable, Equatable {
     var entry: SyncV2HistoryItem
-    var session: DocumentSessionToken
+    var session: WorkspaceSessionToken
 
     var id: UUID {
         entry.occurrenceID
@@ -418,20 +420,20 @@ final class SnapshotMenuPresenter {
     }
 
     func refresh() async {
-        let session = appState.documentSessionToken
-        await appState.refreshSnapshotHistory()
-        guard appState.documentSessionToken == session else { return }
-
-        snapshots = appState.snapshotSyncHistory.map {
-            SnapshotRestoreRequest(entry: $0, session: session)
-        }
-        if snapshotPendingRestore?.session != session {
-            snapshotPendingRestore = nil
+        let session = appState.workspaceModel.documentSessionToken
+        await appState.refreshSnapshotHistory {
+            guard !Task.isCancelled, self.appState.workspaceModel.documentSessionToken == session else { return }
+            self.snapshots = self.appState.workspaceModel.historyItems.map {
+                SnapshotRestoreRequest(entry: $0, session: session)
+            }
+            if self.snapshotPendingRestore?.session != session {
+                self.snapshotPendingRestore = nil
+            }
         }
     }
 
     func requestRestore(_ request: SnapshotRestoreRequest) {
-        guard request.session == appState.documentSessionToken,
+        guard request.session == appState.workspaceModel.documentSessionToken,
               snapshots.contains(where: { $0.id == request.id && $0.session == request.session }) else {
             restoreErrorMessage = "作品が切り替わったため、スナップショット一覧を更新してください。"
             return
@@ -440,7 +442,7 @@ final class SnapshotMenuPresenter {
     }
 
     func restore(_ request: SnapshotRestoreRequest) async {
-        guard request.session == appState.documentSessionToken,
+        guard request.session == appState.workspaceModel.documentSessionToken,
               snapshots.contains(where: { $0.id == request.id && $0.session == request.session }) else {
             snapshotPendingRestore = nil
             restoreErrorMessage = "作品が切り替わったため、スナップショット一覧を更新してください。"
@@ -475,6 +477,24 @@ struct WorkbenchOutlineToolbarContent: CustomizableToolbarContent {
             .defaultCustomization(.visible)
         }
 
+        if showsPlotActions {
+            ToolbarItem(id: WorkbenchToolbarItemID.plotCardAdd) {
+                Button {
+                    let chapterID: ChapterID? = if case let .chapter(id) = appState.plotOutlineSelection {
+                        id
+                    } else {
+                        nil
+                    }
+                    appState.addPlotCard(chapterID: chapterID)
+                } label: {
+                    Label("プロットカードを追加", systemImage: "rectangle.stack.badge.plus")
+                }
+                .help("プロットカードを追加")
+            }
+            .customizationBehavior(.default)
+            .defaultCustomization(.visible)
+        }
+
         if showsWritingActions {
             ToolbarItem(id: WorkbenchToolbarItemID.episodeAdd) {
                 Button {
@@ -489,7 +509,7 @@ struct WorkbenchOutlineToolbarContent: CustomizableToolbarContent {
             }
             .customizationBehavior(.default)
             .defaultCustomization(.visible)
-            ToolbarItem(id: "workbench.episode.rename") {
+            ToolbarItem(id: WorkbenchToolbarItemID.episodeRename) {
                 Button("話の名前を変更", systemImage: "pencil") {
                     requestEpisodeRename()
                 }

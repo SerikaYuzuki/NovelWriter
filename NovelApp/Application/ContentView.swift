@@ -3,9 +3,12 @@ import NovelCore
 import NovelSyncV2
 import NovelSyncV2Application
 import NovelUI
+import NovelWorkspace
+import NovelWorkspaceUI
 import SwiftUI
 
 struct ContentView: View {
+    @Environment(WorkspaceModel.self) private var workspace
     @Environment(AppState.self) private var appState
     @Environment(DocumentPanelPresenter.self) private var documentPanelPresenter
     @Environment(ExportPresenter.self) private var exportPresenter
@@ -15,6 +18,20 @@ struct ContentView: View {
 
     var body: some View {
         rootContent
+            .environment(workspace)
+            .safeAreaInset(edge: .top) {
+                if workspace.keepBothPendingWorkID != nil, !workspace.isDocumentTransitionInProgress {
+                    KeepBothRecoveryView(
+                        retry: { await appState.retryKeepBothHandoff() },
+                        leave: { await appState.returnToSnapshotLibrary() }
+                    )
+                }
+            }
+            .onChange(of: workspace.isDocumentTransitionInProgress) { _, transitioning in
+                if !transitioning, workspace.keepBothPendingWorkID != nil {
+                    showingConflict = false
+                }
+            }
             .sheet(isPresented: $showingConflict) {
                 if let selection = appState.snapshotSyncV2ConflictSelection,
                    let application = appState.snapshotSyncV2Application {
@@ -35,7 +52,9 @@ struct ContentView: View {
             .alert(
                 "作品の操作",
                 isPresented: Binding(
-                    get: { appState.operationMessage != nil || documentPanelPresenter.alertMessage != nil },
+                    get: { (appState.operationMessage != nil && workspace.keepBothPendingWorkID == nil)
+                        || documentPanelPresenter.alertMessage != nil
+                    },
                     set: {
                         if !$0 {
                             appState.dismissOperationMessage()
@@ -48,11 +67,16 @@ struct ContentView: View {
             } message: {
                 Text(documentPanelPresenter.alertMessage ?? appState.operationMessage ?? "")
             }
-            .onChange(of: appState.snapshotSyncConflict, initial: true) { _, conflict in
+            .onChange(of: workspace.syncConflict, initial: true) { _, conflict in
                 showingConflict = conflict != nil
             }
+            .onReceive(NotificationCenter.default.publisher(for: .presentWorkHistory)) { notification in
+                guard let session = notification.object as? WorkspaceSessionToken,
+                      workspace.documentSessionToken == session else { return }
+                showingConflictHistory = true
+            }
             .onReceive(NotificationCenter.default.publisher(for: .presentSnapshotSyncConflict)) { _ in
-                showingConflict = appState.snapshotSyncConflict != nil
+                showingConflict = workspace.syncConflict != nil
             }
             .alert(
                 "作品を開けませんでした",
@@ -109,8 +133,14 @@ struct ContentView: View {
                 .disabled(!appState.permitsDocumentInteraction)
         case .recovery:
             RecoveryPane()
-        case .loading, .documentSelection:
+        case .documentSelection:
             LibraryView()
+        case .loading:
+            ZStack {
+                FuminiwaColor.paper.color.ignoresSafeArea()
+                ProgressView("作品を読み込んでいます…")
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 }
@@ -148,6 +178,6 @@ private struct RecoveryPane: View {
         initialStartupState: .ready
     )
     return ContentView()
-        .environment(state)
+        .environment(state).environment(state.workspaceModel)
         .environment(session)
 }

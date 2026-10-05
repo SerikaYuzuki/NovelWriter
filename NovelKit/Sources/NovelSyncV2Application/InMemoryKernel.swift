@@ -58,6 +58,21 @@ public actor InMemorySyncV2RuntimeState: SyncV2LocalKernel,
         return nil
     }
 
+    public func episodeBodyVersions(workID: WorkID, episodeKey: String) throws -> [SnapshotID: SnapshotEntry] {
+        guard let work = works[workID] else { throw SyncV2ApplicationError.workNotFound }
+        var result: [SnapshotID: SnapshotEntry] = [:]
+        var snapshots = Array(work.encoded.values)
+        for inbox in inboxes.values where verifiedInboxes.contains(inbox.inboxID) && inbox.workID == workID {
+            snapshots += inbox.snapshots
+        }
+        for snapshot in snapshots {
+            if let entry = snapshot.manifest.entries.first(where: { $0.entityKey == episodeKey }) {
+                result[snapshot.snapshotId] = entry
+            }
+        }
+        return result
+    }
+
     public init(account: TestAccount? = nil, readOnly: Bool = false) {
         self.account = account
         self.readOnly = readOnly

@@ -1,38 +1,44 @@
 import Foundation
 import NovelCore
 import NovelThumbnail
+import NovelWorkspace
+import NovelWorkspaceUI
 
-extension IOSDocumentStore {
+extension IOSDocumentStore: WorkspaceFeedbackHost {
     var assistantFeedback: [AssistantFeedback] {
-        attachments.compactMap { attachment in
-            guard let bytes = syncV2AttachmentPayloads[attachment.fileName] else { return nil }
+        workspaceModel.attachments.compactMap { attachment in
+            guard let bytes = workspaceModel.attachmentSet[attachment.fileName]?.bytes else { return nil }
             return AssistantFeedback.decode(fileName: attachment.fileName, bytes: bytes)
         }.sorted { $0.createdAt == $1.createdAt ? $0.id.uuidString < $1.id.uuidString : $0.createdAt > $1.createdAt }
     }
 
     var referenceAttachments: [Attachment] {
         let feedbackNames = Set(assistantFeedback.map(\.fileName))
-        return attachments.filter { !feedbackNames.contains($0.fileName) && !(ThumbnailOwner(fileName: $0.fileName)?.exists(in: document) ?? false) }
+        return workspaceModel.attachments.filter { !feedbackNames.contains($0.fileName) && !(ThumbnailOwner(fileName: $0.fileName)?.exists(in: workspaceModel.document) ?? false) }
     }
 
-    func saveAssistantFeedback(_ feedback: AssistantFeedback, session: IOSDocumentSessionToken,
-                               account: IOSSnapshotSyncV2AccountScope) async -> Bool {
+    func saveAssistantFeedback(_ feedback: AssistantFeedback, session: WorkspaceSessionToken,
+                               account: WorkspaceAccountScope) async -> Bool {
+        await AssistantFeedbackSave.save(feedback, host: self, session: session, account: account)
+    }
+
+    func feedbackSaveBoundary(session: WorkspaceSessionToken, account: WorkspaceAccountScope,
+                              operation: @MainActor () async -> Bool) async -> Bool {
         guard currentDocumentSessionToken == session, matchesSyncAccount(account),
               !syncV2AccountTransitionInProgress else { return false }
-        if let existing = assistantFeedback.first(where: { $0.id == feedback.id }) {
-            return existing == feedback
-        }
-        guard let url = try? feedback.temporaryFile() else { return false }
-        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        return await operation()
+    }
+
+    func importFeedbackAttachment(from url: URL, session: WorkspaceSessionToken, account: WorkspaceAccountScope) async -> Bool {
         let saved = await importAttachment(from: url, expectedSession: session, expectedAccountScope: account)
         return saved != nil && currentDocumentSessionToken == session && matchesSyncAccount(account)
     }
 
-    func deleteAssistantFeedback(_ feedback: AssistantFeedback, session: IOSDocumentSessionToken,
-                                 account: IOSSnapshotSyncV2AccountScope) async -> Bool {
+    func deleteAssistantFeedback(_ feedback: AssistantFeedback, session: WorkspaceSessionToken,
+                                 account: WorkspaceAccountScope) async -> Bool {
         guard currentDocumentSessionToken == session, matchesSyncAccount(account),
               assistantFeedback.contains(feedback),
-              let attachment = attachments.first(where: { $0.fileName == feedback.fileName }) else { return false }
+              let attachment = workspaceModel.attachments.first(where: { $0.fileName == feedback.fileName }) else { return false }
         return await deleteAttachment(attachment, expectedSession: session, expectedAccountScope: account)
     }
 }

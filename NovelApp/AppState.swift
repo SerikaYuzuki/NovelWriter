@@ -8,52 +8,14 @@ import NovelSyncV2
 import NovelSyncV2Application
 import NovelSyncV2PortableBridge
 import NovelTiming
+import NovelWorkspace
+import NovelWorkspaceUI
 import NovelWritingProgress
 import NovelWritingSupport
 import Observation
 
-enum DocumentSaveState: Equatable {
-    case unsaved
-    case saving
-    case saved
-    case failed
-
-    var label: String {
-        switch self {
-        case .unsaved: "未保存"
-        case .saving: "保存中"
-        case .saved: "この端末に保存済み"
-        case .failed: "実エラー"
-        }
-    }
-
-    var systemImage: String {
-        switch self {
-        case .unsaved: "circle.fill"
-        case .saving: "arrow.triangle.2.circlepath"
-        case .saved: "checkmark.circle"
-        case .failed: "exclamationmark.triangle"
-        }
-    }
-}
-
-enum AuthUIState: Equatable {
-    case unavailable
-    case signedOut
-    case signingIn
-    case signedIn(accountID: String)
-    case failed(String)
-
-    var label: String {
-        switch self {
-        case .unavailable: "アカウント同期は未設定"
-        case .signedOut: "未サインイン"
-        case .signingIn: "サインイン中…"
-        case let .signedIn(accountID): "サインイン済み（\(accountID)）"
-        case let .failed(message): message
-        }
-    }
-}
+typealias DocumentSaveState = WorkspaceSaveState
+typealias AuthUIState = WorkspaceAuthUIState
 
 final class NotificationObserverToken {
     private let center: NotificationCenter
@@ -70,67 +32,40 @@ final class NotificationObserverToken {
     }
 }
 
-/// The app-level identity used by editor operations. A WorkID may point at a
-/// different document payload after remote-only install, keep-both, or an
-/// explicit account clone, so it must travel with the session token.
-struct AppDocumentSessionToken: Hashable, Sendable {
-    var generation: UInt64
-    var documentID: UUID
-    var workID: WorkID
-}
-
-/// Captures the authenticated tenant boundary for asynchronous UI work. Token
-/// refreshes keep this scope valid; sign-out, AccountID changes, and fence
-/// rotations advance `generation` and make every older completion stale.
-struct SnapshotSyncV2AccountScopeToken: Hashable, Sendable {
-    let accountID: String?
-    let accountFence: String?
-    let generation: UInt64
-}
-
-/// Existing editor/outline views use this neutral name for a session-bound
-/// value.  It is intentionally the WorkID-backed v2 token; it contains no
-/// package URL or other import/export identity.
-typealias DocumentSessionToken = AppDocumentSessionToken
-
 @MainActor
 @Observable
 final class AppState {
-    let syncSessionController = SyncSessionController<AppDocumentSessionToken, SnapshotSyncV2AccountScopeToken, Bool>()
+    let workspaceModel: WorkspaceModel
+    let syncSessionController = SyncSessionController<Bool>()
     let timing: FuminiwaTiming
     let writingSyncScheduler: WritingSyncScheduler
     let writingProgress: WritingProgressTracker
     let writingProgressRoot: URL?
-    var document: NovelDocument
-    var selectedChapterID: ChapterID?
-    var selectedEpisodeID: EpisodeID?
     var selectedCharacterID: CharacterID?
     var selectedPlotCardID: PlotCardID?
     var selectedFlagID: FlagID?
     var selectedWorldNoteID: WorldNoteID?
     var plotOutlineSelection: PlotOutlineSelection = .unassigned
 
-    var saveState: DocumentSaveState
-    var startupState: AppStartupState
+    var startupState: AppStartupState {
+        didSet { logStartupTransition(from: oldValue) }
+    }
+
     var lastStartupLibraryConnection: StartupLibraryConnection = .offline
-    var authSession: FuminiwaSession?
-    var authUIState: AuthUIState
-    var snapshotSyncPendingDeletionWorkIDs: Set<WorkID> = []
-    var snapshotSyncV2UIState: SyncUIState?
-    @ObservationIgnored var presentedSyncFailures: [SnapshotSyncV2AccountScopeToken: [WorkID: SyncV2FatalReason]] = [:]
-    @ObservationIgnored var automaticAdoptionAttempts: [SnapshotSyncV2AccountScopeToken: [WorkID: Set<UUID>]] = [:]
-    var snapshotSyncConflict: SyncV2ConflictProjection?
-    var snapshotSyncHistory: [SyncV2HistoryItem] = []
-    var snapshotSyncLibraryWorks: [StartupLibraryWork] = []
-    var snapshotSyncRemoteCatalogNextCursor: String?
-    var snapshotSyncRemoteCatalogItems: [SyncV2RemoteCatalogEntry] = []
+    #if FUMINIWA_TEST_COMPOSITION
+    @ObservationIgnored var testServerInstanceIDOverride: String?
+    @ObservationIgnored var testBrowserAuthorization: (@MainActor @Sendable (URL) async throws -> Void)?
+    #endif
+    var snapshotSyncHistoryLoading = false
+    var snapshotSyncHistoryFailure: String?
+    @ObservationIgnored var snapshotSyncHistoryRevision = UUID()
+    @ObservationIgnored var startupShelfIdentities: [(workID: WorkID, id: UUID, availability: StartupLibraryWorkAvailability)] = []
+
     var snapshotSyncCurrentWorkAccountState: SyncV2LibraryAccountState?
     @ObservationIgnored var writingMCPControllerStorage: WritingMCPController?
     var manuscriptCopyNotice: ManuscriptCopyNotice?
-    var isSnapshotSyncInFlight = false
     var externalDocumentOpenErrorMessage: String?
     var operationMessage: String?
-    var isDocumentTransitionInProgress = false
     var isTerminationPending = false
 
     var workspaceSelection: WorkspaceSelection {
@@ -140,15 +75,20 @@ final class AppState {
     }
 
     let workSearch = WorkSearchSession()
-    let textCheck: TextCheckSession
 
     var outlinePresentation = OutlinePresentationState()
-    var attachments: [Attachment]
-    @ObservationIgnored var snapshotSyncV2Attachments: [SyncAttachment]
+    var snapshotSyncV2Attachments: [SyncAttachment] {
+        get { workspaceModel.attachmentSet.records }
+        set {
+            if let replacement = WorkspaceAttachmentSet(newValue) {
+                workspaceModel.attachmentSet = replacement
+            }
+        }
+    }
+
     @ObservationIgnored var attachmentPreviewURLs: [String: URL]
 
-    var documentSessionToken: AppDocumentSessionToken
-    var editorContentGeneration: UInt64
+    var syncV2KeepBothSourceSelection: SnapshotSyncV2ConflictSelection?
 
     let portableBridge: SyncV2PortableBridge
     let userDefaults: UserDefaults
@@ -157,6 +97,7 @@ final class AppState {
     let editorCommandSession: EditorCommandSession
     let clipboardWriter: any PlainTextClipboardWriting
     let activeCommittedTextCapture: @MainActor () -> EditorCommittedTextCaptureResult
+    let browserAuthorization: @MainActor @Sendable (URL) async throws -> Void
     let authSessionCoordinator: AuthSessionCoordinator?
     let appleSignInCoordinator: AppleSignInCoordinator?
     let appleAuthenticationOrchestrator: AppleAuthenticationOrchestrator?
@@ -166,40 +107,42 @@ final class AppState {
     let snapshotSyncV2CheckpointOverride: SnapshotSyncV2CheckpointOverride?
     let snapshotSyncV2OpenOverride: SnapshotSyncV2OpenOverride?
     let snapshotSyncV2OpenLocalOverride: SnapshotSyncV2OpenLocalOverride?
+    let snapshotSyncV2LibraryOverride: SnapshotSyncV2LibraryOverride?
     let snapshotSyncV2CatalogOverride: SnapshotSyncV2CatalogOverride?
+    var snapshotSyncV2KeepBothInstallOverride: (@MainActor () async -> Bool)?
+    var snapshotSyncV2BeforeKeepBothInstallOverride: (@MainActor () async -> Void)?
     let snapshotSyncV2AfterStagedRemoteOverride: SnapshotSyncV2AfterStagedRemoteOverride?
     #endif
 
     @ObservationIgnored var snapshotSyncV2Application: SyncV2Application?
     @ObservationIgnored var snapshotSyncV2Session: NovelSyncV2Application.DocumentSessionToken?
-    @ObservationIgnored var snapshotSyncV2ActiveWorkID: WorkID?
     @ObservationIgnored var snapshotSyncV2DocumentCreatedAt: Date?
     @ObservationIgnored var snapshotSyncV2PortableCreatedAt: Date?
     @ObservationIgnored var snapshotSyncV2Resources: [PortableResource]
-    var libraryImportPhases: [WorkID: ImportPhase] = [:]
-    var libraryImportFailures: [WorkID: SyncV2Failure] = [:]
-    var snapshotSyncLibraryFailure: SyncV2Failure?
     var snapshotSyncLibraryLocalFailure: SyncV2Failure?
     var snapshotSyncLibraryOpenFailure: SyncV2Failure?
-    var snapshotSyncLibraryIsLoading = false
     @ObservationIgnored var snapshotSyncV2CatalogRefreshToken: UUID?
+    #if FUMINIWA_TEST_COMPOSITION
+    @ObservationIgnored var documentOperationDidEnqueue: (@MainActor () -> Void)?
+    @ObservationIgnored lazy var documentOperationGate = DocumentOperationGate(didEnqueueOperation: { [weak self] in
+        self?.documentOperationDidEnqueue?()
+    })
+    #else
     @ObservationIgnored let documentOperationGate = DocumentOperationGate()
-    @ObservationIgnored let authOperationGate = AuthOperationGate()
-    /// Counts interactive auth requests from invocation until the serialized
-    /// operation fully commits. This is separate from the presentation-only
-    /// `authUIState` so queued requests close replacement boundaries early.
-    @ObservationIgnored var interactiveAuthOperationCount = 0
-    @ObservationIgnored var interactiveAuthOperationOwners: Set<UUID> = []
-    /// Represents the one queued or active interactive Apple sign-in request.
-    /// It is deliberately independent from `interactiveAuthOperationCount`:
-    /// a request waiting behind sign-out must not block local work, while a
-    /// duplicate tap must not enqueue a second Apple exchange.
-    @ObservationIgnored var pendingSignInRequest = false
+    #endif
+    @ObservationIgnored lazy var accountTransitionCoordinator = AccountTransitionCoordinator(host: self)
+    var interactiveAuthOperationCount: Int {
+        accountTransitionCoordinator.preparing || accountTransitionCoordinator.inProgress ? 1 : 0
+    }
+
+    var authRevokeRetryTask: Task<Void, Never>? {
+        accountTransitionCoordinator.revokeTask
+    }
+
     @ObservationIgnored var terminationTask: Task<Bool, Never>?
     @ObservationIgnored var bootstrapTask: Task<Void, Never>?
     @ObservationIgnored var manuscriptCopyNoticeDismissTask: Task<Void, Never>?
     @ObservationIgnored var hasCompletedBootstrap = false
-    var documentChangeRevision: UInt64 = 0
     @ObservationIgnored var editorProgressAlreadyTracked = false
     @ObservationIgnored var saveCoordinator: V2DocumentSaveCoordinator!
     @ObservationIgnored let resignActiveObserver = NotificationObserverToken()
@@ -209,17 +152,21 @@ final class AppState {
 
     static let projectSectionKey = AppPreferenceKey.projectSection
 
-    var usesSnapshotSyncV2Runtime: Bool {
-        snapshotSyncV2Application != nil || snapshotSyncV2Factory != nil
-    }
-
     /// Compatibility names used by old menu wiring are deliberately v2-only.
     var permitsDocumentInteraction: Bool {
-        startupState.isReady && !isDocumentTransitionInProgress && !isTerminationPending
+        startupState.isReady && !workspaceModel.isDocumentTransitionInProgress && !isTerminationPending
+            && workspaceModel.keepBothPendingWorkID == nil
     }
 
     var permitsDocumentChoice: Bool {
-        startupState.isReady && !isDocumentTransitionInProgress && !isTerminationPending
+        startupState.isReady && !workspaceModel.isDocumentTransitionInProgress && !isTerminationPending
+            && workspaceModel.keepBothPendingWorkID == nil
+    }
+
+    /// Leaving a frozen source is permitted without making it writable.
+    var permitsDocumentDeparture: Bool {
+        startupState.isReady && !workspaceModel.isDocumentTransitionInProgress && !isTerminationPending
+            && interactiveAuthOperationCount == 0
     }
 
     /// Replacing/exporting/restoring a document must not race the Apple
@@ -230,7 +177,7 @@ final class AppState {
     }
 
     var canExplicitlySyncCurrentWork: Bool {
-        permitsDocumentTransitionOperation && !isSnapshotSyncInFlight
+        permitsDocumentTransitionOperation && !workspaceModel.isSyncInFlight
     }
 
     var canCloneCurrentWorkIntoActiveAccount: Bool {
@@ -239,12 +186,12 @@ final class AppState {
     }
 
     var selectedChapter: Chapter? {
-        guard let selectedChapterID else { return nil }
-        return document.chapters.first { $0.id == selectedChapterID }
+        guard let selectedChapterID = workspaceModel.selectedChapterID else { return nil }
+        return workspaceModel.document.chapters.first { $0.id == selectedChapterID }
     }
 
     var selectedEpisode: Episode? {
-        guard let selectedEpisodeID else { return nil }
+        guard let selectedEpisodeID = workspaceModel.selectedEpisodeID else { return nil }
         return selectedChapter?.episodes.first { $0.id == selectedEpisodeID }
     }
 
@@ -252,10 +199,15 @@ final class AppState {
         dependencies: AppDependencies,
         initialStartupState: AppStartupState = .loading
     ) {
+        let placeholder = NovelDocument.newDocument()
+        workspaceModel = WorkspaceModel(
+            document: placeholder,
+            session: WorkspaceSessionToken(generation: 0, documentID: placeholder.id, workID: WorkID(UUID())),
+            saveState: .unsaved
+        )
         let timing = FuminiwaTiming(defaults: dependencies.userDefaults)
         self.timing = timing
         writingSyncScheduler = WritingSyncScheduler(timing: timing)
-        textCheck = TextCheckSession(defaults: dependencies.userDefaults)
         writingProgress = WritingProgressTracker(defaults: dependencies.userDefaults, timing: timing)
         writingProgressRoot = dependencies.writingProgressRoot
         portableBridge = dependencies.portableBridge
@@ -265,6 +217,7 @@ final class AppState {
         editorCommandSession = dependencies.editorCommandSession
         clipboardWriter = dependencies.clipboardWriter
         activeCommittedTextCapture = dependencies.activeCommittedTextCapture
+        browserAuthorization = dependencies.browserAuthorization
         authSessionCoordinator = dependencies.authSessionCoordinator
         appleSignInCoordinator = dependencies.appleSignInCoordinator
         appleAuthenticationOrchestrator = dependencies.appleAuthenticationOrchestrator
@@ -274,40 +227,24 @@ final class AppState {
         snapshotSyncV2CheckpointOverride = dependencies.snapshotSyncV2CheckpointOverride
         snapshotSyncV2OpenOverride = dependencies.snapshotSyncV2OpenOverride
         snapshotSyncV2OpenLocalOverride = dependencies.snapshotSyncV2OpenLocalOverride
+        snapshotSyncV2LibraryOverride = dependencies.snapshotSyncV2LibraryOverride
         snapshotSyncV2CatalogOverride = dependencies.snapshotSyncV2CatalogOverride
         snapshotSyncV2AfterStagedRemoteOverride = dependencies.snapshotSyncV2AfterStagedRemoteOverride
         #endif
 
-        let placeholder = NovelDocument.newDocument()
-        document = placeholder
-        selectedChapterID = placeholder.chapters.first?.id
-        selectedEpisodeID = placeholder.chapters.first?.episodes.first?.id
         selectedCharacterID = nil
         selectedPlotCardID = nil
         selectedFlagID = nil
         selectedWorldNoteID = nil
         plotOutlineSelection = placeholder.chapters.first.map { .chapter($0.id) } ?? .unassigned
-        saveState = .unsaved
         startupState = initialStartupState
-        authSession = nil
-        authUIState = dependencies.authSessionCoordinator == nil ? .unavailable : .signedOut
         externalDocumentOpenErrorMessage = nil
         operationMessage = nil
-        attachments = []
-        snapshotSyncV2Attachments = []
         snapshotSyncV2Resources = []
         snapshotSyncV2PortableCreatedAt = nil
         attachmentPreviewURLs = [:]
-        snapshotSyncLibraryWorks = []
-        snapshotSyncRemoteCatalogItems = []
         snapshotSyncCurrentWorkAccountState = nil
         manuscriptCopyNotice = nil
-        documentSessionToken = AppDocumentSessionToken(
-            generation: 0,
-            documentID: placeholder.id,
-            workID: WorkID(UUID())
-        )
-        editorContentGeneration = 0
         let storedSection = dependencies.userDefaults.string(forKey: Self.projectSectionKey) ?? ""
         let normalizedSection = storedSection == "planning" ? ProjectSection.projectInfo.rawValue : storedSection
         if storedSection == "planning" {
@@ -317,19 +254,21 @@ final class AppState {
             section: ProjectSection(rawValue: normalizedSection) ?? .structure
         )
 
+        workspaceModel.authUIState = dependencies.authSessionCoordinator == nil ? .unavailable : .signedOut
+
         saveCoordinator = V2DocumentSaveCoordinator(
             timing: timing,
             currentDocument: { [weak self] in
                 guard let self, startupState.isReady else { return nil }
-                return document
+                return workspaceModel.document
             },
             saveOperation: { [weak self] document in
                 guard let self else { throw CancellationError() }
-                guard await checkpointSnapshotSyncV2(document, reason: .autosave) else {
+                guard await checkpointSnapshotSyncV2(document, reason: .autosave, acknowledgeLocalCommit: true) else {
                     throw SyncV2Failure.fatal(.invalidLocalState)
                 }
             },
-            saveEventHandler: { [weak self] event in
+            saveEventHandler: WorkspaceSaveEventProjection.handler(host: self) { [weak self] event in
                 self?.handleSaveEvent(event)
             }
         )

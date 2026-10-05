@@ -1,5 +1,6 @@
 import NovelCore
 import NovelUI
+import NovelWorkspace
 import SwiftUI
 
 enum IOSRegularProjectSection: Hashable {
@@ -14,6 +15,7 @@ enum IOSRegularProjectSection: Hashable {
 }
 
 struct IOSRegularProjectSidebar: View {
+    @Environment(WorkspaceModel.self) private var workspace
     let store: IOSDocumentStore
     @Binding var selection: IOSRegularProjectSection?
 
@@ -29,7 +31,7 @@ struct IOSRegularProjectSidebar: View {
                     .tag(IOSRegularProjectSection.writing)
 
                 ProjectSectionStyle.plot.label
-                    .badge(store.document.flags.count(where: { !$0.isResolved }))
+                    .badge(workspace.document.flags.count(where: { !$0.isResolved }))
                     .accessibilityIdentifier("ios.ipad.project.plot")
                     .tag(IOSRegularProjectSection.plot)
 
@@ -81,7 +83,7 @@ struct IOSRegularProjectSidebar: View {
     }
 
     private var displayTitle: String {
-        let title = store.document.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let title = workspace.document.title.trimmingCharacters(in: .whitespacesAndNewlines)
         return title.isEmpty ? "名称未設定の作品" : title
     }
 

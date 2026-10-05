@@ -1,9 +1,12 @@
 import NovelSyncV2
 import NovelSyncV2Application
 import NovelUI
+import NovelWorkspace
+import NovelWorkspaceUI
 import SwiftUI
 
 struct IOSSnapshotHistoryView: View {
+    @Environment(WorkspaceModel.self) private var workspace
     let store: IOSDocumentStore
     @Environment(\.dismiss) private var dismiss
     var body: some View {
@@ -12,19 +15,19 @@ struct IOSSnapshotHistoryView: View {
                 Text(historyAvailabilityLabel)
                     .font(.caption)
                     .foregroundStyle(FuminiwaColor.textSecondary.color)
-                if store.syncV2HistoryItems.isEmpty {
+                if workspace.historyItems.isEmpty {
                     Text("履歴を読み込むと、復元対象を選べます。")
                         .font(.caption)
                         .foregroundStyle(FuminiwaColor.textSecondary.color)
                 }
             }
-            if !store.syncV2HistoryItems.isEmpty {
-                SnapshotHistorySections(items: store.syncV2HistoryItems, application: store.snapshotSyncV2Application, workID: store.syncV2ActiveWorkID) { entry in
+            if !workspace.historyItems.isEmpty {
+                SnapshotHistorySections(items: workspace.historyItems, application: store.snapshotSyncV2Application, workID: workspace.activeWorkID) { entry in
                     if let application = store.snapshotSyncV2Application,
-                       let workID = store.syncV2ActiveWorkID {
+                       let workID = workspace.activeWorkID {
                         let session = store.currentDocumentSessionToken
                         let scope = store.snapshotSyncV2AccountScope
-                        let newest = entry.occurrenceID == store.syncV2HistoryItems.first?.occurrenceID
+                        let newest = entry.occurrenceID == workspace.historyItems.first?.occurrenceID
                         HistoryFetchControls(
                             application: application, workID: workID, snapshotID: entry.snapshotID,
                             rowDate: entry.createdAt, rowKind: HistoryPresentation().subtitle(entry),
@@ -47,7 +50,7 @@ struct IOSSnapshotHistoryView: View {
                 if store.syncV2HistoryCursor != nil {
                     Button("履歴をさらに読み込む") {
                         Task {
-                            if let workID = store.syncV2ActiveWorkID {
+                            if let workID = workspace.activeWorkID {
                                 _ = await store.refreshSnapshotHistory(
                                     for: workID, reset: false
                                 )
@@ -60,7 +63,7 @@ struct IOSSnapshotHistoryView: View {
             Section {
                 Button("履歴を更新") {
                     Task {
-                        if let workID = store.syncV2ActiveWorkID {
+                        if let workID = workspace.activeWorkID {
                             _ = await store.refreshSnapshotHistory(
                                 for: workID, reset: true
                             )
@@ -87,7 +90,7 @@ struct IOSSnapshotHistoryView: View {
         .onChange(of: store.currentDocumentSessionToken) { _, _ in dismiss() }
         .onChange(of: store.snapshotSyncV2AccountScope) { _, _ in dismiss() }
         .task {
-            if let workID = store.syncV2ActiveWorkID, store.canRefreshSnapshotHistory {
+            if let workID = workspace.activeWorkID, store.canRefreshSnapshotHistory {
                 _ = await store.refreshSnapshotHistory(for: workID, reset: true)
             }
         }

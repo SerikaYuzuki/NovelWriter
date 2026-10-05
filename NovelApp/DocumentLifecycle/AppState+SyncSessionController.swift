@@ -1,6 +1,7 @@
 import Foundation
 import NovelSyncV2
 import NovelSyncV2Application
+import NovelWorkspace
 
 extension AppState {
     var snapshotSyncV2RemoteOnlyOpenTask: Task<Bool, Never>? {
@@ -44,24 +45,17 @@ extension AppState {
     }
 
     var snapshotSyncV2AccountScopeGeneration: UInt64 {
-        get { syncSessionController.accountGeneration }
-        set { syncSessionController.accountGeneration = newValue }
-    }
-
-    var authOperationOwner: UUID? {
-        get { syncSessionController.accountOwner }
-        set { syncSessionController.accountOwner = newValue }
+        get { workspaceModel.accountGeneration }
+        set { workspaceModel.accountGeneration = newValue }
     }
 }
 
 extension AppState {
-    typealias SyncOperationContext = SyncSessionController<AppDocumentSessionToken, SnapshotSyncV2AccountScopeToken, Bool>.OperationContext
-
-    func matchesSyncOperation(_ expected: SyncOperationContext) -> Bool {
-        expected.isCurrent(SyncOperationContext(
-            workID: currentSnapshotSyncV2WorkID, session: documentSessionToken,
+    func matchesSyncOperation(_ expected: WorkspaceOperationContext) -> Bool {
+        expected.isCurrent(WorkspaceOperationContext(
+            workID: currentSnapshotSyncV2WorkID, session: workspaceModel.documentSessionToken,
             account: snapshotSyncV2AccountScopeToken,
-            editGeneration: expected.editGeneration == nil ? nil : editorContentGeneration
+            editGeneration: expected.editGeneration == nil ? nil : workspaceModel.editGeneration
         ))
     }
 }

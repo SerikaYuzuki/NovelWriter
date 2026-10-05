@@ -1,12 +1,13 @@
 import NovelCore
 import NovelThumbnail
 import NovelUI
+import NovelWorkspace
 import SwiftUI
 
 @MainActor
 struct IOSWorldbuildingFeatureView: View {
     let store: IOSDocumentStore
-    let expectedSession: IOSDocumentSessionToken?
+    let expectedSession: WorkspaceSessionToken?
     @State private var selection: WorldNoteID?
 
     init(store: IOSDocumentStore) {
@@ -25,16 +26,17 @@ struct IOSWorldbuildingFeatureView: View {
 }
 
 struct IOSWorldNoteOutlineView: View {
+    @Environment(WorkspaceModel.self) private var workspace
     let store: IOSDocumentStore
     @Binding var selection: WorldNoteID?
-    let expectedSession: IOSDocumentSessionToken?
+    let expectedSession: WorkspaceSessionToken?
     let usesNavigationLinks: Bool
 
     @State private var deletionRequest: IOSWorldNoteDeletionRequest?
 
     var body: some View {
         List {
-            ForEach(store.document.worldNotes) { note in
+            ForEach(workspace.document.worldNotes) { note in
                 noteRow(note)
             }
             .onDelete(perform: requestDeletion)
@@ -48,7 +50,7 @@ struct IOSWorldNoteOutlineView: View {
             }
         }
         .overlay {
-            if store.document.worldNotes.isEmpty {
+            if workspace.document.worldNotes.isEmpty {
                 ContentUnavailableView {
                     Label("世界観ノートがありません", systemImage: "globe.asia.australia")
                 } actions: {
@@ -128,7 +130,7 @@ struct IOSWorldNoteOutlineView: View {
 
     private func requestDeletion(at offsets: IndexSet) {
         let ids = offsets.compactMap { index in
-            store.document.worldNotes.indices.contains(index) ? store.document.worldNotes[index].id : nil
+            workspace.document.worldNotes.indices.contains(index) ? workspace.document.worldNotes[index].id : nil
         }
         guard !ids.isEmpty, let expectedSession else { return }
         deletionRequest = IOSWorldNoteDeletionRequest(expectedSession: expectedSession, noteIDs: ids)
@@ -157,9 +159,10 @@ struct IOSWorldNoteOutlineView: View {
 }
 
 struct IOSWorldNoteDetailView: View {
+    @Environment(WorkspaceModel.self) private var workspace
     let store: IOSDocumentStore
     let noteID: WorldNoteID?
-    let expectedSession: IOSDocumentSessionToken?
+    let expectedSession: WorkspaceSessionToken?
     var dismissAfterDeletion = false
     var onDeletion: () -> Void = {}
 
@@ -174,7 +177,7 @@ struct IOSWorldNoteDetailView: View {
                 ContentUnavailableView {
                     Label("世界観ノートが選択されていません", systemImage: "globe.asia.australia")
                 } description: {
-                    if !store.document.worldNotes.isEmpty {
+                    if !workspace.document.worldNotes.isEmpty {
                         Text("一覧から世界観ノートを選択してください。")
                     }
                 }
@@ -204,7 +207,7 @@ struct IOSWorldNoteDetailView: View {
 
     private var selectedNote: WorldNote? {
         guard let noteID else { return nil }
-        return store.document.worldNotes.first(where: { $0.id == noteID })
+        return workspace.document.worldNotes.first(where: { $0.id == noteID })
     }
 
     private func noteForm(_ note: WorldNote) -> some View {
@@ -250,10 +253,10 @@ struct IOSWorldNoteDetailView: View {
     ) -> Binding<Value> {
         Binding(
             get: {
-                store.document.worldNotes.first(where: { $0.id == id })?[keyPath: keyPath] ?? fallback
+                workspace.document.worldNotes.first(where: { $0.id == id })?[keyPath: keyPath] ?? fallback
             },
             set: { newValue in
-                guard var note = store.document.worldNotes.first(where: { $0.id == id }) else { return }
+                guard var note = workspace.document.worldNotes.first(where: { $0.id == id }) else { return }
                 guard let expectedSession else { return }
                 note[keyPath: keyPath] = newValue
                 _ = store.updateWorldNote(note, expectedSession: expectedSession)
@@ -308,7 +311,7 @@ private struct IOSWorldNoteRow: View {
 
 private struct IOSWorldNoteDeletionRequest: Identifiable {
     let id = UUID()
-    let expectedSession: IOSDocumentSessionToken
+    let expectedSession: WorkspaceSessionToken
     let noteIDs: [WorldNoteID]
 
     var message: String {
@@ -318,7 +321,7 @@ private struct IOSWorldNoteDeletionRequest: Identifiable {
 
 private struct IOSSingleWorldNoteDeletionRequest: Identifiable {
     let id = UUID()
-    let expectedSession: IOSDocumentSessionToken
+    let expectedSession: WorkspaceSessionToken
     let noteID: WorldNoteID
     let displayTitle: String
 

@@ -2,9 +2,12 @@ import NovelCore
 import NovelSyncV2
 import NovelSyncV2Application
 import NovelUI
+import NovelWorkspace
+import NovelWorkspaceUI
 import SwiftUI
 
 struct LibraryPane: View {
+    @Environment(WorkspaceModel.self) private var workspace
     var observesImports = true
     @Environment(AppState.self) private var appState
     @Environment(DocumentPanelPresenter.self) private var documentPanelPresenter
@@ -15,15 +18,14 @@ struct LibraryPane: View {
     }
 
     @State private var pendingRename: StartupLibraryWork?
-    @State private var renameSession: DocumentSessionToken?
-    @State private var renameAccountScope: SnapshotSyncV2AccountScopeToken?
+    @State private var renameSession: WorkspaceSessionToken?
+    @State private var renameAccountScope: WorkspaceAccountScope?
     @State private var renameTitle = ""
     @State private var renamingIDs: Set<UUID> = []
     @State private var renameFailed = false
     @State private var pendingDeletion: StartupLibraryWork?
-    @State private var deletionAccountScope: SnapshotSyncV2AccountScopeToken?
+    @State private var deletionAccountScope: WorkspaceAccountScope?
     @State private var deletingIDs: Set<UUID> = []
-    @State private var showingHistory = false
     @State private var showingProtection = false
     @FocusState private var focusedWorkID: UUID?
     @State private var selection: UUID?
@@ -42,46 +44,14 @@ struct LibraryPane: View {
                         .font(.subheadline).foregroundStyle(.secondary)
                 }
                 Spacer()
-                Button("新しい作品…", systemImage: "plus") {
-                    documentPanelPresenter.presentNewDocument()
-                }
-                .labelStyle(.titleAndIcon)
-                .buttonStyle(.borderedProminent)
-                .help("新しい作品")
-                .disabled(!appState.permitsNewDocument)
-                Button("作品を取り込む…", systemImage: "square.and.arrow.down") {
-                    documentPanelPresenter.presentOpenPanel()
-                }
-                .disabled(!appState.permitsDocumentImport)
-                Menu {
-                    Button("更新", systemImage: "arrow.clockwise") {
-                        Task {
-                            await appState.refreshSnapshotLibrary()
-                            await appState.refreshSnapshotRemoteCatalog()
-                        }
-                    }
-                    .labelStyle(.iconOnly)
-                    .help("作品一覧を更新")
-                    Button("復元", systemImage: "archivebox") { showingProtection = true }
-                        .labelStyle(.iconOnly).help("別作品として復元")
-                    Button("履歴", systemImage: "clock.arrow.circlepath") {
-                        Task {
-                            await appState.refreshSnapshotHistory()
-                            showingHistory = true
-                        }
-                    }
-                    .labelStyle(.iconOnly)
-                    .help("履歴")
-                } label: { Label("その他の操作", systemImage: "ellipsis") }
-                    .labelStyle(.iconOnly).help("その他の操作")
             }
             .padding(.horizontal, Spacing.medium)
-            TextField("作品を検索", text: $searchText)
+            TextField(LibraryText.search, text: $searchText)
                 .focused($searchFocused)
                 .accessibilityIdentifier("library.search")
                 .textFieldStyle(.roundedBorder)
                 .padding(.horizontal, Spacing.medium)
-            if let failure = appState.snapshotSyncLibraryFailure ?? appState.snapshotSyncLibraryLocalFailure {
+            if let failure = workspace.libraryFailure ?? appState.snapshotSyncLibraryLocalFailure {
                 StatusLabel(SyncV2LibraryPresentation.isOffline(failure)
                     ? SyncV2LibraryPresentation.offlineNotice : remoteOnlyOpenErrorMessage(failure),
                     systemImage: SyncV2LibraryPresentation.isOffline(failure) ? "wifi.slash" : "exclamationmark.circle",
@@ -112,30 +82,30 @@ struct LibraryPane: View {
             }
             .overlay {
                 if filteredWorks.isEmpty {
-                    if appState.startupState == .loading || appState.snapshotSyncLibraryIsLoading {
-                        ProgressView("作品一覧を読み込み中…")
-                    } else if let failure = appState.snapshotSyncLibraryFailure ?? appState.snapshotSyncLibraryLocalFailure {
-                        ContentUnavailableView(SyncV2LibraryPresentation.isOffline(failure) ? "オフラインです" : "作品一覧を読み込めませんでした",
+                    if workspace.libraryIsLoading {
+                        ProgressView(LibraryText.loading)
+                    } else if let failure = workspace.libraryFailure ?? appState.snapshotSyncLibraryLocalFailure {
+                        ContentUnavailableView(SyncV2LibraryPresentation.isOffline(failure) ? LibraryText.offline : LibraryText.loadFailed,
                                                systemImage: SyncV2LibraryPresentation.isOffline(failure) ? "wifi.slash" : "exclamationmark.circle",
-                                               description: Text("「更新」からもう一度読み込めます。端末内では「新規」から書き始められます。"))
+                                               description: Text(LibraryText.retryMac))
                     } else {
                         if searchText.isEmpty {
                             ContentUnavailableView {
                                 Image("FuminiwaBookSprout").resizable().scaledToFit()
                                     .frame(width: 144, height: 144).accessibilityHidden(true)
-                                Text("最初の作品を書きましょう")
+                                Text(LibraryText.empty)
                             } description: {
-                                Text("オフラインでも作成・編集できます。")
+                                Text(LibraryText.emptyMac)
                             } actions: {
                                 Button("新しい作品…") { documentPanelPresenter.presentNewDocument() }
                                     .buttonStyle(.borderedProminent)
                                     .disabled(!appState.permitsNewDocument)
-                                Button("作品を取り込む…") { documentPanelPresenter.presentOpenPanel() }
+                                Button(LibraryText.importWork) { documentPanelPresenter.presentOpenPanel() }
                                     .disabled(!appState.permitsDocumentImport)
                             }
                         } else {
-                            ContentUnavailableView("作品が見つかりません", systemImage: "magnifyingglass",
-                                                   description: Text("検索する言葉を変えてください。"))
+                            ContentUnavailableView(LibraryText.noSearchResults, systemImage: "magnifyingglass",
+                                                   description: Text(LibraryText.searchHint))
                         }
                     }
                 }
@@ -143,6 +113,7 @@ struct LibraryPane: View {
             .contextMenu(forSelectionType: UUID.self) { ids in
                 if let work = works.first(where: { ids.contains($0.id) }) {
                     Button("開く") { open(work) }.disabled(!canOpen(work))
+                    historyButton(work)
                     importMenu(work)
                     takeButton(work)
                     renameButton(work)
@@ -153,11 +124,11 @@ struct LibraryPane: View {
                     open(work)
                 }
             }
-            if appState.snapshotSyncRemoteCatalogNextCursor != nil {
-                Button("サーバーの作品をさらに読み込む") {
+            if workspace.remoteCatalogCursor != nil {
+                Button(LibraryText.loadMore) {
                     Task { await appState.refreshSnapshotRemoteCatalog(loadMore: true) }
                 }
-                .disabled(appState.snapshotSyncLibraryIsLoading)
+                .disabled(workspace.libraryIsLoading)
                 .frame(maxWidth: .infinity)
             }
             Divider()
@@ -179,12 +150,33 @@ struct LibraryPane: View {
                 .padding(.bottom, Spacing.small)
         }
         .padding(.top, Spacing.medium)
-        .toolbar { ShelfDisplayPicker(selection: $display) }
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button("新しい作品…", systemImage: "plus") { documentPanelPresenter.presentNewDocument() }
+                    .disabled(!appState.permitsNewDocument)
+            }
+            ToolbarItem(placement: .primaryAction) {
+                Button(LibraryText.importWork, systemImage: "square.and.arrow.down") { documentPanelPresenter.presentOpenPanel() }
+                    .disabled(!appState.permitsDocumentImport)
+            }
+            ToolbarItem(placement: .primaryAction) {
+                Button("更新", systemImage: "arrow.clockwise") {
+                    Task {
+                        await appState.refreshSnapshotLibrary()
+                        await appState.refreshSnapshotRemoteCatalog()
+                    }
+                }.help("作品一覧を更新")
+            }
+            ToolbarItem(placement: .primaryAction) {
+                Button("別作品として復元…", systemImage: "archivebox") { showingProtection = true }
+            }
+            ToolbarItem(placement: .primaryAction) { ShelfDisplayPicker(selection: $display) }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .focusLibrarySearch)) { _ in
             searchFocused = true
         }
         .background(FuminiwaColor.paper.color)
-        .alert("作品名を変更", isPresented: Binding(
+        .alert(LibraryText.rename, isPresented: Binding(
             get: { pendingRename != nil },
             set: {
                 if !$0 {
@@ -192,8 +184,8 @@ struct LibraryPane: View {
                 }
             }
         )) {
-            TextField("作品名", text: $renameTitle)
-            Button("変更") {
+            TextField(LibraryText.title, text: $renameTitle)
+            Button(LibraryText.change) {
                 guard let work = pendingRename, let session = renameSession,
                       let scope = renameAccountScope else { return }
                 let title = renameTitle
@@ -206,19 +198,19 @@ struct LibraryPane: View {
                 }
             }
             .disabled(renameTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            Button("キャンセル", role: .cancel) {}
+            Button(LibraryText.cancel, role: .cancel) {}
         }
-        .alert("作品名を変更できませんでした", isPresented: $renameFailed) {
+        .alert(LibraryText.renameFailed, isPresented: $renameFailed) {
             Button("OK", role: .cancel) {}
         } message: {
-            Text("作品やアカウントが切り替わっていないか、接続状態を確認して再試行してください。")
+            Text(LibraryText.renameRetry)
         }
-        .alert("作品を完全に削除しますか？", isPresented: Binding(get: { pendingDeletion != nil }, set: {
+        .alert(LibraryText.deleteConfirmation, isPresented: Binding(get: { pendingDeletion != nil }, set: {
             if !$0 {
                 pendingDeletion = nil
             }
         })) {
-            Button("削除", role: .destructive) {
+            Button(LibraryText.delete, role: .destructive) {
                 guard let work = pendingDeletion, let accountScope = deletionAccountScope else { return }
                 deletingIDs.insert(work.id)
                 Task {
@@ -228,14 +220,15 @@ struct LibraryPane: View {
                     deletingIDs.remove(work.id)
                 }
             }
-            Button("キャンセル", role: .cancel) {}
+            Button(LibraryText.cancel, role: .cancel) {}
         } message: {
-            Text("「\(pendingDeletion?.title ?? "")」を一覧から削除します。同期した作品のサーバー受領済みデータは1年間保管されます。この端末だけの作品は元に戻せません。")
+            Text(LibraryText.deletionMessage(title: pendingDeletion?.title ?? ""))
         }
         .task(id: appState.snapshotSyncV2AccountScopeToken) {
             guard observesImports, let application = appState.snapshotSyncV2Application else { return }
             for await _ in await application.stateChanges() {
                 guard !Task.isCancelled else { return }
+                guard !workspace.isDocumentTransitionInProgress, !appState.startupState.isReady else { continue }
                 await appState.refreshSnapshotLibrary()
             }
         }
@@ -259,7 +252,7 @@ struct LibraryPane: View {
                     await appState.observeLibraryImports()
                 }
             }
-            .confirmationDialog("取り込みを中止して開きますか？", isPresented: Binding(
+            .confirmationDialog(LibraryText.cancelImportConfirmation, isPresented: Binding(
                 get: { pendingImportOpen != nil }, set: {
                     if !$0 {
                         pendingImportOpen = nil
@@ -267,19 +260,14 @@ struct LibraryPane: View {
                 }
             ), titleVisibility: .visible) {
                 if let work = pendingImportOpen {
-                    Button("取り込みを中止して開く") {
+                    Button(LibraryText.cancelImportAndOpen) {
                         pendingImportOpen = nil
                         Task { await appState.cancelLibraryImport(); performOpen(work) }
                     }
                 }
-                Button("キャンセル", role: .cancel) { pendingImportOpen = nil }
+                Button(LibraryText.cancel, role: .cancel) { pendingImportOpen = nil }
             }
             .frame(minWidth: 220)
-            .sheet(isPresented: $showingHistory) {
-                SnapshotHistorySheet {
-                    showingHistory = false
-                }
-            }
     }
 }
 
@@ -347,13 +335,13 @@ private extension LibraryPane {
                    let startedAt = appState.snapshotSyncV2RemoteOnlyOpenStartedAt {
                     LibraryImportProgress(startedAt: startedAt,
                                           longImportNotice: SyncV2LibraryPresentation.longImportNotice,
-                                          label: (appState.libraryImportPhases[work.workID] ?? ImportPhase()).japaneseLabel,
-                                          fraction: appState.libraryImportPhases[work.workID]?.stage == .receiving
-                                              ? appState.libraryImportPhases[work.workID]?.fraction : nil,
-                                          accessibilityValue: (appState.libraryImportPhases[work.workID] ?? ImportPhase()).accessibilityValue, compact: usesGrid)
+                                          label: (appState.workspaceModel.libraryImportPhases[work.workID] ?? ImportPhase()).japaneseLabel,
+                                          fraction: appState.workspaceModel.libraryImportPhases[work.workID]?.stage == .receiving
+                                              ? appState.workspaceModel.libraryImportPhases[work.workID]?.fraction : nil,
+                                          accessibilityValue: (appState.workspaceModel.libraryImportPhases[work.workID] ?? ImportPhase()).accessibilityValue, compact: usesGrid)
                     Button(usesGrid ? "中止" : "取り込みを中止") { Task { await appState.cancelLibraryImport() } }
                         .buttonStyle(.borderless)
-                } else if let failure = appState.libraryImportFailures[work.workID] {
+                } else if let failure = appState.workspaceModel.libraryImportFailures[work.workID] {
                     StatusLabel(SyncV2LibraryPresentation.importFailure(failure), systemImage: "exclamationmark.circle", tone: .danger)
                     Button("再試行") { appState.takeOntoDevice(workID: work.workID, title: work.title) }
                         .tint(FuminiwaColor.accent.color)
@@ -371,7 +359,7 @@ private extension LibraryPane {
                 }
             }
             if let note = work.historyBackfillNote, let application = appState.snapshotSyncV2Application {
-                HistoryFetchControls(application: application, workID: work.workID, snapshotID: nil, progressNote: note)
+                HistoryFetchControls(application: application, workID: work.workID, snapshotID: nil, progressNote: note, userDefaults: appState.userDefaults)
                     .id(appState.snapshotSyncV2AccountScopeToken)
             }
             if !usesGrid {
@@ -386,6 +374,7 @@ private extension LibraryPane {
         .contextMenu {
             Button("開く") { open(work) }
                 .disabled(!canOpen(work))
+            historyButton(work)
             importMenu(work)
             takeButton(work)
             renameButton(work)
@@ -399,7 +388,7 @@ private extension LibraryPane {
         if appState.libraryPrefetchWorkID == work.workID || appState.snapshotSyncV2RemoteOnlyOpeningWorkID == work.workID {
             Text(LibraryImportProgress.hint(SyncV2LibraryPresentation.longImportNotice))
             Button("取り込みを中止") { Task { await appState.cancelLibraryImport() } }
-        } else if appState.libraryImportFailures[work.workID] != nil {
+        } else if appState.workspaceModel.libraryImportFailures[work.workID] != nil {
             Button("再試行") { appState.takeOntoDevice(workID: work.workID, title: work.title) }
                 .tint(FuminiwaColor.accent.color)
                 .help(appState.libraryPrefetchWorkID != nil || appState.snapshotSyncV2RemoteOnlyOpeningWorkID != nil ? "ほかの作品を取り込み中です" : "この端末へ取り込み直します")
@@ -408,16 +397,32 @@ private extension LibraryPane {
         }
     }
 
+    private func historyButton(_ work: StartupLibraryWork) -> some View {
+        Button("履歴…", systemImage: "clock.arrow.circlepath") {
+            let account = appState.snapshotSyncV2AccountScopeToken
+            Task {
+                guard await appState.openLibraryWork(work),
+                      appState.currentSnapshotSyncV2WorkID == work.workID,
+                      appState.matchesSnapshotSyncV2AccountScope(account) else { return }
+                let session = appState.workspaceModel.documentSessionToken
+                guard appState.workspaceModel.documentSessionToken == session,
+                      appState.matchesSnapshotSyncV2AccountScope(account) else { return }
+                NotificationCenter.default.post(name: .presentWorkHistory, object: session)
+            }
+        }
+        .disabled(!canOpen(work) || appState.libraryPrefetchWorkID != nil || appState.snapshotSyncV2RemoteOnlyOpeningWorkID != nil)
+    }
+
     private func canOpen(_ work: StartupLibraryWork) -> Bool {
         work.isOpenable && !renamingIDs.contains(work.id)
 
-            && !appState.snapshotSyncPendingDeletionWorkIDs.contains(work.workID)
+            && !appState.workspaceModel.pendingDeletionWorkIDs.contains(work.workID)
     }
 
     private func renameButton(_ work: StartupLibraryWork) -> some View {
         Button("作品名を変更…", systemImage: "pencil") {
             renameTitle = work.title
-            renameSession = appState.documentSessionToken
+            renameSession = appState.workspaceModel.documentSessionToken
             renameAccountScope = appState.snapshotSyncV2AccountScopeToken
             pendingRename = work
         }
@@ -480,13 +485,13 @@ private extension LibraryPane {
         case .offline: "オフライン・接続時再開"
         case .accountRequired: "サインインせず、この端末で執筆できます"
         case .differentAccount: "別のアカウントのため保留中"
-        case .unavailable: "作品一覧を読み込めませんでした"
+        case .unavailable: LibraryText.loadFailed
         }
     }
 
     private func status(for work: StartupLibraryWork) -> SyncV2LibraryStatus {
-        if appState.snapshotSyncPendingDeletionWorkIDs.contains(work.workID) {
-            return .init(text: "削除待ち・接続時に再試行", symbol: "clock", tone: .secondary)
+        if appState.workspaceModel.pendingDeletionWorkIDs.contains(work.workID) {
+            return .init(text: LibraryText.pendingDeletion, symbol: "clock", tone: .secondary)
         }
         return work.status
     }
@@ -507,62 +512,72 @@ private extension LibraryPane {
 }
 
 struct SnapshotHistorySheet: View {
+    @Environment(WorkspaceModel.self) private var workspace
     @Environment(AppState.self) private var appState
     let dismiss: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Spacing.medium) {
-            Text("履歴")
-                .font(.title2.weight(.semibold))
-            if appState.snapshotSyncHistory.isEmpty {
-                ContentUnavailableView(
-                    "履歴はありません",
-                    systemImage: "clock.arrow.circlepath",
-                    description: Text("この端末の履歴とオンライン履歴を、利用できる範囲で表示します。")
-                )
-            } else {
-                List {
-                    SnapshotHistorySections(items: appState.snapshotSyncHistory, application: appState.snapshotSyncV2Application, workID: appState.currentSnapshotSyncV2WorkID) { entry in
-                        if let application = appState.snapshotSyncV2Application,
-                           let workID = appState.currentSnapshotSyncV2WorkID {
-                            let session = appState.documentSessionToken
-                            let scope = appState.snapshotSyncV2AccountScopeToken
-                            let newest = entry.occurrenceID == appState.snapshotSyncHistory.first?.occurrenceID
-                            HistoryFetchControls(
-                                application: application, workID: workID, snapshotID: entry.snapshotID,
-                                rowDate: entry.createdAt,
-                                rowKind: HistoryPresentation().subtitle(entry),
-                                historyItem: entry, userDefaults: appState.userDefaults,
-                                announcesStatus: newest
-                            ) {
-                                guard appState.documentSessionToken == session,
-                                      appState.matchesSnapshotSyncV2AccountScope(scope) else { return }
-                                if await appState.restoreSnapshotV2(snapshotID: entry.snapshotID) {
-                                    dismiss()
+        NavigationStack {
+            VStack(alignment: .leading, spacing: Spacing.medium) {
+                Text("\(workspace.document.title)の履歴")
+                    .font(.title2.weight(.semibold))
+                if workspace.historyItems.isEmpty, !appState.snapshotSyncHistoryLoading,
+                   appState.snapshotSyncHistoryFailure == nil {
+                    ContentUnavailableView(
+                        "履歴はありません",
+                        systemImage: "clock.arrow.circlepath",
+                        description: Text("この端末の履歴とオンライン履歴を、利用できる範囲で表示します。")
+                    )
+                } else {
+                    List {
+                        SnapshotHistorySections(items: workspace.historyItems, application: appState.snapshotSyncV2Application, workID: appState.currentSnapshotSyncV2WorkID) { entry in
+                            if let application = appState.snapshotSyncV2Application,
+                               let workID = appState.currentSnapshotSyncV2WorkID {
+                                let session = workspace.documentSessionToken
+                                let scope = appState.snapshotSyncV2AccountScopeToken
+                                let newest = entry.occurrenceID == workspace.historyItems.first?.occurrenceID
+                                HistoryFetchControls(
+                                    application: application, workID: workID, snapshotID: entry.snapshotID,
+                                    rowDate: entry.createdAt,
+                                    rowKind: HistoryPresentation().subtitle(entry),
+                                    historyItem: entry, userDefaults: appState.userDefaults,
+                                    announcesStatus: newest
+                                ) {
+                                    guard workspace.documentSessionToken == session,
+                                          appState.matchesSnapshotSyncV2AccountScope(scope) else { return }
+                                    if await appState.restoreSnapshotV2(snapshotID: entry.snapshotID) {
+                                        dismiss()
+                                    }
                                 }
-                            }
-                            .surfaceCard()
-                            .listRowSeparator(.hidden)
-                            .listRowBackground(Color.clear)
-                        } else {
-                            SnapshotHistoryLabel(item: entry, userDefaults: appState.userDefaults)
                                 .surfaceCard()
                                 .listRowSeparator(.hidden)
                                 .listRowBackground(Color.clear)
+                            } else {
+                                SnapshotHistoryLabel(item: entry, userDefaults: appState.userDefaults)
+                                    .surfaceCard()
+                                    .listRowSeparator(.hidden)
+                                    .listRowBackground(Color.clear)
+                            }
                         }
                     }
+                    .listStyle(.plain)
+                    .scrollContentBackground(.hidden)
                 }
-                .listStyle(.plain)
-                .scrollContentBackground(.hidden)
+                if appState.snapshotSyncHistoryLoading {
+                    ProgressView("古い履歴を読み込み中…")
+                }
+                if let failure = appState.snapshotSyncHistoryFailure {
+                    Text(failure).font(.caption).foregroundStyle(.secondary)
+                }
             }
-            Button("閉じる", action: dismiss)
-                .buttonStyle(.borderless)
+            .padding(Spacing.large)
+            .background(FuminiwaColor.paper.color)
+            .frame(minWidth: 460, minHeight: 300)
+            .accessibilityIdentifier("snapshotSyncV2.historySheet")
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("閉じる", action: dismiss) } }
         }
-        .padding(Spacing.large)
-        .background(FuminiwaColor.paper.color)
-        .frame(minWidth: 460, minHeight: 300)
-        .accessibilityIdentifier("snapshotSyncV2.historySheet")
-        .onChange(of: appState.documentSessionToken) { _, _ in dismiss() }
+        .task(id: appState.workSearchScope) { await appState.refreshSnapshotHistory() }
+        .onChange(of: workspace.documentSessionToken) { _, _ in dismiss() }
         .onChange(of: appState.snapshotSyncV2AccountScopeToken) { _, _ in dismiss() }
     }
 }

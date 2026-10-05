@@ -1,300 +1,222 @@
 import Foundation
 import NovelCore
-import NovelThumbnail
+import NovelWorkspace
 
 extension IOSDocumentStore {
-    // MARK: - Characters
-
     @discardableResult
     func addCharacter(
         name: String = "名無し",
-        expectedSession: IOSDocumentSessionToken
+        expectedSession: WorkspaceSessionToken
     ) -> CharacterID? {
-        guard permitsProjectFeatureMutation,
+        guard permitsLocalMutation,
               validateCurrentDocumentSession(expectedSession) else { return nil }
-        let id = document.addCharacter(name: name)
-        markDocumentChanged()
-        return id
+        return ProjectFeatureCommands(host: self, policy: .debounced).addCharacter(
+            name: name,
+            expectedSession: expectedSession
+        )
     }
 
     @discardableResult
     func updateCharacter(
         _ character: NovelCore.Character,
-        expectedSession: IOSDocumentSessionToken
+        expectedSession: WorkspaceSessionToken
     ) -> Bool {
-        guard permitsProjectFeatureMutation,
-              validateCurrentDocumentSession(expectedSession),
-              let current = document.characters.first(where: { $0.id == character.id }),
-              current != character else { return false }
-        document.updateCharacter(
-            id: character.id,
-            name: character.name,
-            kana: character.kana,
-            memo: character.memo,
-            colorHex: character.colorHex,
-            role: character.role,
-            age: character.age,
-            gender: character.gender,
-            firstPerson: character.firstPerson,
-            secondPerson: character.secondPerson,
-            speechStyle: character.speechStyle,
-            appearance: character.appearance,
-            personality: character.personality,
-            background: character.background
+        guard permitsLocalMutation,
+              validateCurrentDocumentSession(expectedSession) else { return false }
+        return ProjectFeatureCommands(host: self, policy: .debounced).updateCharacter(
+            character,
+            expectedSession: expectedSession
         )
-        markDocumentChanged()
-        return true
     }
 
     @discardableResult
-    func deleteCharacter(id: CharacterID, expectedSession: IOSDocumentSessionToken) -> Bool {
-        guard permitsProjectFeatureMutation,
+    func deleteCharacter(id: CharacterID, expectedSession: WorkspaceSessionToken) -> Bool {
+        guard permitsLocalMutation,
               validateCurrentDocumentSession(expectedSession) else { return false }
-        var replacement = document
-        guard replacement.removeCharacter(id: id) != nil else { return false }
-        applyOwnerRemoval(replacement)
-        markDocumentChanged()
-        return true
+        return ProjectFeatureCommands(host: self, policy: .debounced).deleteCharacter(
+            id: id,
+            expectedSession: expectedSession
+        )
     }
 
     @discardableResult
     func moveCharacters(
         fromOffsets: IndexSet,
         toOffset: Int,
-        expectedSession: IOSDocumentSessionToken
+        expectedSession: WorkspaceSessionToken
     ) -> Bool {
-        guard permitsProjectFeatureMutation,
-              validateCurrentDocumentSession(expectedSession),
-              Self.isValidMove(
-                  fromOffsets: fromOffsets,
-                  toOffset: toOffset,
-                  count: document.characters.count
-              ) else { return false }
-        document.moveCharacters(fromOffsets: fromOffsets, toOffset: toOffset)
-        markDocumentChanged()
-        return true
+        guard permitsLocalMutation,
+              validateCurrentDocumentSession(expectedSession) else { return false }
+        return ProjectFeatureCommands(host: self, policy: .debounced).moveCharacters(
+            fromOffsets: fromOffsets,
+            toOffset: toOffset,
+            expectedSession: expectedSession
+        )
     }
-
-    // MARK: - Plot cards
 
     @discardableResult
     func addPlotCard(
         title: String = "新しいカード",
         chapterID: ChapterID? = nil,
-        expectedSession: IOSDocumentSessionToken
+        expectedSession: WorkspaceSessionToken
     ) -> PlotCardID? {
-        guard permitsProjectFeatureMutation,
-              validateCurrentDocumentSession(expectedSession),
-              isCurrentChapterID(chapterID) else { return nil }
-        let id = document.addPlotCard(title: title, chapterID: chapterID)
-        markDocumentChanged()
-        return id
+        guard permitsLocalMutation,
+              validateCurrentDocumentSession(expectedSession) else { return nil }
+        return ProjectFeatureCommands(host: self, policy: .debounced).addPlotCard(
+            title: title,
+            chapterID: chapterID,
+            expectedSession: expectedSession
+        )
     }
 
     @discardableResult
     func updatePlotCard(
         _ card: PlotCard,
-        expectedSession: IOSDocumentSessionToken
+        expectedSession: WorkspaceSessionToken
     ) -> Bool {
-        guard permitsProjectFeatureMutation,
-              validateCurrentDocumentSession(expectedSession),
-              isCurrentChapterID(card.chapterID),
-              let current = document.plotCards.first(where: { $0.id == card.id }),
-              current != card else { return false }
-        document.updatePlotCard(
-            id: card.id,
-            title: card.title,
-            memo: card.memo,
-            chapterID: card.chapterID
+        guard permitsLocalMutation,
+              validateCurrentDocumentSession(expectedSession) else { return false }
+        return ProjectFeatureCommands(host: self, policy: .debounced).updatePlotCard(
+            card,
+            expectedSession: expectedSession
         )
-        markDocumentChanged()
-        return true
     }
 
     @discardableResult
-    func deletePlotCard(id: PlotCardID, expectedSession: IOSDocumentSessionToken) -> Bool {
-        guard permitsProjectFeatureMutation,
-              validateCurrentDocumentSession(expectedSession),
-              document.removePlotCard(id: id) != nil else { return false }
-        markDocumentChanged()
-        return true
+    func deletePlotCard(id: PlotCardID, expectedSession: WorkspaceSessionToken) -> Bool {
+        guard permitsLocalMutation,
+              validateCurrentDocumentSession(expectedSession) else { return false }
+        return ProjectFeatureCommands(host: self, policy: .debounced).deletePlotCard(
+            id: id,
+            expectedSession: expectedSession
+        )
     }
 
     @discardableResult
     func movePlotCards(
         fromOffsets: IndexSet,
         toOffset: Int,
-        expectedSession: IOSDocumentSessionToken
+        expectedSession: WorkspaceSessionToken
     ) -> Bool {
-        guard permitsProjectFeatureMutation,
-              validateCurrentDocumentSession(expectedSession),
-              Self.isValidMove(
-                  fromOffsets: fromOffsets,
-                  toOffset: toOffset,
-                  count: document.plotCards.count
-              ) else { return false }
-        document.movePlotCards(fromOffsets: fromOffsets, toOffset: toOffset)
-        markDocumentChanged()
-        return true
+        guard permitsLocalMutation,
+              validateCurrentDocumentSession(expectedSession) else { return false }
+        return ProjectFeatureCommands(host: self, policy: .debounced).movePlotCards(
+            fromOffsets: fromOffsets,
+            toOffset: toOffset,
+            expectedSession: expectedSession
+        )
     }
-
-    // MARK: - Flags
 
     @discardableResult
     func addFlag(
         title: String = "新しい伏線",
-        expectedSession: IOSDocumentSessionToken
+        expectedSession: WorkspaceSessionToken
     ) -> FlagID? {
-        guard permitsProjectFeatureMutation,
+        guard permitsLocalMutation,
               validateCurrentDocumentSession(expectedSession) else { return nil }
-        let id = document.addFlag(title: title)
-        markDocumentChanged()
-        return id
+        return ProjectFeatureCommands(host: self, policy: .debounced).addFlag(
+            title: title,
+            expectedSession: expectedSession
+        )
     }
 
     @discardableResult
     func updateFlag(
         _ flag: Flag,
-        expectedSession: IOSDocumentSessionToken
+        expectedSession: WorkspaceSessionToken
     ) -> Bool {
-        guard permitsProjectFeatureMutation,
-              validateCurrentDocumentSession(expectedSession),
-              isCurrentChapterID(flag.plantedChapterID),
-              isCurrentChapterID(flag.resolvedChapterID),
-              let current = document.flags.first(where: { $0.id == flag.id }),
-              current != flag else { return false }
-        document.updateFlag(flag)
-        markDocumentChanged()
-        return true
+        guard permitsLocalMutation,
+              validateCurrentDocumentSession(expectedSession) else { return false }
+        return ProjectFeatureCommands(host: self, policy: .debounced).updateFlag(flag, expectedSession: expectedSession)
     }
 
     @discardableResult
-    func deleteFlag(id: FlagID, expectedSession: IOSDocumentSessionToken) -> Bool {
-        guard permitsProjectFeatureMutation,
-              validateCurrentDocumentSession(expectedSession),
-              document.removeFlag(id: id) != nil else { return false }
-        markDocumentChanged()
-        return true
+    func deleteFlag(id: FlagID, expectedSession: WorkspaceSessionToken) -> Bool {
+        guard permitsLocalMutation,
+              validateCurrentDocumentSession(expectedSession) else { return false }
+        return ProjectFeatureCommands(host: self, policy: .debounced).deleteFlag(
+            id: id,
+            expectedSession: expectedSession
+        )
     }
 
     @discardableResult
     func moveFlags(
         fromOffsets: IndexSet,
         toOffset: Int,
-        expectedSession: IOSDocumentSessionToken
+        expectedSession: WorkspaceSessionToken
     ) -> Bool {
-        guard permitsProjectFeatureMutation,
-              validateCurrentDocumentSession(expectedSession),
-              Self.isValidMove(
-                  fromOffsets: fromOffsets,
-                  toOffset: toOffset,
-                  count: document.flags.count
-              ) else { return false }
-        document.moveFlags(fromOffsets: fromOffsets, toOffset: toOffset)
-        markDocumentChanged()
-        return true
+        guard permitsLocalMutation,
+              validateCurrentDocumentSession(expectedSession) else { return false }
+        return ProjectFeatureCommands(host: self, policy: .debounced).moveFlags(
+            fromOffsets: fromOffsets,
+            toOffset: toOffset,
+            expectedSession: expectedSession
+        )
     }
-
-    // MARK: - World notes
 
     @discardableResult
     func addWorldNote(
         title: String = "新しいノート",
-        expectedSession: IOSDocumentSessionToken
+        expectedSession: WorkspaceSessionToken
     ) -> WorldNoteID? {
-        guard permitsProjectFeatureMutation,
+        guard permitsLocalMutation,
               validateCurrentDocumentSession(expectedSession) else { return nil }
         let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
         let note = WorldNote(title: trimmedTitle.isEmpty ? "新しいノート" : trimmedTitle)
-        document.worldNotes.append(note)
-        markDocumentChanged()
-        return note.id
+        return ProjectFeatureCommands(host: self, policy: .debounced).addWorldNote(
+            note,
+            expectedSession: expectedSession
+        )
     }
 
     @discardableResult
     func updateWorldNote(
         _ note: WorldNote,
-        expectedSession: IOSDocumentSessionToken
+        expectedSession: WorkspaceSessionToken
     ) -> Bool {
-        guard permitsProjectFeatureMutation,
-              validateCurrentDocumentSession(expectedSession),
-              let index = document.worldNotes.firstIndex(where: { $0.id == note.id }),
-              document.worldNotes[index] != note else { return false }
-        document.worldNotes[index] = note
-        markDocumentChanged()
-        return true
+        guard permitsLocalMutation,
+              validateCurrentDocumentSession(expectedSession) else { return false }
+        return ProjectFeatureCommands(host: self, policy: .debounced).updateWorldNote(
+            note,
+            expectedSession: expectedSession
+        )
     }
 
     @discardableResult
-    func deleteWorldNote(id: WorldNoteID, expectedSession: IOSDocumentSessionToken) -> Bool {
-        guard permitsProjectFeatureMutation,
-              validateCurrentDocumentSession(expectedSession),
-              let index = document.worldNotes.firstIndex(where: { $0.id == id }) else { return false }
-        var replacement = document
-        replacement.worldNotes.remove(at: index)
-        applyOwnerRemoval(replacement)
-        markDocumentChanged()
-        return true
+    func deleteWorldNote(id: WorldNoteID, expectedSession: WorkspaceSessionToken) -> Bool {
+        guard permitsLocalMutation,
+              validateCurrentDocumentSession(expectedSession) else { return false }
+        return ProjectFeatureCommands(host: self, policy: .debounced).deleteWorldNote(
+            id: id,
+            expectedSession: expectedSession
+        )
     }
 
     @discardableResult
     func moveWorldNotes(
         fromOffsets: IndexSet,
         toOffset: Int,
-        expectedSession: IOSDocumentSessionToken
+        expectedSession: WorkspaceSessionToken
     ) -> Bool {
-        guard permitsProjectFeatureMutation,
-              validateCurrentDocumentSession(expectedSession),
-              Self.isValidMove(
-                  fromOffsets: fromOffsets,
-                  toOffset: toOffset,
-                  count: document.worldNotes.count
-              ) else { return false }
-        Self.moveWorldNotes(&document.worldNotes, fromOffsets: fromOffsets, toOffset: toOffset)
-        markDocumentChanged()
-        return true
+        guard permitsLocalMutation,
+              validateCurrentDocumentSession(expectedSession) else { return false }
+        return ProjectFeatureCommands(host: self, policy: .debounced).moveWorldNotes(
+            fromOffsets: fromOffsets,
+            toOffset: toOffset,
+            expectedSession: expectedSession
+        )
     }
 
-    private var permitsProjectFeatureMutation: Bool {
-        startupState == .ready
-            && syncV2ActiveWorkID != nil
-            && !isDocumentTransitionInProgress
-            && !syncV2AccountTransitionInProgress
-    }
-
-    private func isCurrentChapterID(_ id: ChapterID?) -> Bool {
-        guard let id else { return true }
-        return document.chapters.contains(where: { $0.id == id })
-    }
-
-    func matchesCurrentDocumentSession(_ expectedSession: IOSDocumentSessionToken) -> Bool {
+    func matchesCurrentDocumentSession(_ expectedSession: WorkspaceSessionToken) -> Bool {
         currentDocumentSessionToken == expectedSession
     }
 
-    func validateCurrentDocumentSession(_ expectedSession: IOSDocumentSessionToken) -> Bool {
+    func validateCurrentDocumentSession(_ expectedSession: WorkspaceSessionToken) -> Bool {
         guard matchesCurrentDocumentSession(expectedSession) else {
             operationErrorMessage = "作品が切り替わったため、この操作を中止しました。"
             return false
         }
         return true
-    }
-
-    private static func isValidMove(fromOffsets: IndexSet, toOffset: Int, count: Int) -> Bool {
-        !fromOffsets.isEmpty &&
-            fromOffsets.allSatisfy { (0 ..< count).contains($0) } &&
-            (0 ... count).contains(toOffset)
-    }
-
-    private static func moveWorldNotes(
-        _ items: inout [WorldNote],
-        fromOffsets: IndexSet,
-        toOffset: Int
-    ) {
-        let movingItems = fromOffsets.map { items[$0] }
-        for index in fromOffsets.sorted(by: >) {
-            items.remove(at: index)
-        }
-        let removedBeforeDestination = fromOffsets.count(where: { $0 < toOffset })
-        items.insert(contentsOf: movingItems, at: toOffset - removedBeforeDestination)
     }
 }

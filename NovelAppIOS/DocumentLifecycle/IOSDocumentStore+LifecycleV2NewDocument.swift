@@ -2,14 +2,15 @@ import Foundation
 import NovelCore
 import NovelSyncV2
 import NovelSyncV2Application
+import NovelWorkspace
 
 struct IOSNewDocumentCheckpointContext {
     let candidateWorkID: WorkID
     let candidateCreatedAt: Date
     let application: SyncV2Application
-    let expectedSession: IOSDocumentSessionToken?
+    let expectedSession: WorkspaceSessionToken?
     let expectedWorkID: WorkID?
-    let expectedAccountScope: IOSSnapshotSyncV2AccountScope
+    let expectedAccountScope: WorkspaceAccountScope
 }
 
 extension IOSDocumentStore {
@@ -19,7 +20,7 @@ extension IOSDocumentStore {
     ) async throws {
         guard !isSyncV2AccountTransitionActive,
               currentDocumentSessionToken == context.expectedSession,
-              syncV2ActiveWorkID == context.expectedWorkID,
+              workspaceModel.activeWorkID == context.expectedWorkID,
               matchesSyncAccount(context.expectedAccountScope) else {
             throw SyncV2ApplicationError.invalidRuntimeMode
         }
@@ -33,7 +34,7 @@ extension IOSDocumentStore {
         )
         guard !isSyncV2AccountTransitionActive,
               currentDocumentSessionToken == context.expectedSession,
-              syncV2ActiveWorkID == context.expectedWorkID,
+              workspaceModel.activeWorkID == context.expectedWorkID,
               matchesSyncAccount(context.expectedAccountScope) else {
             throw SyncV2ApplicationError.invalidRuntimeMode
         }
@@ -50,6 +51,6 @@ extension IOSDocumentStore {
             throw IOSPrivateWorkingCopyLocationError.unsafeRoot
         }
         applySnapshotSyncV2State(result.state)
-        saveState = .saved
+        workspaceModel.saveState = .saved
     }
 }

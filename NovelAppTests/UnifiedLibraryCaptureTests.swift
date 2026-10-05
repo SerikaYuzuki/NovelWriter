@@ -35,11 +35,11 @@ struct UnifiedLibraryCaptureTests {
                 ]
                 state.snapshotSyncV2RemoteOnlyOpeningWorkID = importing
                 state.snapshotSyncV2RemoteOnlyOpenStartedAt = Date()
-                state.libraryImportPhases[importing] = .init(receivedBytes: 8_200_000, totalBytes: 19_000_000)
+                state.workspaceModel.libraryImportPhases[importing] = .init(receivedBytes: 8_200_000, totalBytes: 19_000_000)
                 state.startupState = .documentSelection(.init(works: state.snapshotSyncLibraryWorks,
                                                               presentation: .localAndRemote, connection: .available))
                 let suffix = "\(display)-\(dark ? "dark" : "light")"
-                try await capture(LibraryView(observesLibrary: false).environment(state)
+                try await capture(LibraryView(observesLibrary: false).environment(state).environment(state.workspaceModel)
                     .environment(DocumentPanelPresenter(appState: state)).defaultAppStorage(state.userDefaults)
                     .preferredColorScheme(dark ? .dark : .light), name: suffix)
                 state.lastStartupLibraryConnection = .available
@@ -47,12 +47,12 @@ struct UnifiedLibraryCaptureTests {
                 state.snapshotSyncLibraryWorks = []
                 state.startupState = .documentSelection(.init(works: [], presentation: .localAndRemote,
                                                               connection: .accountRequired))
-                try await capture(LibraryView(observesLibrary: false).environment(state)
+                try await capture(LibraryView(observesLibrary: false).environment(state).environment(state.workspaceModel)
                     .environment(DocumentPanelPresenter(appState: state)).defaultAppStorage(state.userDefaults)
                     .preferredColorScheme(dark ? .dark : .light), name: "empty-\(suffix)")
                 if display == "grid" {
                     state.startupState = .loading
-                    try await capture(LibraryView(observesLibrary: false).environment(state)
+                    try await capture(LibraryView(observesLibrary: false).environment(state).environment(state.workspaceModel)
                         .environment(DocumentPanelPresenter(appState: state)).defaultAppStorage(state.userDefaults)
                         .preferredColorScheme(dark ? .dark : .light), name: "loading-\(suffix)")
                 }
@@ -65,14 +65,14 @@ struct UnifiedLibraryCaptureTests {
         ))
         #expect(await state.configureSnapshotSyncV2(using: state.snapshotSyncV2Factory))
         await state.bootstrap()
-        state.document.title = "窓辺の手紙"
+        state.workspaceModel.document.title = "窓辺の手紙"
         state.markDocumentDirty()
         #expect(await state.saveNow())
         let application = try #require(state.snapshotSyncV2Application)
         let second = WorkID(UUID())
         _ = try await application.checkpoint(workID: second, document: .newDocument(title: "雨あがりの庭"),
                                              reason: .migration, documentCreatedAt: Date())
-        let root = ContentView().environment(state)
+        let root = ContentView().environment(state).environment(state.workspaceModel)
             .environment(EditorSettings(userDefaults: state.userDefaults, appearanceApplier: { _ in }))
             .environment(DocumentPanelPresenter(appState: state))
             .environment(SnapshotMenuPresenter(appState: state)).environment(ExportPresenter(appState: state))
@@ -84,7 +84,7 @@ struct UnifiedLibraryCaptureTests {
         try await capture(root, name: "roundtrip-2-library")
         let row = try #require(state.snapshotSyncLibraryWorks.first { $0.workID == second })
         #expect(await state.openLibraryWork(row))
-        #expect(state.document.title == "雨あがりの庭")
+        #expect(state.workspaceModel.document.title == "雨あがりの庭")
         try await capture(root, name: "roundtrip-3-other-work")
     }
 

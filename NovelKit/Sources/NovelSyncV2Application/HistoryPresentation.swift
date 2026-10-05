@@ -11,6 +11,10 @@ public struct HistoryPresentation {
 
     public struct Run: Identifiable {
         public var items: [SyncV2HistoryItem]
+        public init(items: [SyncV2HistoryItem]) {
+            self.items = items
+        }
+
         public var id: UUID {
             items[0].occurrenceID
         }
