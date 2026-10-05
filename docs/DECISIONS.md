@@ -249,3 +249,13 @@ D-111 P10のオーナー決定。`NovelWorkspace.AccountTransitionCoordinator`�
 leaseは最初のIME／dirty checkpointより先に取得し、拒否・取消・回復・失敗を含む各経路で解放する。認証UIへsessionをpublishするのはdurable account boundary後だけ。同一scopeのrefreshはこの境界を開かない。取消後のcleanupは取得時のrequest ownerに限定し、後続requestを解放しない。
 
 sign-outはネットワーク待ちの前に既存vaultのrevoke journalを確定し、独立taskは`resumePendingRevoke()`だけを使う。新しいsessionへのsign-out再帰を避け、vault formatの変更も行わない。ブラウザ由来sessionにはnative Apple credential-state照合を適用しない。
+
+## D-116: 手動の作品一覧更新とゴミ箱（2026-10-05）
+
+owner決定。既存の「更新」は端末のSQLite棚、remote catalog全ページ、名前の表示投影、保護一覧による削除確認まで行う。更新の自動契機は増やさない。macOSのFile menuに「作品一覧を更新」（⌘R）を置き、執筆中にも使える。標準の進捗と変更件数を表示する。一覧更新は本文を取得・採用せず、開いている原稿を退役させない。
+
+catalog headがローカル受領済みhead世代より新しく、未送信のintent・sealed command・未昇格leaf・競合がない作品だけcatalogの名前を表示し、「サーバーに新しい版があります」を付ける。それ以外は端末の名前を維持する。本文は従来どおり開いた際の安全な境界で採用する。受領済み世代と未送信状態はin-processの一覧投影にだけ追加する。
+
+完全なcatalogから消えた同一accountのローカル作品は、既存GET /v2/protection一覧のdeletedAtで削除を確認した場合だけ棚からゴミ箱へ移す。404・未対応server・読取失敗は削除の根拠にしない。派生状態は更新ごとに算出し、再起動後の棚用にscope別の端末内markerを保存する。本文とSQLite bindingは変更しない。確認失敗時は前回の確認済みmarkerを保つ。
+
+両OSの「別作品として復元…」を「ゴミ箱」に改称し、削除作品だけを表示する。削除日・1年の保管期限までの日数と「この端末にコピーあり」を表示する。「元に戻す（別作品として復元）」は既存protection restoreを使う。「この端末のコピーを新しい作品として残す」は開いていない作品にも既存rescueを使い、新しいunbound WorkIDを作る。「この端末から削除」は確認と既存削除完了経路（既削除serverへのDELETEは冪等）を使う。既存の安全策に従い同期作品のSQLite救出用graphは保持し、端末内markerで通常のコピー表示を退役させる。物理purgeは追加しない。wire/schema/fixtureおよびserver契約は変更しない。

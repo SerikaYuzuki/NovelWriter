@@ -143,6 +143,12 @@ struct LibraryPane: View {
                 .disabled(!works.contains { $0.id == selection && canOpen($0) })
             }
             .padding(.horizontal, Spacing.medium)
+            if workspace.libraryFullRefreshIsLoading {
+                ProgressView("作品一覧を更新中…")
+            }
+            if let notice = workspace.libraryRefreshNotice {
+                Text(notice).font(.caption).foregroundStyle(.secondary)
+            }
             Text(connectionLabel)
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -160,15 +166,14 @@ struct LibraryPane: View {
                     .disabled(!appState.permitsDocumentImport)
             }
             ToolbarItem(placement: .primaryAction) {
-                Button("更新", systemImage: "arrow.clockwise") {
+                Button("作品一覧を更新", systemImage: "arrow.clockwise") {
                     Task {
-                        await appState.refreshSnapshotLibrary()
-                        await appState.refreshSnapshotRemoteCatalog()
+                        await appState.refreshFullLibrary()
                     }
-                }.help("作品一覧を更新")
+                }.help("作品一覧を更新").disabled(workspace.libraryFullRefreshIsLoading)
             }
             ToolbarItem(placement: .primaryAction) {
-                Button("別作品として復元…", systemImage: "archivebox") { showingProtection = true }
+                Button("ゴミ箱", systemImage: "archivebox") { showingProtection = true }
             }
             ToolbarItem(placement: .primaryAction) { ShelfDisplayPicker(selection: $display) }
         }
@@ -235,8 +240,13 @@ struct LibraryPane: View {
         .sheet(isPresented: $showingProtection) {
             if let application = appState.snapshotSyncV2Application {
                 ProtectedWorksView(application: application,
-                                   contextID: String(describing: appState.snapshotSyncV2AccountScopeToken)) {
-                    await appState.refreshSnapshotLibrary()
+                                   contextID: String(describing: appState.snapshotSyncV2AccountScopeToken),
+                                   localCopies: workspace.trashLocalItems,
+                                   removedCopyIDs: workspace.removedTrashCopyIDs,
+                                   recoverServer: { await appState.restoreTrashWork($0, request: $1) },
+                                   rescueLocal: { await appState.rescueTrashWork($0) },
+                                   deleteLocal: { await appState.deleteTrashWork($0) }) {
+                    await appState.refreshFullLibrary()
                 }
             }
         }
@@ -493,7 +503,7 @@ private extension LibraryPane {
         if appState.workspaceModel.pendingDeletionWorkIDs.contains(work.workID) {
             return .init(text: LibraryText.pendingDeletion, symbol: "clock", tone: .secondary)
         }
-        return work.status
+        return workspace.libraryRows.first(where: { $0.workID == work.workID })?.status ?? work.status
     }
 
     private func rowHint(_ work: StartupLibraryWork) -> String {

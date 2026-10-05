@@ -1,7 +1,7 @@
 import NovelSyncV2
 
 public enum WorkspaceLibraryMutation: Sendable {
-    case rename, deletion
+    case rename, deletion, rescue
 }
 
 /// The platform retains its document gate, IME commit and exclusive local save

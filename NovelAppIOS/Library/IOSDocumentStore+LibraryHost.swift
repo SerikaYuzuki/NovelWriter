@@ -20,7 +20,7 @@ extension IOSDocumentStore: WorkspaceLibraryHost {
     func permitsLibraryMutation(_ mutation: WorkspaceLibraryMutation, workID: WorkID) -> Bool {
         guard workspaceModel.keepBothPendingWorkID == nil || workID != workspaceModel.activeWorkID else { return false }
         return switch mutation {
-        case .rename: !isSyncV2AccountTransitionActive
+        case .rename, .rescue: !isSyncV2AccountTransitionActive
         case .deletion: libraryDeletionDisabledReason(for: workID) == nil
         }
     }

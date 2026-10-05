@@ -98,6 +98,9 @@ public enum SyncV2LibraryPresentation {
 
 public extension SyncV2LibraryItem {
     var status: SyncV2LibraryStatus {
+        if hasNewerServerVersion {
+            return .init(text: "サーバーに新しい版があります", symbol: "arrow.down.circle", tone: .secondary)
+        }
         let value = SyncV2LibraryStatus.resolve(availability: availability, accountState: accountState,
                                                 remoteHeadConfirmed: remoteHeadConfirmed, progress: remoteProgress)
         return accountState == .active && availability != .remoteOnly

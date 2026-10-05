@@ -75,6 +75,10 @@ extension IOSDocumentStore {
     }
 
     private func clearAccountScopedSnapshotUIForIOS() {
+        workspaceModel.remoteDeletedWorkIDs = []
+        workspaceModel.trashLocalItems = []
+        workspaceModel.removedTrashCopyIDs = []
+        workspaceModel.libraryRefreshNotice = nil
         workspaceModel.remoteCatalogItems = []
         workspaceModel.remoteCatalogCursor = nil
         syncV2RemoteCatalogError = nil

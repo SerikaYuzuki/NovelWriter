@@ -29,6 +29,11 @@ public final class WorkspaceModel {
     @ObservationIgnored public var attachmentSet = WorkspaceAttachmentSet()
     public var libraryRows: [SyncV2LibraryItem] = []
     public var libraryIsLoading = false
+    public var libraryFullRefreshIsLoading = false
+    public var libraryRefreshNotice: String?
+    public var remoteDeletedWorkIDs: Set<WorkID> = []
+    public var removedTrashCopyIDs: Set<WorkID> = []
+    public var trashLocalItems: [SyncV2LibraryItem] = []
     public var libraryFailure: SyncV2Failure?
     public var remoteCatalogItems: [SyncV2RemoteCatalogEntry] = []
     public var remoteCatalogCursor: String?

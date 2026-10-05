@@ -168,6 +168,9 @@ struct FuminiwaApp: App {
         .commands {
             CommandGroup(replacing: .newItem) {
                 LibraryCommand().environment(appState).environment(appState.workspaceModel)
+                Button("作品一覧を更新") { Task { await appState.refreshFullLibrary() } }
+                    .keyboardShortcut("r", modifiers: .command)
+                    .disabled(appState.workspaceModel.libraryFullRefreshIsLoading)
                 Divider()
                 Button("新しい作品") {
                     documentPanelPresenter.presentNewDocument()

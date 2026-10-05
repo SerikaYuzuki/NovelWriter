@@ -76,6 +76,9 @@ extension AppState {
             if let snapshotSyncV2LibraryOverride {
                 operations.library = { try await snapshotSyncV2LibraryOverride(application) }
             }
+            if let libraryRefreshOperationsOverride {
+                operations = libraryRefreshOperationsOverride(operations)
+            }
             #endif
             guard let result = try await LibraryCoordinator(operations: operations).refresh(
                 account: accountScope, currentAccount: { snapshotSyncV2AccountScopeToken },
@@ -102,12 +105,18 @@ extension AppState {
         snapshotSyncCurrentWorkAccountState = currentSnapshotSyncV2WorkID.flatMap { workID in
             refresh.projection.items.first(where: { $0.workID == workID })?.accountState
         }
-        let rows = refresh.merged(
+        workspaceModel.removedTrashCopyIDs = LibraryTrash.readMarker(defaults: userDefaults, account: accountScope, removedCopies: true)
+        workspaceModel.remoteDeletedWorkIDs = LibraryTrash.readMarker(defaults: userDefaults, account: accountScope)
+        workspaceModel.trashLocalItems = refresh.projection.items.filter { workspaceModel.remoteDeletedWorkIDs.contains($0.workID) && !workspaceModel.removedTrashCopyIDs.contains($0.workID) }
+        let visibleRefresh = LibraryRefresh(projection: refresh.projection, pendingDeletionIDs: refresh.pendingDeletionIDs,
+                                            deletedIDs: refresh.deletedIDs.union(workspaceModel.remoteDeletedWorkIDs))
+        let rows = visibleRefresh.merged(
             catalog: workspaceModel.remoteCatalogItems,
             previousItems: snapshotSyncLibraryWorks.map(Self.snapshotLibraryItem), includesQuarantinedItems: false
         )
         let works = rows.compactMap(Self.startupLibraryWork).map { $0.1 }
         snapshotSyncLibraryWorks = works
+        workspaceModel.libraryRows = rows
         if shouldPresentRefreshedLibrary {
             startupState = .documentSelection(.init(works: works, presentation: .localAndRemote, connection: connection))
         }
@@ -165,6 +174,7 @@ extension AppState {
     /// provider performs account/fence filtering; this layer only deduplicates
     /// by WorkID and merges the result into the local shelf.
     func refreshSnapshotRemoteCatalog(loadMore: Bool = false) async {
+        guard !workspaceModel.libraryFullRefreshIsLoading else { return }
         if loadMore, workspaceModel.libraryIsLoading || workspaceModel.remoteCatalogCursor == nil {
             return
         }

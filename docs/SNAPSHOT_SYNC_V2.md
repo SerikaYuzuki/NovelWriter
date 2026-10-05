@@ -379,3 +379,9 @@ pending work returns successful `noChanges`/`同期済み`; it is never rendered
 ## Episode history (D-114)
 
 While editing, history selects the episode body entries in one scoped SQLite query (including verified inbox entries), collapses consecutive equal object IDs, and lists unfetched versions in one trailing fetch control. Visible rows lazily read only the selected episode via the existing preview API; counts are cached by Work/object ID and cleared on account changes. Episode restore uses the shared document/edit boundary, an explicit pre-edit checkpoint (displayed as 手動保存), and the common persistent Undo journal. It never invokes whole-work restore and changes no wire/schema/fixture.
+
+## 作品一覧の更新とゴミ箱（D-116）
+
+作品一覧の「更新」はサーバーの全作品を確認し、他端末で変更した作品名と削除を一覧へ反映します。macOSはFileメニューの「作品一覧を更新」（⌘R）を執筆中にも使えます。未送信の変更がある作品は端末の名前を保ち、本文は一覧更新では変更しません。新しい版の本文は作品を開く際に従来の安全な境界で取り込みます。
+
+削除した作品は「ゴミ箱」で削除日と残り保管日数を確認できます。サーバーの受領済み版は「元に戻す（別作品として復元）」から日時を選びます。端末のコピーは新しい作品として残すか、確認後に端末での削除を完了できます。接続失敗や404だけで原稿をゴミ箱へ移すことはありません。同期作品の救出用データは既存の安全策に従いSQLiteに保持します。
