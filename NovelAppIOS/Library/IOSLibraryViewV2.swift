@@ -49,9 +49,14 @@ struct IOSLibraryView: View {
                 }
             }
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) { ShelfDisplayPicker(selection: $display) }
                 if #available(iOS 26, *) {
+                    // The segmented control draws its own capsule; the shared
+                    // glass background around it would nest a bubble in a bubble.
+                    ToolbarItem(placement: .topBarTrailing) { ShelfDisplayPicker(selection: $display) }
+                        .sharedBackgroundVisibility(.hidden)
                     ToolbarSpacer(.fixed, placement: .topBarTrailing)
+                } else {
+                    ToolbarItem(placement: .topBarTrailing) { ShelfDisplayPicker(selection: $display) }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
