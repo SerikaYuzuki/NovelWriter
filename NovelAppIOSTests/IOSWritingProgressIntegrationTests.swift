@@ -56,7 +56,9 @@ struct IOSWritingProgressIntegrationTests {
         #expect(store.writingProgress.days(for: work.rawValue).values.first?.added == 3)
         #expect(store.writingProgress.notice == nil)
         #expect(store.writingProgress.milestones(for: work.rawValue).first?.reachedAt == nil)
-        #expect(store.install(store.workspaceModel.document, at: root, attachments: [], workID: work))
+        // Reinstalling the same work keeps its stored creation time, the checkpoint anchor.
+        #expect(store.install(store.workspaceModel.document, at: root, attachments: [], workID: work,
+                              createdAt: store.documentCreatedAt))
         #expect(store.writingProgress.days(for: work.rawValue).values.first?.added == 3)
         #expect(await store.saveNow())
     }
