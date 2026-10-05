@@ -39,6 +39,24 @@ xcodebuild test \
   CODE_SIGNING_ALLOWED=NO \
   CODE_SIGNING_REQUIRED=NO
 
+# Test actions build Debug-Test, where FUMINIWA_TEST_COMPOSITION swaps out
+# the production composition. Compile the shipping configuration too.
+echo "==> Release build (macOS and iOS, production composition)"
+xcodebuild build \
+  -project FUMINIWA.xcodeproj \
+  -scheme FUMINIWA \
+  -configuration Release \
+  -destination 'platform=macOS' \
+  CODE_SIGNING_ALLOWED=NO \
+  CODE_SIGNING_REQUIRED=NO
+xcodebuild build \
+  -project FUMINIWA.xcodeproj \
+  -scheme FUMINIWAIOS \
+  -configuration Release \
+  -destination 'generic/platform=iOS Simulator' \
+  CODE_SIGNING_ALLOWED=NO \
+  CODE_SIGNING_REQUIRED=NO
+
 echo "==> Select iPhone Simulator for iOS tests"
 ios_simulator_id="${FUMINIWA_IOS_SIMULATOR_ID:-$(xcrun simctl list devices available -j | jq -r '
   [.devices[][] | select(.isAvailable == true and (.name | startswith("iPhone")))] |
