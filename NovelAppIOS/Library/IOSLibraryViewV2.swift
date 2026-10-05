@@ -38,18 +38,28 @@ struct IOSLibraryView: View {
             .sheet(isPresented: $showingProtection) {
                 if let application = store.snapshotSyncV2Application {
                     ProtectedWorksView(application: application,
-                                       contextID: String(describing: store.snapshotSyncV2AccountScope)) {
-                        _ = await store.refreshLibrary()
+                                       contextID: String(describing: store.snapshotSyncV2AccountScope),
+                                       localCopies: workspace.trashLocalItems,
+                                       removedCopyIDs: workspace.removedTrashCopyIDs,
+                                       recoverServer: { await store.restoreTrashWork($0, request: $1) },
+                                       rescueLocal: { await store.rescueTrashWork($0) },
+                                       deleteLocal: { await store.deleteTrashWork($0) }) {
+                        _ = await store.refreshFullLibrary()
                     }
                 }
             }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) { ShelfDisplayPicker(selection: $display) }
+                if #available(iOS 26, *) {
+                    ToolbarSpacer(.fixed, placement: .topBarTrailing)
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
+                        Button("作品一覧を更新", systemImage: "arrow.clockwise") { Task { _ = await store.refreshFullLibrary() } }
+                            .disabled(workspace.libraryFullRefreshIsLoading)
                         Button("新規作品", systemImage: "plus", action: makeNewDocument)
                         Button(LibraryText.importWork, systemImage: "square.and.arrow.down") { store.isImporterPresented = true }
-                        Button("復元", systemImage: "archivebox") { showingProtection = true }
+                        Button("ゴミ箱", systemImage: "archivebox") { showingProtection = true }
                     } label: { Label("作品の操作", systemImage: "plus") }
                 }
             }
@@ -137,7 +147,7 @@ struct IOSLibraryView: View {
             }
             .searchable(text: $searchText, prompt: LibraryText.search)
             .refreshable {
-                _ = await store.refreshLibrary()
+                _ = await store.refreshFullLibrary()
             }
             .task {
                 if observesLibrary {
@@ -199,6 +209,12 @@ struct IOSLibraryView: View {
     }
 
     @ViewBuilder private var libraryNotices: some View {
+        if workspace.libraryFullRefreshIsLoading {
+            ProgressView("作品一覧を更新中…")
+        }
+        if let notice = workspace.libraryRefreshNotice {
+            Text(notice).font(.caption).foregroundStyle(.secondary)
+        }
         if let failure = store.syncV2RemoteCatalogError ?? workspace.libraryFailure {
             StatusLabel(SyncV2LibraryPresentation.isOffline(failure)
                 ? SyncV2LibraryPresentation.offlineNotice : remoteOnlyOpenErrorMessage(failure),

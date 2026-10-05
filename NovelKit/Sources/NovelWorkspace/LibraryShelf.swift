@@ -22,13 +22,20 @@ public enum LibraryShelf {
             if let local = rows[remote.workID] {
                 // A catalog entry must not change a parked local account boundary.
                 guard local.accountState != .parkedDifferentAccount else { continue }
+                let newer = remote.head.map { head in
+                    local.acknowledgedHeadGeneration.map { head.generation > $0 } ?? false
+                } ?? false
+                let projectsRename = newer && !local.hasUnsentLocalChanges
                 rows[remote.workID] = SyncV2LibraryItem(
                     workID: local.workID,
-                    title: local.availability == .remoteOnly || local.title.isEmpty ? remote.title : local.title,
+                    title: local.availability == .remoteOnly || projectsRename ? remote.title : local.title,
                     availability: local.availability == .remoteOnly ? .remoteOnly : .cached,
                     accountState: local.accountState,
                     localGeneration: local.localGeneration,
-                    remoteHead: local.remoteHead ?? remote.head,
+                    acknowledgedHeadGeneration: local.acknowledgedHeadGeneration,
+                    hasUnsentLocalChanges: local.hasUnsentLocalChanges,
+                    hasNewerServerVersion: projectsRename,
+                    remoteHead: remote.head ?? local.remoteHead,
                     remoteHeadConfirmed: local.remoteHeadConfirmed,
                     conflict: local.conflict,
                     remoteProgress: local.remoteProgress,

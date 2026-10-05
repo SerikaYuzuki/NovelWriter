@@ -5,6 +5,9 @@ import NovelSyncV2Application
 /// wraps just the two downloads on iOS, without moving platform APIs into core.
 @MainActor
 public struct LibraryOperations {
+    public var protectedWorks: () async throws -> [SyncV2ProtectedWork] = { [] }
+    public var recover: (WorkID, SyncV2RecoveryRequest) async throws -> Void = { _, _ in throw SyncV2ApplicationError.safeBoundaryRejected }
+    public var rescue: (WorkID) async throws -> Void = { _ in throw SyncV2ApplicationError.safeBoundaryRejected }
     public var library: () async throws -> SyncV2LibraryProjection
     public var pendingDeletionIDs: () async throws -> Set<WorkID>
     public var deletedIDs: () async throws -> Set<WorkID>
@@ -57,5 +60,8 @@ public struct LibraryOperations {
             reserveDeletion: { _ = try await application.prepareWorkDeletion(workID: $0) },
             delete: { try await application.deleteWork(workID: $0) }
         )
+        protectedWorks = { try await application.remoteTrashWorks() }
+        recover = { try await application.recoverWork(workID: $0, request: $1) }
+        rescue = { _ = try await application.rescueLocalWork(sourceWorkID: $0) }
     }
 }

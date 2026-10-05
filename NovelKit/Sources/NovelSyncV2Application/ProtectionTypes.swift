@@ -50,6 +50,14 @@ public struct SyncV2RecoveryRequest: Codable, Sendable {
 }
 
 public extension SyncV2Application {
+    /// Deletion confirmation must not accept the local-only offline fallback.
+    func remoteTrashWorks() async throws -> [SyncV2ProtectedWork] {
+        let generation = historyScopeGeneration
+        let values = try await remote.protectedWorks()
+        guard generation == historyScopeGeneration else { throw SyncV2Failure.accountFenceChanged }
+        return values.filter { $0.deletedAt != nil }
+    }
+
     func protectedWorks() async throws -> [SyncV2ProtectedWork] {
         let generation = historyScopeGeneration
         let local = try await kernel.localRescuableWorks()

@@ -82,6 +82,10 @@ extension AppState {
     /// AccountID. Signing out must not leave the previous scope visible or
     /// make a later account switch look like an implicit adoption.
     private func clearAccountScopedSnapshotUI() {
+        workspaceModel.remoteDeletedWorkIDs = []
+        workspaceModel.trashLocalItems = []
+        workspaceModel.removedTrashCopyIDs = []
+        workspaceModel.libraryRefreshNotice = nil
         workspaceModel.remoteCatalogItems = []
         workspaceModel.remoteCatalogCursor = nil
         workspaceModel.libraryFailure = nil

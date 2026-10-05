@@ -139,7 +139,13 @@ extension IOSDocumentStore {
         }
         let refresh: LibraryRefresh
         do {
-            guard let result = try await LibraryCoordinator(operations: LibraryOperations(application: application)).refresh(
+            var operations = LibraryOperations(application: application)
+            #if FUMINIWA_TEST_COMPOSITION
+            if let libraryRefreshOperationsOverride {
+                operations = libraryRefreshOperationsOverride(operations)
+            }
+            #endif
+            guard let result = try await LibraryCoordinator(operations: operations).refresh(
                 account: expectedAccountScope, currentAccount: { snapshotSyncV2AccountScope },
                 isCurrent: { !isSyncV2AccountTransitionActive && libraryRefreshGeneration == refreshGeneration }
             ) else { return false }
@@ -169,8 +175,11 @@ extension IOSDocumentStore {
         guard !isSyncV2AccountTransitionActive,
               libraryRefreshGeneration == refreshGeneration,
               matchesSyncAccount(expectedAccountScope) else { return false }
+        workspaceModel.removedTrashCopyIDs = LibraryTrash.readMarker(defaults: userDefaults, account: expectedAccountScope, removedCopies: true)
+        workspaceModel.remoteDeletedWorkIDs = LibraryTrash.readMarker(defaults: userDefaults, account: expectedAccountScope)
+        workspaceModel.trashLocalItems = projection.items.filter { workspaceModel.remoteDeletedWorkIDs.contains($0.workID) && !workspaceModel.removedTrashCopyIDs.contains($0.workID) }
         let refresh = LibraryRefresh(projection: projection, pendingDeletionIDs: workspaceModel.pendingDeletionWorkIDs,
-                                     deletedIDs: deletedLibraryWorkIDs)
+                                     deletedIDs: deletedLibraryWorkIDs.union(workspaceModel.remoteDeletedWorkIDs))
         workspaceModel.libraryRows = refresh.merged(
             catalog: workspaceModel.remoteCatalogItems, previousItems: workspaceModel.libraryRows,
             exposesAccountScopedItems: exposesAccountScopedSyncV2Items,
@@ -186,6 +195,7 @@ extension IOSDocumentStore {
     /// WorkID/title/head projection for the shelf.
     @discardableResult
     func refreshRemoteCatalog(reset: Bool = true) async -> Bool {
+        guard !workspaceModel.libraryFullRefreshIsLoading else { return false }
         guard !isSyncV2RemoteAccountTransitionActive,
               exposesAccountScopedSyncV2Items,
               let application = snapshotSyncV2Application else { return false }

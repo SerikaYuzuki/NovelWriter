@@ -53,6 +53,7 @@ final class AppState {
 
     var lastStartupLibraryConnection: StartupLibraryConnection = .offline
     #if FUMINIWA_TEST_COMPOSITION
+    @ObservationIgnored var libraryRefreshOperationsOverride: ((LibraryOperations) -> LibraryOperations)?
     @ObservationIgnored var testServerInstanceIDOverride: String?
     @ObservationIgnored var testBrowserAuthorization: (@MainActor @Sendable (URL) async throws -> Void)?
     #endif

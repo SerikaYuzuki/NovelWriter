@@ -21,6 +21,9 @@ public struct SyncV2LibraryItem: Sendable {
     public let availability: SyncV2LibraryAvailability
     public let accountState: SyncV2LibraryAccountState
     public let localGeneration: Int64?
+    public let acknowledgedHeadGeneration: Int64?
+    public let hasUnsentLocalChanges: Bool
+    public let hasNewerServerVersion: Bool
     public let remoteHead: SyncV2RemoteHead?
     public let remoteHeadConfirmed: Bool
     public let conflict: SyncV2ConflictProjection?
@@ -33,6 +36,9 @@ public struct SyncV2LibraryItem: Sendable {
         availability: SyncV2LibraryAvailability,
         accountState: SyncV2LibraryAccountState,
         localGeneration: Int64? = nil,
+        acknowledgedHeadGeneration: Int64? = nil,
+        hasUnsentLocalChanges: Bool = true,
+        hasNewerServerVersion: Bool = false,
         remoteHead: SyncV2RemoteHead? = nil,
         remoteHeadConfirmed: Bool? = nil,
         conflict: SyncV2ConflictProjection? = nil,
@@ -46,6 +52,9 @@ public struct SyncV2LibraryItem: Sendable {
         self.availability = availability
         self.accountState = accountState
         self.localGeneration = localGeneration
+        self.acknowledgedHeadGeneration = acknowledgedHeadGeneration
+        self.hasUnsentLocalChanges = hasUnsentLocalChanges
+        self.hasNewerServerVersion = hasNewerServerVersion
         self.remoteHead = remoteHead
         self.remoteHeadConfirmed = remoteHeadConfirmed ?? (remoteHead != nil)
         self.conflict = conflict

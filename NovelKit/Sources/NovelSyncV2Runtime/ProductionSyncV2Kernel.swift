@@ -702,6 +702,8 @@ private extension ProductionSyncV2Kernel {
                             availability: .localOnly,
                             accountState: accountState,
                             localGeneration: summary.localGeneration,
+                            acknowledgedHeadGeneration: summary.acknowledgedHeadGeneration,
+                            hasUnsentLocalChanges: !pending.isEmpty || !sealed.isEmpty || hasLeaf || conflict != nil,
                             remoteHeadConfirmed: accountState == .active && summary.acknowledgedHeadGeneration != nil,
                             conflict: adoption == nil ? conflict : nil,
                             remoteProgress: progress,

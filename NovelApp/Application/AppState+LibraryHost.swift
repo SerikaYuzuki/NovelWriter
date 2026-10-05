@@ -35,7 +35,7 @@ extension AppState: WorkspaceLibraryHost {
             defer { workspaceModel.isDocumentTransitionInProgress = false }
             do {
                 switch mutation {
-                case .rename:
+                case .rename, .rescue:
                     if workspaceModel.saveState != .saved {
                         guard await saveNow() else { return false }
                     }
@@ -50,7 +50,7 @@ extension AppState: WorkspaceLibraryHost {
                 return true
             } catch {
                 switch mutation {
-                case .rename:
+                case .rename, .rescue:
                     operationMessage = "作品名を変更できませんでした。一覧を更新して再試行してください。"
                 case .deletion:
                     operationMessage = "削除を開始できませんでした。対象作品のアカウントでサインインして再試行してください。"

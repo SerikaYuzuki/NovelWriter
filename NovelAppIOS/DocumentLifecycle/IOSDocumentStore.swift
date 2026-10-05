@@ -162,6 +162,7 @@ final class IOSDocumentStore {
     /// for explicit import/export compatibility, but is never the v2 identity.
     static let lastWorkIDKey = "FUMINIWAIOS.lastWorkID"
     #if FUMINIWA_TEST_COMPOSITION
+    @ObservationIgnored var libraryRefreshOperationsOverride: ((LibraryOperations) -> LibraryOperations)?
     /// Test stores created with the same injected root share one isolated
     /// SQLite composition, so reopen tests exercise persistence rather than a
     /// second unrelated UUID database. Production builds do not contain this

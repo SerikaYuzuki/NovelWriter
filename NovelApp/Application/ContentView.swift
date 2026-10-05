@@ -43,6 +43,13 @@ struct ContentView: View {
             }
             .sheet(isPresented: $showingConflictHistory) { SnapshotHistorySheet { showingConflictHistory = false } }
             .safeAreaInset(edge: .bottom) {
+                if appState.startupState.isReady {
+                    if workspace.libraryFullRefreshIsLoading {
+                        ProgressView("作品一覧を更新中…").padding(8)
+                    } else if let notice = workspace.libraryRefreshNotice {
+                        Text(notice).font(.caption).padding(8)
+                    }
+                }
                 if let notice = conflictNotice {
                     ConflictResolutionNoticeView(notice: notice) { conflictNotice = nil }
                 }
